@@ -948,12 +948,6 @@
                             dragStartPos.copy(intersect.point).add(intersect.face.normal);
                             dragStartPos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
                             addPreviewBlock(dragStartPos);
-                        } else {
-                            // On Small Screen: Single tap builds immediately
-                            const intersect = intersects[0];
-                            const pos = intersect.point.clone().add(intersect.face.normal);
-                            pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
-                            placeVoxel(pos);
                         }
                     }
                 } else {
@@ -962,7 +956,6 @@
                         if (!isSmallScreen) {
                             isDraggingRemove = true;
                         }
-                        removeVoxel(intersects[0].object);
                     }
                 }
             }
@@ -1005,14 +998,28 @@
                 isDraggingRemove = false;
             }
 
-            // Distinguish click from drag for REMOVAL
+            // Distinguish click from drag for Small Screens (Mobile Tap-to-Build)
+            const isSmallScreen = window.innerWidth < 768;
             const dist = downPointerPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
             const timeDelta = performance.now() - pointerDownTime;
 
-            // Removal logic (Old single-click logic simplified into removeVoxel)
-            if (dist < 5 && timeDelta < 400 && !event.target.closest('#ui-layer')) {
-                // Single click removal falls under the same logic if needed, 
-                // but the continuous drag already covers it.
+            if (isSmallScreen && dist < 10 && timeDelta < 500 && !event.target.closest('#ui-layer')) {
+                pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
+                raycaster.setFromCamera(pointer, camera);
+                const intersects = raycaster.intersectObjects(objects, false);
+
+                if (intersects.length > 0) {
+                    const intersect = intersects[0];
+                    if (isAddMode) {
+                        const pos = intersect.point.clone().add(intersect.face.normal);
+                        pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+                        placeVoxel(pos);
+                    } else {
+                        if (intersect.object !== plane) {
+                            removeVoxel(intersect.object);
+                        }
+                    }
+                }
             }
         }
 
