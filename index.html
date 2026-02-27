@@ -45,8 +45,8 @@
             <!-- Generated dynamically -->
         </div>
         <div id="edit-mode-panel">
-            <button class="mode-btn active" id="btn-add">👉</button>
-            <button class="mode-btn" id="btn-remove">🧼</button>
+            <button class="mode-btn active" id="btn-add">✏️</button>
+            <button class="mode-btn" id="btn-remove">⬜</button>
             <button id="btn-help">?</button>
         </div>
         <div id="instructions" class="popup-style">
@@ -1078,12 +1078,12 @@
                 isDraggingRemove = false;
             }
 
-            // Distinguish click from drag for Small Screens (Mobile Tap-to-Build)
+            // Distinguish click from drag (Universal Tap-to-Build for Mobile & PC)
             const isSmallScreen = window.innerWidth < 768;
             const dist = downPointerPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
             const timeDelta = performance.now() - pointerDownTime;
 
-            if (isSmallScreen && dist < 10 && timeDelta < 500 && !event.target.closest('#ui-layer')) {
+            if (dist < 10 && timeDelta < 500 && !event.target.closest('#ui-layer')) {
                 pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
                 raycaster.setFromCamera(pointer, camera);
                 const intersects = raycaster.intersectObjects(objects, false);
