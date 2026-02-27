@@ -19,6 +19,7 @@
 
 <body>
     <div id="ui-layer">
+        <button id="mobile-palette-toggle" class="mobile-only">🎨</button>
         <div id="reference-panel">
             <h3>Reference</h3>
             <div id="pikachu-img-wrapper" onclick="document.getElementById('ref-upload').click()">
@@ -187,6 +188,16 @@
         let pointerDownTime = 0;
 
         init();
+
+        // Mobile Palette Toggle Logic
+        const paletteToggle = document.getElementById('mobile-palette-toggle');
+        const palettePanel = document.getElementById('palette-panel');
+        if (paletteToggle) {
+            paletteToggle.addEventListener('click', () => {
+                palettePanel.classList.toggle('mobile-open');
+            });
+        }
+
         animate();
 
         function init() {
@@ -915,6 +926,10 @@
                 return;
             }
 
+            // Mobile/Small Screen safety: Only disable drag-build if screen is narrow (< 768px)
+            const isSmallScreen = window.innerWidth < 768;
+            const isTouch = (event.pointerType === 'touch');
+
             downPointerPos.set(event.clientX, event.clientY);
             pointerDownTime = performance.now();
 
@@ -924,19 +939,29 @@
                 const intersects = raycaster.intersectObjects(objects, false);
 
                 if (isAddMode) {
-                    // Start path building
+                    // Disable path building only on small screens to prevent rotation interference
                     if (intersects.length > 0) {
-                        isDraggingBuild = true;
-                        verticalBuildOffset = 0; // Reset offset on new drag
-                        const intersect = intersects[0];
-                        dragStartPos.copy(intersect.point).add(intersect.face.normal);
-                        dragStartPos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
-                        addPreviewBlock(dragStartPos);
+                        if (!isSmallScreen) {
+                            isDraggingBuild = true;
+                            verticalBuildOffset = 0; // Reset offset on new drag
+                            const intersect = intersects[0];
+                            dragStartPos.copy(intersect.point).add(intersect.face.normal);
+                            dragStartPos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+                            addPreviewBlock(dragStartPos);
+                        } else {
+                            // On Small Screen: Single tap builds immediately
+                            const intersect = intersects[0];
+                            const pos = intersect.point.clone().add(intersect.face.normal);
+                            pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+                            placeVoxel(pos);
+                        }
                     }
                 } else {
-                    // Start dragging remove
-                    isDraggingRemove = true;
+                    // Remove mode
                     if (intersects.length > 0 && intersects[0].object !== plane) {
+                        if (!isSmallScreen) {
+                            isDraggingRemove = true;
+                        }
                         removeVoxel(intersects[0].object);
                     }
                 }

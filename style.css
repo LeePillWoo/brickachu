@@ -308,3 +308,70 @@ body {
 .io-btn:hover {
     background: #f0f0f0;
 }
+
+/* Mobile Visibility Helpers */
+.mobile-only {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    .mobile-only {
+        display: flex !important;
+    }
+
+    .desktop-only {
+        display: none !important;
+    }
+
+    #reference-panel,
+    #example-panel,
+    #instructions,
+    .lil-gui {
+        display: none !important;
+    }
+
+    #mobile-palette-toggle {
+        position: absolute;
+        bottom: 20px;
+        right: 20px;
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background: white;
+        border: none;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        font-size: 24px;
+        cursor: pointer;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: auto;
+    }
+
+    #palette-panel {
+        display: none;
+        /* Hidden until toggled */
+        position: absolute;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 95%;
+        max-width: 400px;
+        background: rgba(255, 255, 255, 0.95);
+        border: 1px solid #ddd;
+        z-index: 1000;
+        border-radius: 12px;
+        padding: 15px;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    #palette-panel.mobile-open {
+        display: flex !important;
+    }
+
+    .color-btn {
+        width: 36px;
+        height: 36px;
+    }
+}
