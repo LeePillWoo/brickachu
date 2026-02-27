@@ -370,6 +370,36 @@ body {
         display: flex !important;
     }
 
+    #io-panel,
+    #edit-mode-panel {
+        z-index: 1100;
+        pointer-events: auto;
+    }
+
+    #io-panel {
+        top: 10px;
+        left: 10px;
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
+    }
+
+    #edit-mode-panel {
+        top: 80px;
+        right: 10px;
+    }
+
+    .io-btn,
+    .mode-btn {
+        min-height: 44px;
+        min-width: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        padding: 10px 15px;
+    }
+
     .color-btn {
         width: 36px;
         height: 36px;

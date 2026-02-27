@@ -36,6 +36,7 @@
         <div id="io-panel">
             <button class="io-btn" id="btn-save">Save Scene</button>
             <button class="io-btn" id="btn-load">Load Scene</button>
+            <button class="io-btn" id="btn-restore" style="display:none; background:#ffeb3b;">Restore</button>
             <input type="file" id="load-upload" style="display:none" accept=".json">
         </div>
         <div id="palette-panel">
@@ -374,9 +375,34 @@
         }
 
         function setupIO() {
-            document.getElementById('btn-save').addEventListener('click', saveScene);
-            document.getElementById('btn-load').addEventListener('click', () => document.getElementById('load-upload').click());
+            const saveBtn = document.getElementById('btn-save');
+            const loadBtn = document.getElementById('btn-load');
+            const restoreBtn = document.getElementById('btn-restore');
+
+            const handleSave = (e) => { e.preventDefault(); saveScene(); };
+            const handleLoad = (e) => { e.preventDefault(); document.getElementById('load-upload').click(); };
+
+            saveBtn.addEventListener('click', handleSave);
+            saveBtn.addEventListener('touchstart', handleSave, { passive: false });
+
+            loadBtn.addEventListener('click', handleLoad);
+            loadBtn.addEventListener('touchstart', handleLoad, { passive: false });
+
             document.getElementById('load-upload').addEventListener('change', loadScene);
+
+            // Check for autosave
+            if (localStorage.getItem('nanoblock_autosave')) {
+                restoreBtn.style.display = 'block';
+                const handleRestore = (e) => {
+                    e.preventDefault();
+                    if (confirm("Restore last session from browser storage?")) {
+                        restoreFromLocal();
+                        restoreBtn.style.display = 'none';
+                    }
+                };
+                restoreBtn.addEventListener('click', handleRestore);
+                restoreBtn.addEventListener('touchstart', handleRestore, { passive: false });
+            }
         }
 
         async function saveScene() {
@@ -416,7 +442,15 @@
 
             const jsonString = JSON.stringify(exportObj, null, 2);
 
-            // Modern File System Access API
+            // 1. Parallel Save to LocalStorage (Mobile Backup)
+            try {
+                localStorage.setItem('nanoblock_autosave', jsonString);
+                console.log("Scene autosaved to browser storage.");
+            } catch (e) {
+                console.error("LocalStorage save failed", e);
+            }
+
+            // 2. File Download
             if ('showSaveFilePicker' in window) {
                 try {
                     const handle = await window.showSaveFilePicker({
@@ -433,7 +467,6 @@
                 }
             }
 
-            // Fallback for older browsers
             const blob = new Blob([jsonString], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -443,61 +476,76 @@
             setTimeout(() => URL.revokeObjectURL(url), 100);
         }
 
+        function restoreFromLocal() {
+            const data = localStorage.getItem('nanoblock_autosave');
+            if (data) {
+                try {
+                    loadFromData(data);
+                } catch (e) {
+                    console.error("Local restore failed", e);
+                }
+            }
+        }
+
+        function loadFromData(jsonString) {
+            const parsed = JSON.parse(jsonString);
+
+            // Clear existing
+            const toRemove = objects.filter(obj => obj !== plane);
+            toRemove.forEach(obj => {
+                scene.remove(obj);
+                objects.splice(objects.indexOf(obj), 1);
+            });
+
+            // Restore references and settings
+            if (parsed.refImage) document.getElementById('pikachu-img').src = parsed.refImage;
+
+            if (parsed.materials) {
+                for (const [key, def] of Object.entries(parsed.materials)) {
+                    if (materials[key]) {
+                        materials[key].color.set(def.color);
+                        materials[key].roughness = def.roughness || 0.2;
+                        const btn = document.querySelector(`.color-btn[data-slot="${key}"]`);
+                        if (btn) btn.style.backgroundColor = def.color;
+                    }
+                }
+            }
+
+            if (parsed.lighting) {
+                ambientLight.intensity = parsed.lighting.ambient;
+                directionalLight.position.set(parsed.lighting.dirPosX, parsed.lighting.dirPosY, parsed.lighting.dirPosZ);
+                directionalLight.intensity = parsed.lighting.dirInt;
+                directionalLight.color.set(parsed.lighting.dirColor);
+            }
+
+            if (parsed.board) {
+                baseBoard.material.color.set(parsed.board.color);
+                baseBoard.material.roughness = parsed.board.roughness || 0.4;
+            }
+
+            // Rebuild blocks
+            if (parsed.blocks) {
+                parsed.blocks.forEach(item => {
+                    const mat = materials[item.slot] || materials['preset-0'];
+                    const voxel = new THREE.Mesh(cubeGeo, mat);
+                    voxel.position.set(...item.pos);
+                    voxel.userData.slot = item.slot;
+                    voxel.castShadow = true;
+                    voxel.receiveShadow = true;
+                    scene.add(voxel);
+                    objects.push(voxel);
+                });
+            }
+            if (window.refreshGUI) window.refreshGUI();
+        }
+
         function loadScene(e) {
             const file = e.target.files[0];
             if (!file) return;
             const reader = new FileReader();
             reader.onload = (re) => {
                 try {
-                    const parsed = JSON.parse(re.target.result);
-
-                    // Clear existing
-                    const toRemove = objects.filter(obj => obj !== plane);
-                    toRemove.forEach(obj => {
-                        scene.remove(obj);
-                        objects.splice(objects.indexOf(obj), 1);
-                    });
-
-                    // Restore references and settings
-                    if (parsed.refImage) document.getElementById('pikachu-img').src = parsed.refImage;
-
-                    if (parsed.materials) {
-                        for (const [key, def] of Object.entries(materials)) {
-                            if (materials[key]) {
-                                materials[key].color.set(def.color);
-                                materials[key].roughness = def.roughness || 0.2;
-                                // Update color of custom buttons
-                                const btn = document.querySelector(`.color-btn[data-slot="${key}"]`);
-                                if (btn) btn.style.backgroundColor = def.color;
-                            }
-                        }
-                    }
-
-                    if (parsed.lighting) {
-                        ambientLight.intensity = parsed.lighting.ambient;
-                        directionalLight.position.set(parsed.lighting.dirPosX, parsed.lighting.dirPosY, parsed.lighting.dirPosZ);
-                        directionalLight.intensity = parsed.lighting.dirInt;
-                        directionalLight.color.set(parsed.lighting.dirColor);
-                    }
-
-                    if (parsed.board) {
-                        baseBoard.material.color.set(parsed.board.color);
-                        baseBoard.material.roughness = parsed.board.roughness || 0.4;
-                    }
-
-                    // Rebuild blocks
-                    if (parsed.blocks) {
-                        parsed.blocks.forEach(item => {
-                            const mat = materials[item.slot] || materials['preset-0'];
-                            const voxel = new THREE.Mesh(cubeGeo, mat);
-                            voxel.position.set(...item.pos);
-                            voxel.userData.slot = item.slot;
-                            voxel.castShadow = true;
-                            voxel.receiveShadow = true;
-                            scene.add(voxel);
-                            objects.push(voxel);
-                        });
-                    }
+                    loadFromData(re.target.result);
                 } catch (err) {
                     console.error("Failed to load scene", err);
                 }
