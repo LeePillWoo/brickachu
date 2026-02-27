@@ -21,39 +21,173 @@
     <div id="ui-layer">
         <div id="reference-panel">
             <h3>Reference</h3>
-            <div id="pikachu-img-wrapper">
-                <img src="pikachu_reference.png" alt="Pikachu Reference" id="pikachu-img">
+            <div id="pikachu-img-wrapper" onclick="document.getElementById('ref-upload').click()">
+                <img src="" alt="" id="pikachu-img">
+            </div>
+            <input type="file" id="ref-upload" style="display:none" accept="image/*">
+        </div>
+        <div id="example-panel">
+            <h3>Example (Auto-Guide)</h3>
+            <div id="example-img-wrapper">
+                <img src="" alt="" id="example-img">
             </div>
         </div>
+        <div id="io-panel">
+            <button class="io-btn" id="btn-save">Save Scene</button>
+            <button class="io-btn" id="btn-load">Load Scene</button>
+            <input type="file" id="load-upload" style="display:none" accept=".json">
+        </div>
         <div id="palette-panel">
-            <h3>Colors</h3>
-            <div class="color-btn active" data-color="#FCDb00" style="background-color: #FCDb00;"></div>
-            <div class="color-btn" data-color="#000000" style="background-color: #000000;"></div>
-            <div class="color-btn" data-color="#E3322C" style="background-color: #E3322C;"></div>
-            <div class="color-btn" data-color="#FFFFFF" style="background-color: #FFFFFF;"></div>
+            <h3>Colors (Right-click to edit)</h3>
+            <!-- Generated dynamically -->
+        </div>
+        <div id="edit-mode-panel">
+            <button class="mode-btn active" id="btn-add">Add Block</button>
+            <button class="mode-btn" id="btn-remove">Remove Block</button>
         </div>
         <div id="instructions">
-            <strong>Controls:</strong> Left-click to place, Right-click to remove, Drag to rotate.
+            <strong>Controls:</strong> Right-drag to Orbit, Right-click palette to Edit, Left-drag to Build (8-way
+            path). ESC to Cancel.
+        </div>
+    </div>
+
+    <!-- Simplified Palette Popup -->
+    <div id="palette-popup">
+        <div class="popup-row">
+            <label>Color</label>
+            <input type="color" id="pop-color">
+        </div>
+        <div class="popup-row">
+            <label>Roughness</label>
+            <input type="range" id="pop-roughness" min="0" max="1" step="0.01">
         </div>
     </div>
 
     <script type="module">
         import * as THREE from 'three';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import GUI from 'three/addons/libs/lil-gui.module.min.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { SAOPass } from 'three/addons/postprocessing/SAOPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
         let camera, scene, renderer;
         let plane;
         let pointer, raycaster;
         let rollOverMesh, rollOverMaterial;
-        let cubeGeo, cubeMaterial;
+        let cubeGeo;
         let controls;
+        let ambientLight, directionalLight;
+        let baseBoard;
+        let blockTargetCtrl; // GUI controller reference
+        let composer, saoPass;
+        let popup; // Global for palette
+        let selectedSlotForPopup = null;
+
+        // Settings History & Reset System (Unified Full-State Snapshots)
+        let guiParams = {
+            block: { slotTarget: 'preset-0', color: 0xffffff, roughness: 0.2 },
+            board: { color: 0xd6d6d6, roughness: 1.0 },
+            light: { intensity: 3, color: 0xffffff, x: 500, y: 1500, z: 750, ambientInt: 5.0 },
+            ao: { enabled: true, intensity: 1, radius: 250, bias: 0.5 }
+        };
+        let defaultParams = JSON.parse(JSON.stringify(guiParams));
+        let actionHistory = []; // Will be initialized in init()
+        let actionRedoStack = [];
+        let isRestoringHistory = false;
+
+        function getFullSnapshot() {
+            const blockData = objects.filter(obj => obj !== plane).map(obj => ({
+                pos: [obj.position.x, obj.position.y, obj.position.z],
+                slot: obj.userData.slot
+            }));
+            return JSON.stringify({
+                settings: guiParams,
+                blocks: blockData
+            });
+        }
+
+        function pushHistory() {
+            if (isRestoringHistory) return;
+            const current = getFullSnapshot();
+            const last = actionHistory[actionHistory.length - 1];
+            if (current !== last) {
+                actionHistory.push(current);
+                actionRedoStack = [];
+                if (actionHistory.length > 50) actionHistory.shift();
+            }
+        }
+
+        function applyActionState(stateStr) {
+            isRestoringHistory = true;
+            const state = JSON.parse(stateStr);
+
+            // 1. Restore Settings
+            Object.assign(guiParams.block, state.settings.block);
+            Object.assign(guiParams.board, state.settings.board);
+            Object.assign(guiParams.light, state.settings.light);
+            Object.assign(guiParams.ao, state.settings.ao);
+            if (window.refreshGUI) window.refreshGUI();
+
+            // 2. Restore Blocks
+            // Clear current
+            const placed = objects.filter(o => o !== plane);
+            placed.forEach(o => {
+                scene.remove(o);
+                objects.splice(objects.indexOf(o), 1);
+            });
+            // Re-place from snapshot
+            state.blocks.forEach(b => {
+                placeVoxel(new THREE.Vector3(...b.pos), b.slot, true);
+            });
+
+            isRestoringHistory = false;
+        }
+
+        // Multi-block path state
+        let isDraggingBuild = false;
+        let isDraggingRemove = false;
+        let dragStartPos = new THREE.Vector3();
+        let verticalBuildOffset = 0; // Tracks Q/E height offset during drag
+        let previewGroup = new THREE.Group();
+        let previewMaterial;
 
         const objects = [];
         let currentColor = '#FCDb00'; // Default Pikachu Yellow
         const voxelSize = 50;
 
+        // Editing mode state
+        let isAddMode = true;
+
+        // Shared materials by slot string to keep them synced
+        const materials = {};
+
+        const presetColors = [
+            '#FFFFFF', '#E0E0E0', '#BDBDBD', '#9E9E9E', '#757575', '#616161', '#424242', '#212121', // Grays
+            '#F44336', '#E91E63', '#9C27B0', '#673AB7', '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4', // Vibes
+            '#009688', '#4CAF50', '#8BC34A', '#CDDC39', '#FFEB3B', '#FFC107', '#FF9800', '#FF5722', // Brights
+            '#795548', '#9E9E9E', '#607D8B', '#000000', '#B71C1C', '#880E4F', '#4A148C', '#311B92', // Darks
+            '#1A237E', '#0D47A1', '#01579B', '#006064', '#004D40', '#1B5E20', '#33691E', '#827717', // Deep tones
+            '#F57F17', '#FF6F00', '#E65100', '#BF360C', '#3E2723', '#263238', '#FF8A80', '#FF80AB', // Accents
+            '#EA80FC', '#B388FF', '#8C9EFF', '#82B1FF', '#80D8FF', '#84FFFF', '#A7FFEB', '#B9F6CA', // Pastels
+            '#CCFF90', '#F4FF81', '#FFFF8D', '#FFE57F', '#FFD180', '#FF9E80', '#D7CCC8', '#CFD8DC'  // Muted
+        ];
+        const numCustomSlots = 10;
+        let currentSlot = 'preset-0'; // Selected slot ID
+
+        // Key states for camera movement
+        const keys = { w: false, a: false, s: false, d: false, q: false, e: false };
+
+        // FPS smoothing velocity
+        const velocity = new THREE.Vector3();
+
+        // For click vs drag detection on Block Placement
+        const downPointerPos = new THREE.Vector2();
+        let pointerDownTime = 0;
+
         init();
-        render();
+        animate();
 
         function init() {
             // 1. Setup Camera and Scene
@@ -62,7 +196,7 @@
             camera.lookAt(0, 0, 0);
 
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xf0f0f0);
+            scene.background = new THREE.Color(0xe6f2ff); // Cute pastel blue
 
             // 2. Roll-over helper (Preview Outline)
             const rollOverGeo = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
@@ -71,8 +205,8 @@
             scene.add(rollOverMesh);
 
             // 3. Visible Base Board and Collision Plane
-            const boardSize = 1000;
-            const boardThickness = 50;
+            const boardSize = 2000;
+            const boardThickness = 25;
 
             // Invisible plane for precise raycasting at y=0
             const geometry = new THREE.PlaneGeometry(boardSize, boardSize);
@@ -81,74 +215,600 @@
             scene.add(plane);
             objects.push(plane);
 
-            // Visible Base Board (slightly below y=0 so it doesn't z-fight with grid)
-            const boardGeo = new THREE.BoxGeometry(boardSize, boardThickness, boardSize);
-            const boardMat = new THREE.MeshLambertMaterial({ color: 0x88CC88 }); // Greenish base
-            const baseBoard = new THREE.Mesh(boardGeo, boardMat);
-            baseBoard.position.y = - boardThickness / 2;
-            scene.add(baseBoard);
+            // Preview Group initialization
+            scene.add(previewGroup);
+            previewMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.5, transparent: true });
 
-            // Grid Helper slightly above the board
-            const gridHelper = new THREE.GridHelper(boardSize, boardSize / voxelSize);
-            gridHelper.position.y = 1; // Slightly above y=0 to be clearly visible
-            scene.add(gridHelper);
+            // Visible Base Board (Transparent from below)
+            const boardGeo = new THREE.PlaneGeometry(boardSize, boardSize);
+            boardGeo.rotateX(- Math.PI / 2);
+            const boardMat = new THREE.MeshPhysicalMaterial({
+                color: guiParams.board.color,
+                roughness: guiParams.board.roughness,
+                side: THREE.FrontSide // Visible only from top
+            });
+            baseBoard = new THREE.Mesh(boardGeo, boardMat);
+            baseBoard.position.y = -0.05; // Just below voxel level to avoid z-fighting
+            baseBoard.receiveShadow = true;
+            // baseBoard.castShadow = true; // No longer needed for 0-thickness plane
+            scene.add(baseBoard);
 
             // 4. Shared Cube Geometry
             cubeGeo = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+
+            // Pre-create shared materials for all slots to allow live sync
+            presetColors.forEach((colorHex, idx) => {
+                materials[`preset-${idx}`] = new THREE.MeshPhysicalMaterial({
+                    color: colorHex, roughness: 0.2
+                });
+            });
+            for (let i = 0; i < numCustomSlots; i++) {
+                materials[`custom-${i}`] = new THREE.MeshPhysicalMaterial({
+                    color: '#FFFFFF', roughness: 0.2
+                });
+            }
 
             // 5. Setup Raycaster and Pointer
             raycaster = new THREE.Raycaster();
             pointer = new THREE.Vector2();
 
-            const ambientLight = new THREE.AmbientLight(0x606060, 3);
+            ambientLight = new THREE.AmbientLight(0x404040, 5.0); // Soft white light, default boost
             scene.add(ambientLight);
 
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 3);
-            directionalLight.position.set(1, 0.75, 0.5).normalize();
+            directionalLight = new THREE.DirectionalLight(0xffffff, 3);
+            directionalLight.position.set(500, 1500, 750);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 4096; // Ultra high res
+            directionalLight.shadow.mapSize.height = 4096;
+            directionalLight.shadow.camera.near = 0.5;
+            directionalLight.shadow.camera.far = 5000;
+            const d = 1500; // Expanded for board size
+            directionalLight.shadow.camera.left = -d;
+            directionalLight.shadow.camera.right = d;
+            directionalLight.shadow.camera.top = d;
+            directionalLight.shadow.camera.bottom = -d;
+            directionalLight.shadow.bias = -0.0001; // Fine-tuned bias
+            directionalLight.shadow.normalBias = 0.05; // Help with VSM shadow artifacts
+            directionalLight.shadow.radius = 4;
             scene.add(directionalLight);
 
             // 6. Setup Renderer
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(renderer.domElement); // Will append behind #ui-layer
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.VSMShadowMap; // Softer, more professional shadows
+            document.body.appendChild(renderer.domElement);
 
-            // 7. Setup Orbit Controls
+            // Environment Setup for Reflections
+            const pmremGenerator = new THREE.PMREMGenerator(renderer);
+            scene.environment = pmremGenerator.fromScene(new THREE.Scene()).texture; // Basic env
+
+            // 7. Setup Orbit Controls (Now mapping to RIGHT mouse)
             controls = new OrbitControls(camera, renderer.domElement);
-            controls.enablePan = false;
-            controls.addEventListener('change', render);
+            controls.mouseButtons = {
+                LEFT: THREE.MOUSE.NONE, // Left strictly for building
+                MIDDLE: THREE.MOUSE.DOLLY,
+                RIGHT: THREE.MOUSE.ROTATE // Right for Orbit
+            };
+            controls.enablePan = true;
 
-            // Listeners
+            // 8. Initial History State
+            actionHistory.push(getFullSnapshot());
             document.addEventListener('pointermove', onPointerMove);
             document.addEventListener('pointerdown', onPointerDown);
+            document.addEventListener('pointerup', onPointerUp);
             window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
 
-            // Prevent context menu on right click
+            // Prevent context menu
             document.addEventListener('contextmenu', event => event.preventDefault());
 
-            // Setup color palette logic
+            // 8. Post-Processing (Ambient Occlusion)
+            composer = new EffectComposer(renderer);
+            const renderPass = new RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            saoPass = new SAOPass(scene, camera);
+            saoPass.params.saoIntensity = guiParams.ao.intensity * 0.00005;
+            saoPass.params.saoRadius = guiParams.ao.radius;
+            saoPass.params.saoBlur = true;
+            saoPass.params.saoBias = 0.5;
+            composer.addPass(saoPass);
+
+            const outputPass = new OutputPass();
+            composer.addPass(outputPass);
+
+            // Setup custom Logic
             setupPalette();
+            setupModeButtons();
+            setupGUI();
+            setupIO();
+            setupRefUpload();
         }
 
+        function setupRefUpload() {
+            const refUpload = document.getElementById('ref-upload');
+            const refImg = document.getElementById('pikachu-img');
+            refUpload.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (re) => {
+                    refImg.src = re.target.result;
+                    autoPixelate(re.target.result); // Trigger auto-pixelation
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function autoPixelate(srcBase64) {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const size = 32; // Pixelation resolution
+                canvas.width = size;
+                canvas.height = size;
+
+                // 1. Sharpen/Contrast Boost Conceptually during downsample
+                ctx.filter = 'contrast(1.2) saturate(1.1)';
+                ctx.drawImage(img, 0, 0, size, size);
+
+                // Update Example Image
+                document.getElementById('example-img').src = canvas.toDataURL();
+            };
+            img.src = srcBase64;
+        }
+
+        function setupIO() {
+            document.getElementById('btn-save').addEventListener('click', saveScene);
+            document.getElementById('btn-load').addEventListener('click', () => document.getElementById('load-upload').click());
+            document.getElementById('load-upload').addEventListener('change', loadScene);
+        }
+
+        async function saveScene() {
+            const data = objects.filter(obj => obj !== plane).map(obj => {
+                return {
+                    pos: [obj.position.x, obj.position.y, obj.position.z],
+                    slot: obj.userData.slot
+                };
+            });
+
+            const matDefs = {};
+            for (const [key, mat] of Object.entries(materials)) {
+                matDefs[key] = {
+                    color: `#${mat.color.getHexString()}`,
+                    roughness: mat.roughness
+                };
+            }
+
+            const img = document.getElementById('pikachu-img');
+            const exportObj = {
+                blocks: data,
+                materials: matDefs,
+                refImage: img.src,
+                lighting: {
+                    ambient: ambientLight.intensity,
+                    dirPosX: directionalLight.position.x,
+                    dirPosY: directionalLight.position.y,
+                    dirPosZ: directionalLight.position.z,
+                    dirInt: directionalLight.intensity,
+                    dirColor: `#${directionalLight.color.getHexString()}`
+                },
+                board: {
+                    color: `#${baseBoard.material.color.getHexString()}`,
+                    roughness: baseBoard.material.roughness
+                }
+            };
+
+            const jsonString = JSON.stringify(exportObj, null, 2);
+
+            // Modern File System Access API
+            if ('showSaveFilePicker' in window) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: 'nanoblock_scene.json',
+                        types: [{ description: 'JSON File', accept: { 'application/json': ['.json'] } }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(jsonString);
+                    await writable.close();
+                    return;
+                } catch (err) {
+                    if (err.name === 'AbortError') return;
+                    console.error("Save Picker failed, using fallback", err);
+                }
+            }
+
+            // Fallback for older browsers
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'nanoblock_scene.json';
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 100);
+        }
+
+        function loadScene(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (re) => {
+                try {
+                    const parsed = JSON.parse(re.target.result);
+
+                    // Clear existing
+                    const toRemove = objects.filter(obj => obj !== plane);
+                    toRemove.forEach(obj => {
+                        scene.remove(obj);
+                        objects.splice(objects.indexOf(obj), 1);
+                    });
+
+                    // Restore references and settings
+                    if (parsed.refImage) document.getElementById('pikachu-img').src = parsed.refImage;
+
+                    if (parsed.materials) {
+                        for (const [key, def] of Object.entries(materials)) {
+                            if (materials[key]) {
+                                materials[key].color.set(def.color);
+                                materials[key].roughness = def.roughness || 0.2;
+                                // Update color of custom buttons
+                                const btn = document.querySelector(`.color-btn[data-slot="${key}"]`);
+                                if (btn) btn.style.backgroundColor = def.color;
+                            }
+                        }
+                    }
+
+                    if (parsed.lighting) {
+                        ambientLight.intensity = parsed.lighting.ambient;
+                        directionalLight.position.set(parsed.lighting.dirPosX, parsed.lighting.dirPosY, parsed.lighting.dirPosZ);
+                        directionalLight.intensity = parsed.lighting.dirInt;
+                        directionalLight.color.set(parsed.lighting.dirColor);
+                    }
+
+                    if (parsed.board) {
+                        baseBoard.material.color.set(parsed.board.color);
+                        baseBoard.material.roughness = parsed.board.roughness || 0.4;
+                    }
+
+                    // Rebuild blocks
+                    if (parsed.blocks) {
+                        parsed.blocks.forEach(item => {
+                            const mat = materials[item.slot] || materials['preset-0'];
+                            const voxel = new THREE.Mesh(cubeGeo, mat);
+                            voxel.position.set(...item.pos);
+                            voxel.userData.slot = item.slot;
+                            voxel.castShadow = true;
+                            voxel.receiveShadow = true;
+                            scene.add(voxel);
+                            objects.push(voxel);
+                        });
+                    }
+                } catch (err) {
+                    console.error("Failed to load scene", err);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function setupModeButtons() {
+            const btnAdd = document.getElementById('btn-add');
+            const btnRemove = document.getElementById('btn-remove');
+
+            btnAdd.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                isAddMode = true;
+                btnAdd.classList.add('active');
+                btnRemove.classList.remove('active');
+            });
+
+            btnRemove.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                isAddMode = false;
+                btnRemove.classList.add('active');
+                btnAdd.classList.remove('active');
+            });
+        }
+
+        function setupGUI() {
+            const gui = new GUI({ title: 'Settings' });
+
+            // Block Folder
+            const blockFolder = gui.addFolder('Blocks (PBR)');
+            const slotOptions = {};
+            presetColors.forEach((_, i) => slotOptions[`Preset ${i}`] = `preset-${i}`);
+            for (let i = 0; i < numCustomSlots; i++) slotOptions[`Custom ${i}`] = `custom-${i}`;
+
+            function updateBlockGUIOptions() {
+                const mat = materials[guiParams.block.slotTarget];
+                if (cCtrl) cCtrl.setValue(mat.color.getHex());
+                if (rCtrl) rCtrl.setValue(mat.roughness);
+            }
+
+            blockTargetCtrl = blockFolder.add(guiParams.block, 'slotTarget', slotOptions).name('Target Slot').onChange(updateBlockGUIOptions);
+            let cCtrl = blockFolder.addColor(guiParams.block, 'color').name('Color').onChange(v => {
+                materials[guiParams.block.slotTarget].color.setHex(v);
+                updatePaletteIcon(guiParams.block.slotTarget, '#' + materials[guiParams.block.slotTarget].color.getHexString());
+            }).onFinishChange(pushHistory);
+            let rCtrl = blockFolder.add(guiParams.block, 'roughness', 0, 1).name('Roughness').onChange(v => {
+                materials[guiParams.block.slotTarget].roughness = v;
+            }).onFinishChange(pushHistory);
+
+            blockFolder.add({
+                reset: () => {
+                    Object.assign(guiParams.block, defaultParams.block);
+                    blockTargetCtrl.setValue(guiParams.block.slotTarget);
+                    updateBlockGUIOptions();
+                    pushHistory();
+                }
+            }, 'reset').name('↺ Reset Block Defaults');
+
+            window.syncGUIToSlot = function (slot) {
+                guiParams.block.slotTarget = slot;
+                blockTargetCtrl.setValue(slot);
+                updateBlockGUIOptions();
+            };
+
+            // Board Folder
+            const boardFolder = gui.addFolder('Base Board');
+            boardFolder.addColor(guiParams.board, 'color').name('Color').onChange(v => baseBoard.material.color.setHex(v)).onFinishChange(pushHistory);
+            boardFolder.add(guiParams.board, 'roughness', 0, 1).name('Roughness').onChange(v => baseBoard.material.roughness = v).onFinishChange(pushHistory);
+            boardFolder.add({
+                reset: () => {
+                    Object.assign(guiParams.board, defaultParams.board);
+                    baseBoard.material.color.setHex(guiParams.board.color);
+                    baseBoard.material.roughness = guiParams.board.roughness;
+                    gui.controllersRecursive().forEach(c => c.updateDisplay());
+                    pushHistory();
+                }
+            }, 'reset').name('↺ Reset Board');
+
+            // Lighting Folder
+            const lightFolder = gui.addFolder('Lighting');
+            lightFolder.add(guiParams.light, 'ambientInt', 0, 10).name('Ambient Intensity').onChange(v => ambientLight.intensity = v).onFinishChange(pushHistory);
+            lightFolder.addColor(guiParams.light, 'color').name('Light Color').onChange(v => directionalLight.color.setHex(v)).onFinishChange(pushHistory);
+            lightFolder.add(guiParams.light, 'intensity', 0, 10).name('Directional Intensity').onChange(v => directionalLight.intensity = v).onFinishChange(pushHistory);
+            lightFolder.add(guiParams.light, 'x', -2000, 2000).name('Position X').onChange(v => directionalLight.position.x = v).onFinishChange(pushHistory);
+            lightFolder.add(guiParams.light, 'y', 100, 3000).name('Position Y').onChange(v => directionalLight.position.y = v).onFinishChange(pushHistory);
+            lightFolder.add(guiParams.light, 'z', -2000, 2000).name('Position Z').onChange(v => directionalLight.position.z = v).onFinishChange(pushHistory);
+            lightFolder.add({
+                reset: () => {
+                    Object.assign(guiParams.light, defaultParams.light);
+                    ambientLight.intensity = guiParams.light.ambientInt;
+                    directionalLight.color.setHex(guiParams.light.color);
+                    directionalLight.intensity = guiParams.light.intensity;
+                    directionalLight.position.set(guiParams.light.x, guiParams.light.y, guiParams.light.z);
+                    gui.controllersRecursive().forEach(c => c.updateDisplay());
+                    pushHistory();
+                }
+            }, 'reset').name('↺ Reset Lighting');
+
+            // AO Folder
+            const aoFolder = gui.addFolder('Ambient Occlusion');
+            aoFolder.add(guiParams.ao, 'enabled').name('Enable AO').onChange(v => saoPass.enabled = v).onFinishChange(pushHistory);
+            aoFolder.add(guiParams.ao, 'intensity', 0, 4).step(1).name('Intensity (Step)').onChange(v => {
+                saoPass.params.saoIntensity = v * 0.00005;
+            }).onFinishChange(pushHistory);
+            aoFolder.add(guiParams.ao, 'radius', 0, 500).name('Radius').onChange(v => saoPass.params.saoRadius = v).onFinishChange(pushHistory);
+            aoFolder.add(guiParams.ao, 'bias', 0, 1).name('Bias').onChange(v => saoPass.params.saoBias = v).onFinishChange(pushHistory);
+            aoFolder.add({
+                reset: () => {
+                    Object.assign(guiParams.ao, defaultParams.ao);
+                    saoPass.enabled = guiParams.ao.enabled;
+                    saoPass.params.saoIntensity = guiParams.ao.intensity * 0.00005;
+                    saoPass.params.saoRadius = guiParams.ao.radius;
+                    saoPass.params.saoBias = guiParams.ao.bias;
+                    gui.controllersRecursive().forEach(c => c.updateDisplay());
+                    pushHistory();
+                }
+            }, 'reset').name('↺ Reset AO');
+
+            window.refreshGUI = function () {
+                // Board Sync
+                baseBoard.material.color.setHex(guiParams.board.color);
+                baseBoard.material.roughness = guiParams.board.roughness;
+                // Light Sync
+                ambientLight.intensity = guiParams.light.ambientInt;
+                directionalLight.color.setHex(guiParams.light.color);
+                directionalLight.intensity = guiParams.light.intensity;
+                directionalLight.position.set(guiParams.light.x, guiParams.light.y, guiParams.light.z);
+                // AO Sync
+                saoPass.enabled = guiParams.ao.enabled;
+                saoPass.params.saoIntensity = guiParams.ao.intensity * 0.00005;
+                saoPass.params.saoRadius = guiParams.ao.radius;
+                saoPass.params.saoBias = guiParams.ao.bias;
+
+                gui.controllersRecursive().forEach(c => c.updateDisplay());
+                // Sync roll-over color to current slot
+                rollOverMaterial.color.copy(materials[guiParams.block.slotTarget].color);
+            };
+
+            gui.close();
+        }
+
+
+
+
         function setupPalette() {
+            const panel = document.getElementById('palette-panel');
+            popup = document.getElementById('palette-popup');
+
+            // Create rows
+            const presetRow = document.createElement('div');
+            presetRow.className = 'palette-row';
+            const customRow = document.createElement('div');
+            customRow.className = 'palette-row';
+
+            // Generate Buttons Dynamically
+            presetColors.forEach((color, idx) => {
+                const btn = document.createElement('div');
+                btn.className = 'color-btn' + (idx === 0 ? ' active' : '');
+                btn.style.backgroundColor = color;
+                btn.setAttribute('data-slot', `preset-${idx}`);
+                presetRow.appendChild(btn);
+            });
+            for (let i = 0; i < numCustomSlots; i++) {
+                const btn = document.createElement('div');
+                btn.className = 'color-btn custom-slot';
+                btn.style.backgroundColor = '#FFFFFF'; // Correctly sync to white
+                btn.setAttribute('data-slot', `custom-${i}`);
+                customRow.appendChild(btn);
+            }
+
+            panel.appendChild(presetRow);
+            panel.appendChild(customRow);
+
             const btns = document.querySelectorAll('.color-btn');
+
             btns.forEach(btn => {
                 btn.addEventListener('pointerdown', (e) => {
-                    e.stopPropagation(); // Prevent Three.js from getting this
-                    btns.forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                    currentColor = btn.getAttribute('data-color');
-                    rollOverMaterial.color.set(currentColor);
-                    render();
+                    if (e.button === 0) { // Left click: Set active slot
+                        popup.style.display = 'none';
+                        btns.forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        currentSlot = btn.getAttribute('data-slot');
+                        rollOverMaterial.color.copy(materials[currentSlot].color);
+                        if (window.syncGUIToSlot) window.syncGUIToSlot(currentSlot);
+                    }
+                });
+
+                btn.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    selectedSlotForPopup = btn.getAttribute('data-slot');
+                    const mat = materials[selectedSlotForPopup];
+
+                    popup.style.display = 'flex';
+                    // Constrain popup position
+                    let pX = e.clientX;
+                    let pY = e.clientY;
+                    if (pX + 200 > window.innerWidth) pX -= 200;
+                    if (pY + 150 > window.innerHeight) pY -= 150;
+                    popup.style.left = `${pX}px`;
+                    popup.style.top = `${pY}px`;
+
+                    // Populate Color Input
+                    document.getElementById('pop-color').value = '#' + mat.color.getHexString();
+                    document.getElementById('pop-roughness').value = mat.roughness;
                 });
             });
+
+            document.addEventListener('pointerdown', (e) => {
+                if (!e.target.closest('#palette-popup') && !e.target.closest('.color-btn')) {
+                    if (popup) popup.style.display = 'none';
+                }
+            });
+        }
+
+        function updatePaletteIcon(slot, hex) {
+            const btn = document.querySelector(`.color-btn[data-slot="${slot}"]`);
+            if (btn) btn.style.backgroundColor = hex;
+        }
+
+        // Color Picker listener
+        document.addEventListener('DOMContentLoaded', () => {
+            const popColor = document.getElementById('pop-color');
+            if (popColor) {
+                popColor.addEventListener('input', (e) => {
+                    if (!selectedSlotForPopup) return;
+                    const mat = materials[selectedSlotForPopup];
+                    const hex = e.target.value;
+                    mat.color.set(hex);
+                    updatePaletteIcon(selectedSlotForPopup, hex);
+                    if (currentSlot === selectedSlotForPopup) rollOverMaterial.color.set(hex);
+                });
+            }
+
+            ['roughness'].forEach(id => {
+                const el = document.getElementById(`pop-${id}`);
+                if (el) {
+                    el.addEventListener('input', () => {
+                        const val = parseFloat(el.value);
+                        if (!selectedSlotForPopup) return;
+                        const mat = materials[selectedSlotForPopup];
+                        mat[id] = val;
+                    });
+                }
+            });
+        });
+
+
+
+        function frameCamera() {
+            const placedBlocks = objects.filter(o => o !== plane);
+            if (placedBlocks.length === 0) return;
+            const box = new THREE.Box3();
+            placedBlocks.forEach(b => box.expandByObject(b));
+
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const dist = Math.max(maxDim * 1.5, 300); // minimum distance
+
+            camera.position.set(center.x + dist, center.y + dist * 0.8, center.z + dist);
+            controls.target.copy(center);
+            camera.lookAt(center);
+            controls.update();
+        }
+
+        function onKeyDown(event) {
+            const key = event.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) keys[key] = true;
+            if (event.code === 'KeyF') frameCamera();
+            if (event.code === 'Escape') cancelDragBuild();
+
+            // Undo/Redo for Unified Actions (Ctrl+Z, Ctrl+Y)
+            if (event.ctrlKey) {
+                if (key === 'z') {
+                    event.preventDefault();
+                    if (actionHistory.length > 1) {
+                        const current = actionHistory.pop();
+                        actionRedoStack.push(current);
+                        const prev = actionHistory[actionHistory.length - 1];
+                        applyActionState(prev);
+                    }
+                }
+                if (key === 'y') {
+                    event.preventDefault();
+                    if (actionRedoStack.length > 0) {
+                        const next = actionRedoStack.pop();
+                        actionHistory.push(next);
+                        applyActionState(next);
+                    }
+                }
+            }
+
+            // Vertical build support
+            if (isDraggingBuild) {
+                if (event.code === 'KeyE') { verticalBuildOffset++; updatePreviewPath(rollOverMesh.position); }
+                if (event.code === 'KeyQ') { verticalBuildOffset--; updatePreviewPath(rollOverMesh.position); }
+            }
+        }
+
+        function cancelDragBuild() {
+            if (isDraggingBuild) {
+                isDraggingBuild = false;
+                verticalBuildOffset = 0;
+                while (previewGroup.children.length > 0) {
+                    previewGroup.remove(previewGroup.children[0]);
+                }
+            }
+        }
+
+        function onKeyUp(event) {
+            const key = event.key.toLowerCase();
+            if (keys.hasOwnProperty(key)) keys[key] = false;
         }
 
         function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-            render();
         }
 
         function onPointerMove(event) {
@@ -158,46 +818,220 @@
 
             if (intersects.length > 0) {
                 const intersect = intersects[0];
-                rollOverMesh.position.copy(intersect.point).add(intersect.face.normal);
-                rollOverMesh.position.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
-                render();
+
+                if (isAddMode) {
+                    rollOverMesh.visible = true;
+                    rollOverMaterial.color.set(0x00ff00); // Green for build preview
+                    rollOverMaterial.opacity = 0.3;
+                    rollOverMesh.position.copy(intersect.point).add(intersect.face.normal);
+                    rollOverMesh.position.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+
+                    if (isDraggingBuild) {
+                        updatePreviewPath(rollOverMesh.position);
+                    }
+                } else {
+                    // Remove Mode Preview
+                    if (intersect.object !== plane) {
+                        rollOverMesh.visible = true;
+                        rollOverMaterial.color.set(0xff0000); // Red for deletion
+                        rollOverMaterial.opacity = 0.5;
+                        rollOverMesh.position.copy(intersect.object.position);
+
+                        if (isDraggingRemove) {
+                            removeVoxel(intersect.object);
+                        }
+                    } else {
+                        rollOverMesh.visible = false;
+                    }
+                }
+            } else {
+                rollOverMesh.visible = false;
             }
+        }
+
+        function removeVoxel(object) {
+            if (object === plane) return;
+            scene.remove(object);
+            objects.splice(objects.indexOf(object), 1);
+            if (!isDraggingRemove) pushHistory(); // Only push for single clicks; drag handles it in onPointerUp
+        }
+
+        function updatePreviewPath(currentPos) {
+            // Clear existing preview
+            while (previewGroup.children.length > 0) {
+                previewGroup.remove(previewGroup.children[0]);
+            }
+
+            // Calculate 8-directional constraint
+            const dx = Math.round((currentPos.x - dragStartPos.x) / voxelSize);
+            const dz = Math.round((currentPos.z - dragStartPos.z) / voxelSize);
+            const dy = verticalBuildOffset; // Already an integer from event listener
+
+            // Force to nearest 8-direction (XZ Plane)
+            let targetDx = dx, targetDz = dz;
+            const absX = Math.abs(dx);
+            const absZ = Math.abs(dz);
+
+            if (absX > absZ * 1.5) { targetDz = 0; }
+            else if (absZ > absX * 1.5) { targetDx = 0; }
+            else {
+                const diag = Math.max(absX, absZ);
+                targetDx = dx > 0 ? diag : -diag;
+                targetDz = dz > 0 ? diag : -diag;
+            }
+
+            // Calculate total steps based on longest axis for 1-block steps
+            const steps = Math.max(Math.abs(targetDx), Math.abs(dy), Math.abs(targetDz));
+            if (steps === 0) {
+                addPreviewBlock(dragStartPos);
+                return;
+            }
+
+            for (let i = 0; i <= steps; i++) {
+                // Ensure each block is snapped to an integer voxel offset
+                const stepX = Math.round((targetDx / steps) * i);
+                const stepY = Math.round((dy / steps) * i);
+                const stepZ = Math.round((targetDz / steps) * i);
+
+                const pos = dragStartPos.clone().add(new THREE.Vector3(
+                    stepX * voxelSize,
+                    stepY * voxelSize,
+                    stepZ * voxelSize
+                ));
+                addPreviewBlock(pos);
+            }
+        }
+
+        function addPreviewBlock(pos) {
+            const mesh = new THREE.Mesh(cubeGeo, previewMaterial);
+            mesh.position.copy(pos);
+            previewGroup.add(mesh);
+            previewMaterial.color.copy(materials[currentSlot].color);
         }
 
         function onPointerDown(event) {
             // Check if clicking on UI
-            if (event.target.closest('#ui-layer') && !event.target.closest('#instructions')) {
+            if (event.target.closest('#ui-layer') && !event.target.closest('#instructions') && !event.target.closest('#palette-popup')) {
                 return;
             }
 
-            pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
-            raycaster.setFromCamera(pointer, camera);
-            const intersects = raycaster.intersectObjects(objects, false);
+            downPointerPos.set(event.clientX, event.clientY);
+            pointerDownTime = performance.now();
 
-            if (intersects.length > 0) {
-                const intersect = intersects[0];
+            if (event.button === 0 && !event.target.closest('#ui-layer')) {
+                pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
+                raycaster.setFromCamera(pointer, camera);
+                const intersects = raycaster.intersectObjects(objects, false);
 
-                // delete cube on right click -> event.button === 2
-                if (event.button === 2) {
-                    if (intersect.object !== plane) {
-                        scene.remove(intersect.object);
-                        objects.splice(objects.indexOf(intersect.object), 1);
+                if (isAddMode) {
+                    // Start path building
+                    if (intersects.length > 0) {
+                        isDraggingBuild = true;
+                        verticalBuildOffset = 0; // Reset offset on new drag
+                        const intersect = intersects[0];
+                        dragStartPos.copy(intersect.point).add(intersect.face.normal);
+                        dragStartPos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+                        addPreviewBlock(dragStartPos);
                     }
-                    // create cube on left click -> event.button === 0
-                } else if (event.button === 0) {
-                    const material = new THREE.MeshLambertMaterial({ color: currentColor });
-                    const voxel = new THREE.Mesh(cubeGeo, material);
-                    voxel.position.copy(intersect.point).add(intersect.face.normal);
-                    voxel.position.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
-                    scene.add(voxel);
-                    objects.push(voxel);
+                } else {
+                    // Start dragging remove
+                    isDraggingRemove = true;
+                    if (intersects.length > 0 && intersects[0].object !== plane) {
+                        removeVoxel(intersects[0].object);
+                    }
                 }
-                render();
             }
         }
 
-        function render() {
-            renderer.render(scene, camera);
+        function placeVoxel(position, slotOverride = null, skipHistory = false) {
+            // Avoid duplicates at the exact same spot
+            const duplicate = objects.find(obj => obj !== plane && obj.position.equals(position));
+            if (duplicate) return;
+
+            const targetSlot = slotOverride || currentSlot;
+            const material = materials[targetSlot];
+            const voxel = new THREE.Mesh(cubeGeo, material);
+            voxel.userData.slot = targetSlot;
+            voxel.position.copy(position);
+            voxel.castShadow = true;
+            voxel.receiveShadow = true;
+            scene.add(voxel);
+            objects.push(voxel);
+
+            if (!skipHistory) pushHistory();
+        }
+
+        function onPointerUp(event) {
+            if (event.button === 0) {
+                // Finalize building if dragging
+                if (previewGroup.children.length > 0) {
+                    previewGroup.children.forEach(child => {
+                        placeVoxel(child.position, currentSlot, true); // Batch place
+                    });
+                    while (previewGroup.children.length > 0) {
+                        previewGroup.remove(previewGroup.children[0]);
+                    }
+                    pushHistory(); // Save once after batch
+                }
+                if (isDraggingRemove) {
+                    pushHistory(); // Save once after removal drag
+                }
+                isDraggingBuild = false;
+                isDraggingRemove = false;
+            }
+
+            // Distinguish click from drag for REMOVAL
+            const dist = downPointerPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
+            const timeDelta = performance.now() - pointerDownTime;
+
+            // Removal logic (Old single-click logic simplified into removeVoxel)
+            if (dist < 5 && timeDelta < 400 && !event.target.closest('#ui-layer')) {
+                // Single click removal falls under the same logic if needed, 
+                // but the continuous drag already covers it.
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // FPS Logic with Velocity smoothing
+            const accel = 2.0;
+            const friction = 0.85;
+
+            const forward = new THREE.Vector3();
+            camera.getWorldDirection(forward);
+            forward.y = 0;
+            forward.normalize();
+
+            const right = new THREE.Vector3();
+            right.crossVectors(forward, camera.up).normalize();
+
+            if (keys.w) velocity.addScaledVector(forward, accel);
+            if (keys.s) velocity.addScaledVector(forward, -accel);
+            if (keys.a) velocity.addScaledVector(right, -accel);
+            if (keys.d) velocity.addScaledVector(right, accel);
+            if (keys.e) velocity.y += accel;
+            if (keys.q) velocity.y -= accel;
+
+            // Apply friction and move
+            velocity.multiplyScalar(friction);
+            camera.position.add(velocity);
+
+            // If we are significantly moving, sync orbit controls gracefully
+            if (velocity.lengthSq() > 0.1) {
+                // Keep the orbit target relative if moving normally
+                const lookDirection = new THREE.Vector3();
+                camera.getWorldDirection(lookDirection);
+                const distance = controls.target.distanceTo(camera.position);
+                controls.target.copy(camera.position).addScaledVector(lookDirection, Math.max(distance, 100));
+            }
+
+            controls.update();
+            if (composer) {
+                composer.render();
+            } else {
+                renderer.render(scene, camera);
+            }
         }
     </script>
 </body>
