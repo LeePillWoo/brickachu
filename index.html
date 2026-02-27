@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Nanoblock Game (Pikachu Edition)</title>
+    <link rel="stylesheet" href="style.css?v=3">
+    <!-- Import map for Three.js -->
+    <script type="importmap">
+        {
+          "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+          }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="ui-layer">
+        <div id="reference-panel">
+            <h3>Reference</h3>
+            <div id="pikachu-img-wrapper">
+                <img src="pikachu_reference.png" alt="Pikachu Reference" id="pikachu-img">
+            </div>
+        </div>
+        <div id="palette-panel">
+            <h3>Colors</h3>
+            <div class="color-btn active" data-color="#FCDb00" style="background-color: #FCDb00;"></div>
+            <div class="color-btn" data-color="#000000" style="background-color: #000000;"></div>
+            <div class="color-btn" data-color="#E3322C" style="background-color: #E3322C;"></div>
+            <div class="color-btn" data-color="#FFFFFF" style="background-color: #FFFFFF;"></div>
+        </div>
+        <div id="instructions">
+            <strong>Controls:</strong> Left-click to place, Right-click to remove, Drag to rotate.
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let camera, scene, renderer;
+        let plane;
+        let pointer, raycaster;
+        let rollOverMesh, rollOverMaterial;
+        let cubeGeo, cubeMaterial;
+        let controls;
+
+        const objects = [];
+        let currentColor = '#FCDb00'; // Default Pikachu Yellow
+        const voxelSize = 50;
+
+        init();
+        render();
+
+        function init() {
+            // 1. Setup Camera and Scene
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+            camera.position.set(500, 800, 1300);
+            camera.lookAt(0, 0, 0);
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf0f0f0);
+
+            // 2. Roll-over helper (Preview Outline)
+            const rollOverGeo = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+            rollOverMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, opacity: 0.5, transparent: true });
+            rollOverMesh = new THREE.Mesh(rollOverGeo, rollOverMaterial);
+            scene.add(rollOverMesh);
+
+            // 3. Visible Base Board and Collision Plane
+            const boardSize = 1000;
+            const boardThickness = 50;
+
+            // Invisible plane for precise raycasting at y=0
+            const geometry = new THREE.PlaneGeometry(boardSize, boardSize);
+            geometry.rotateX(- Math.PI / 2);
+            plane = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ visible: false }));
+            scene.add(plane);
+            objects.push(plane);
+
+            // Visible Base Board (slightly below y=0 so it doesn't z-fight with grid)
+            const boardGeo = new THREE.BoxGeometry(boardSize, boardThickness, boardSize);
+            const boardMat = new THREE.MeshLambertMaterial({ color: 0x88CC88 }); // Greenish base
+            const baseBoard = new THREE.Mesh(boardGeo, boardMat);
+            baseBoard.position.y = - boardThickness / 2;
+            scene.add(baseBoard);
+
+            // Grid Helper slightly above the board
+            const gridHelper = new THREE.GridHelper(boardSize, boardSize / voxelSize);
+            gridHelper.position.y = 1; // Slightly above y=0 to be clearly visible
+            scene.add(gridHelper);
+
+            // 4. Shared Cube Geometry
+            cubeGeo = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+
+            // 5. Setup Raycaster and Pointer
+            raycaster = new THREE.Raycaster();
+            pointer = new THREE.Vector2();
+
+            const ambientLight = new THREE.AmbientLight(0x606060, 3);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 3);
+            directionalLight.position.set(1, 0.75, 0.5).normalize();
+            scene.add(directionalLight);
+
+            // 6. Setup Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement); // Will append behind #ui-layer
+
+            // 7. Setup Orbit Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enablePan = false;
+            controls.addEventListener('change', render);
+
+            // Listeners
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerdown', onPointerDown);
+            window.addEventListener('resize', onWindowResize);
+
+            // Prevent context menu on right click
+            document.addEventListener('contextmenu', event => event.preventDefault());
+
+            // Setup color palette logic
+            setupPalette();
+        }
+
+        function setupPalette() {
+            const btns = document.querySelectorAll('.color-btn');
+            btns.forEach(btn => {
+                btn.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation(); // Prevent Three.js from getting this
+                    btns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentColor = btn.getAttribute('data-color');
+                    rollOverMaterial.color.set(currentColor);
+                    render();
+                });
+            });
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            render();
+        }
+
+        function onPointerMove(event) {
+            pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
+            raycaster.setFromCamera(pointer, camera);
+            const intersects = raycaster.intersectObjects(objects, false);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+                rollOverMesh.position.copy(intersect.point).add(intersect.face.normal);
+                rollOverMesh.position.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+                render();
+            }
+        }
+
+        function onPointerDown(event) {
+            // Check if clicking on UI
+            if (event.target.closest('#ui-layer') && !event.target.closest('#instructions')) {
+                return;
+            }
+
+            pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
+            raycaster.setFromCamera(pointer, camera);
+            const intersects = raycaster.intersectObjects(objects, false);
+
+            if (intersects.length > 0) {
+                const intersect = intersects[0];
+
+                // delete cube on right click -> event.button === 2
+                if (event.button === 2) {
+                    if (intersect.object !== plane) {
+                        scene.remove(intersect.object);
+                        objects.splice(objects.indexOf(intersect.object), 1);
+                    }
+                    // create cube on left click -> event.button === 0
+                } else if (event.button === 0) {
+                    const material = new THREE.MeshLambertMaterial({ color: currentColor });
+                    const voxel = new THREE.Mesh(cubeGeo, material);
+                    voxel.position.copy(intersect.point).add(intersect.face.normal);
+                    voxel.position.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+                    scene.add(voxel);
+                    objects.push(voxel);
+                }
+                render();
+            }
+        }
+
+        function render() {
+            renderer.render(scene, camera);
+        }
+    </script>
+</body>
+
+</html>
