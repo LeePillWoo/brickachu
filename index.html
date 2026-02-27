@@ -36,7 +36,6 @@
         <div id="io-panel">
             <button class="io-btn" id="btn-save">Save Scene</button>
             <button class="io-btn" id="btn-load">Load Scene</button>
-            <button class="io-btn" id="btn-restore" style="display:none; background:#ffeb3b;">Restore</button>
             <input type="file" id="load-upload" style="display:none" accept=".json">
         </div>
         <div id="palette-panel">
@@ -377,7 +376,6 @@
         function setupIO() {
             const saveBtn = document.getElementById('btn-save');
             const loadBtn = document.getElementById('btn-load');
-            const restoreBtn = document.getElementById('btn-restore');
 
             const handleSave = (e) => { e.preventDefault(); saveScene(); };
             const handleLoad = (e) => { e.preventDefault(); document.getElementById('load-upload').click(); };
@@ -389,20 +387,6 @@
             loadBtn.addEventListener('touchstart', handleLoad, { passive: false });
 
             document.getElementById('load-upload').addEventListener('change', loadScene);
-
-            // Check for autosave
-            if (localStorage.getItem('nanoblock_autosave')) {
-                restoreBtn.style.display = 'block';
-                const handleRestore = (e) => {
-                    e.preventDefault();
-                    if (confirm("Restore last session from browser storage?")) {
-                        restoreFromLocal();
-                        restoreBtn.style.display = 'none';
-                    }
-                };
-                restoreBtn.addEventListener('click', handleRestore);
-                restoreBtn.addEventListener('touchstart', handleRestore, { passive: false });
-            }
         }
 
         async function saveScene() {
@@ -442,50 +426,25 @@
 
             const jsonString = JSON.stringify(exportObj, null, 2);
 
-            // 1. Parallel Save to LocalStorage (Mobile Backup)
-            try {
-                localStorage.setItem('nanoblock_autosave', jsonString);
-                console.log("Scene autosaved to browser storage.");
-            } catch (e) {
-                console.error("LocalStorage save failed", e);
-            }
-
-            // 2. File Download
-            if ('showSaveFilePicker' in window) {
-                try {
-                    const handle = await window.showSaveFilePicker({
-                        suggestedName: 'nanoblock_scene.json',
-                        types: [{ description: 'JSON File', accept: { 'application/json': ['.json'] } }]
-                    });
-                    const writable = await handle.createWritable();
-                    await writable.write(jsonString);
-                    await writable.close();
-                    return;
-                } catch (err) {
-                    if (err.name === 'AbortError') return;
-                    console.error("Save Picker failed, using fallback", err);
-                }
-            }
-
+            // Standard Blob + a link method for maximum mobile compatibility
             const blob = new Blob([jsonString], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             a.download = 'nanoblock_scene.json';
+
+            // Append to body and click for Safari compatibility
+            document.body.appendChild(a);
             a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 100);
+
+            // Cleanup
+            setTimeout(() => {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            }, 100);
         }
 
-        function restoreFromLocal() {
-            const data = localStorage.getItem('nanoblock_autosave');
-            if (data) {
-                try {
-                    loadFromData(data);
-                } catch (e) {
-                    console.error("Local restore failed", e);
-                }
-            }
-        }
+
 
         function loadFromData(jsonString) {
             const parsed = JSON.parse(jsonString);
