@@ -34,8 +34,10 @@
             </div>
         </div>
         <div id="io-panel">
-            <button class="io-btn" id="btn-save">Save Scene</button>
-            <button class="io-btn" id="btn-load">Load Scene</button>
+            <input type="text" id="project-name" placeholder="Project Name" value="nanoblock_scene">
+            <button class="io-btn" id="btn-save">Save</button>
+            <button class="io-btn" id="btn-load">Load</button>
+            <button class="io-btn" id="btn-new">New</button>
             <input type="file" id="load-upload" style="display:none" accept=".json">
         </div>
         <div id="palette-panel">
@@ -376,15 +378,20 @@
         function setupIO() {
             const saveBtn = document.getElementById('btn-save');
             const loadBtn = document.getElementById('btn-load');
+            const newBtn = document.getElementById('btn-new');
 
             const handleSave = (e) => { e.preventDefault(); saveScene(); };
             const handleLoad = (e) => { e.preventDefault(); document.getElementById('load-upload').click(); };
+            const handleNew = (e) => { e.preventDefault(); resetScene(); };
 
             saveBtn.addEventListener('click', handleSave);
             saveBtn.addEventListener('touchstart', handleSave, { passive: false });
 
             loadBtn.addEventListener('click', handleLoad);
             loadBtn.addEventListener('touchstart', handleLoad, { passive: false });
+
+            newBtn.addEventListener('click', handleNew);
+            newBtn.addEventListener('touchstart', handleNew, { passive: false });
 
             document.getElementById('load-upload').addEventListener('change', loadScene);
         }
@@ -426,12 +433,16 @@
 
             const jsonString = JSON.stringify(exportObj, null, 2);
 
+            // Get project name for filename
+            const projectName = document.getElementById('project-name').value.trim() || 'nanoblock_scene';
+            const fileName = projectName.endsWith('.json') ? projectName : `${projectName}.json`;
+
             // Standard Blob + a link method for maximum mobile compatibility
             const blob = new Blob([jsonString], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'nanoblock_scene.json';
+            a.download = fileName;
 
             // Append to body and click for Safari compatibility
             document.body.appendChild(a);
@@ -442,6 +453,28 @@
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
             }, 100);
+        }
+
+        function resetScene() {
+            if (!confirm("Start a new screen? All current blocks will be cleared.")) return;
+
+            // Clear all blocks
+            const toRemove = objects.filter(obj => obj !== plane);
+            toRemove.forEach(obj => {
+                scene.remove(obj);
+            });
+            objects.length = 0;
+            objects.push(plane);
+
+            // Clear history
+            actionHistory = [getFullSnapshot()];
+            actionRedoStack = [];
+
+            // Note: Camera and settings are kept as is, but we could reset them if desired.
+            // For "same as refresh", we might want to reset camera too:
+            // camera.position.set(500, 800, 1300);
+            // controls.target.set(0,0,0);
+            // controls.update();
         }
 
 
