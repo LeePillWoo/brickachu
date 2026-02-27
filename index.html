@@ -47,10 +47,18 @@
         <div id="edit-mode-panel">
             <button class="mode-btn active" id="btn-add">Add Block</button>
             <button class="mode-btn" id="btn-remove">Remove Block</button>
+            <button id="btn-help">?</button>
         </div>
-        <div id="instructions">
-            <strong>Controls:</strong> Right-drag to Orbit, Right-click palette to Edit, Left-drag to Build (8-way
-            path). ESC to Cancel.
+        <div id="instructions" class="popup-style">
+            <div id="instructions-header">
+                <strong>Controls & Shortcuts</strong>
+                <button id="btn-close-help">×</button>
+            </div>
+            <p><strong>Orbit:</strong> Right-drag / Alt + Left-drag</p>
+            <p><strong>Build Path:</strong> Left-drag (Desktop)</p>
+            <p><strong>Single Tap:</strong> Build on Grid/Block (Mobile)</p>
+            <p><strong>Palette:</strong> Right-click to edit colors</p>
+            <p><strong>Cancel:</strong> ESC key</p>
         </div>
     </div>
 
@@ -384,6 +392,28 @@
             const handleLoad = (e) => { e.preventDefault(); document.getElementById('load-upload').click(); };
             const handleNew = (e) => { e.preventDefault(); resetScene(); };
 
+            // Help Toggle
+            const helpBtn = document.getElementById('btn-help');
+            const closeHelpBtn = document.getElementById('btn-close-help');
+            const instructionsPanel = document.getElementById('instructions');
+
+            const toggleHelp = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const isVisible = instructionsPanel.style.display === 'block';
+                instructionsPanel.style.display = isVisible ? 'none' : 'block';
+            };
+
+            helpBtn.addEventListener('click', toggleHelp);
+            helpBtn.addEventListener('touchstart', toggleHelp, { passive: false });
+
+            const closeHelp = (e) => {
+                e.preventDefault();
+                instructionsPanel.style.display = 'none';
+            };
+            closeHelpBtn.addEventListener('click', closeHelp);
+            closeHelpBtn.addEventListener('touchstart', closeHelp, { passive: false });
+
             saveBtn.addEventListener('click', handleSave);
             saveBtn.addEventListener('touchstart', handleSave, { passive: false });
 
@@ -434,8 +464,8 @@
             const jsonString = JSON.stringify(exportObj, null, 2);
 
             // Get project name for filename
-            const projectName = document.getElementById('project-name').value.trim() || 'nanoblock_scene';
-            const fileName = projectName.endsWith('.json') ? projectName : `${projectName}.json`;
+            const projectName = document.getElementById('project-name').value.trim() || 'scene';
+            const fileName = `NanoBlock_${projectName.endsWith('.json') ? projectName : `${projectName}.json`}`;
 
             // Standard Blob + a link method for maximum mobile compatibility
             const blob = new Blob([jsonString], { type: 'application/json' });
