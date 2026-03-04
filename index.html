@@ -17,7 +17,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="google-site-verification" content="AAY_Ed7C67JS_OyycN1wxyuyhCtgRy6GQ-HVwro6nd4" />
     <title>3D Nanoblock Game (Pikachu Edition)</title>
-    <link rel="stylesheet" href="style.css?v=3">
+    <link rel="stylesheet" href="style.css?v=4">
     <!-- Import map for Three.js -->
     <script type="importmap">
         {
@@ -77,8 +77,12 @@
         <div id="edit-mode-panel">
             <button class="mode-btn active" id="btn-add">✏️</button>
             <button class="mode-btn" id="btn-remove">⬜</button>
+            <button class="mode-btn" id="btn-explode" title="Explode">💣</button>
+            <button class="mode-btn" id="btn-restore" title="Restore"
+                style="background-color: #2196F3; color: white;">↻</button>
             <button id="btn-help">?</button>
         </div>
+        <div id="countdown-overlay"></div>
         <div id="instructions" class="popup-style">
             <div id="instructions-header">
                 <strong>Controls & Shortcuts</strong>
@@ -138,6 +142,7 @@
         let actionHistory = []; // Will be initialized in init()
         let actionRedoStack = [];
         let isRestoringHistory = false;
+        let preExplosionSnapshot = null;
 
         function getFullSnapshot() {
             const blockData = objects.filter(obj => obj !== plane).map(obj => ({
@@ -179,6 +184,11 @@
                 scene.remove(o);
                 objects.splice(objects.indexOf(o), 1);
             });
+            // Clear any flying bricks
+            while (explodingBricks.length > 0) {
+                const b = explodingBricks.pop();
+                scene.remove(b);
+            }
             // Re-place from snapshot
             state.blocks.forEach(b => {
                 placeVoxel(new THREE.Vector3(...b.pos), b.slot, true);
@@ -227,6 +237,41 @@
         // For click vs drag detection on Block Placement
         const downPointerPos = new THREE.Vector2();
         let pointerDownTime = 0;
+
+        let explodingBricks = [];
+
+        function explodeBricks() {
+            const bricks = objects.filter(obj => obj !== plane);
+            if (bricks.length === 0) return;
+
+            // Save state BEFORE explosion so we can undo it
+            pushHistory();
+
+            const center = new THREE.Vector3();
+            bricks.forEach(b => center.add(b.position));
+            center.divideScalar(bricks.length);
+
+            bricks.forEach(brick => {
+                const dir = new THREE.Vector3().subVectors(brick.position, center).normalize();
+                if (dir.lengthSq() === 0) {
+                    dir.set(Math.random() - 0.5, 1, Math.random() - 0.5).normalize();
+                }
+
+                const force = 5 + Math.random() * 10;
+                brick.userData.velocity = dir.multiplyScalar(force);
+                brick.userData.angularVelocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2,
+                    (Math.random() - 0.5) * 0.2
+                );
+                brick.userData.startTime = performance.now();
+
+                explodingBricks.push(brick);
+
+                const index = objects.indexOf(brick);
+                if (index > -1) objects.splice(index, 1);
+            });
+        }
 
         init();
 
@@ -583,6 +628,11 @@
             toRemove.forEach(obj => {
                 scene.remove(obj);
             });
+            // Clear any flying bricks
+            while (explodingBricks.length > 0) {
+                const b = explodingBricks.pop();
+                scene.remove(b);
+            }
             objects.length = 0;
             objects.push(plane);
 
@@ -608,6 +658,11 @@
                 scene.remove(obj);
                 objects.splice(objects.indexOf(obj), 1);
             });
+            // Clear any flying bricks
+            while (explodingBricks.length > 0) {
+                const b = explodingBricks.pop();
+                scene.remove(b);
+            }
 
             // Restore references and settings
             // Restore settings
@@ -674,6 +729,7 @@
                 isAddMode = true;
                 btnAdd.classList.add('active');
                 btnRemove.classList.remove('active');
+                if (typeof btnExplode !== 'undefined') btnExplode.classList.remove('active');
             });
 
             btnRemove.addEventListener('pointerdown', (e) => {
@@ -681,6 +737,48 @@
                 isAddMode = false;
                 btnRemove.classList.add('active');
                 btnAdd.classList.remove('active');
+                btnExplode.classList.remove('active');
+            });
+
+            const btnExplode = document.getElementById('btn-explode');
+            const countdownEl = document.getElementById('countdown-overlay');
+            let explosionInProgress = false;
+
+            btnExplode.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (explosionInProgress) return;
+
+                // Save state BEFORE countdown/explosion
+                preExplosionSnapshot = getFullSnapshot();
+                explosionInProgress = true;
+
+                let count = 3;
+                countdownEl.innerText = count;
+                countdownEl.style.display = 'block';
+
+                const timer = setInterval(() => {
+                    count--;
+                    if (count > 0) {
+                        countdownEl.innerText = count;
+                    } else {
+                        clearInterval(timer);
+                        countdownEl.style.display = 'none';
+                        explodeBricks();
+                        explosionInProgress = false;
+                    }
+                }, 1000);
+            });
+
+            const btnRestore = document.getElementById('btn-restore');
+            btnRestore.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (preExplosionSnapshot) {
+                    applyActionState(preExplosionSnapshot);
+                    // Clear preExplosionSnapshot after restore to avoid multi-clicks? 
+                    // No, let them keep restoring if they want.
+                } else {
+                    alert("No previous state to restore. Try after an explosion!");
+                }
             });
         }
 
@@ -1185,6 +1283,33 @@
 
         function animate() {
             requestAnimationFrame(animate);
+
+            // Explosion Animation
+            const now = performance.now();
+            for (let i = explodingBricks.length - 1; i >= 0; i--) {
+                const brick = explodingBricks[i];
+                const elapsed = (now - brick.userData.startTime) / 1000;
+
+                if (elapsed > 3.0) {
+                    scene.remove(brick);
+                    explodingBricks.splice(i, 1);
+                    continue;
+                }
+
+                brick.position.add(brick.userData.velocity);
+                brick.rotation.x += brick.userData.angularVelocity.x;
+                brick.rotation.y += brick.userData.angularVelocity.y;
+                brick.rotation.z += brick.userData.angularVelocity.z;
+
+                // Gravity
+                brick.userData.velocity.y -= 0.3;
+
+                // Scale down in the last second
+                if (elapsed > 2.0) {
+                    const s = 1.0 - (elapsed - 2.0);
+                    brick.scale.set(Math.max(s, 0), Math.max(s, 0), Math.max(s, 0));
+                }
+            }
 
             // FPS Logic with Velocity smoothing
             const accel = 2.0;

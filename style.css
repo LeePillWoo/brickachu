@@ -222,7 +222,7 @@ body {
 }
 
 .mode-btn {
-    padding: 8px 16px;
+    padding: 0;
     border: none;
     border-radius: 6px;
     background-color: #ddd;
@@ -231,6 +231,14 @@ body {
     font-weight: bold;
     cursor: pointer;
     transition: background-color 0.2s, transform 0.1s;
+    width: 38px;
+    /* Fixed width for compactness */
+    height: 38px;
+    /* Fixed height for compactness */
+    display: flex !important;
+    /* Ensure visibility */
+    align-items: center;
+    justify-content: center;
 }
 
 .mode-btn:hover {
@@ -472,10 +480,6 @@ body {
         width: 100%;
     }
 
-    #btn-save {
-        order: 1;
-    }
-
     #btn-load {
         order: 2;
     }
@@ -491,13 +495,15 @@ body {
 
     .io-btn,
     .mode-btn {
-        min-height: 44px;
-        min-width: 80px;
-        display: flex;
+        min-height: 38px;
+        min-width: 38px;
+        width: 38px;
+        height: 38px;
+        display: flex !important;
         align-items: center;
         justify-content: center;
-        font-size: 14px;
-        padding: 10px 15px;
+        font-size: 16px;
+        padding: 0;
     }
 
     .color-btn {
@@ -525,7 +531,31 @@ body {
     }
 
     #snap-controls {
-        display: none;
-        /* Hide snap buttons on small mobile */
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        transform: scale(0.85);
+        /* Slightly larger */
+        transform-origin: top center;
+        margin-top: 5px;
+        background: rgba(240, 240, 240, 0.5);
+        padding: 5px;
+        border-radius: 4px;
     }
+}
+
+/* Countdown Overlay */
+#countdown-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 120px;
+    font-weight: 900;
+    color: #f44336;
+    text-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    z-index: 3000;
+    pointer-events: none;
+    display: none;
+    font-family: 'Arial Black', sans-serif;
 }
