@@ -38,24 +38,36 @@
     <!-- End Google Tag Manager (noscript) -->
     <div id="ui-layer">
         <button id="mobile-palette-toggle" class="mobile-only">🎨</button>
-        <div id="reference-panel">
-            <h3>Reference</h3>
-            <div id="pikachu-img-wrapper" onclick="document.getElementById('ref-upload').click()">
-                <img src="" alt="" id="pikachu-img">
-            </div>
-            <input type="file" id="ref-upload" style="display:none" accept="image/*">
-        </div>
-        <div id="example-panel">
-            <h3>Example (Auto-Guide)</h3>
-            <div id="example-img-wrapper">
-                <img src="" alt="" id="example-img">
+        <div id="preview-panel">
+            <h3>3D Preview</h3>
+            <div id="preview-container"></div>
+            <div id="snap-controls">
+                <div class="snap-row">
+                    <button class="snap-btn" data-dir="iso-1" title="Iso 1">↘</button>
+                    <button class="snap-btn" data-dir="iso-2" title="Iso 2">↙</button>
+                    <button class="snap-btn" data-dir="iso-3" title="Iso 3">↖</button>
+                    <button class="snap-btn" data-dir="iso-4" title="Iso 4">↗</button>
+                </div>
+                <div class="snap-row">
+                    <button class="snap-btn cardinal" data-dir="top" title="Top">T</button>
+                    <button class="snap-btn cardinal" data-dir="bottom" title="Bottom">Bo</button>
+                    <button class="snap-btn cardinal" data-dir="front" title="Front">F</button>
+                    <button class="snap-btn cardinal" data-dir="back" title="Back">Bk</button>
+                    <button class="snap-btn cardinal" data-dir="left" title="Left">L</button>
+                    <button class="snap-btn cardinal" data-dir="right" title="Right">R</button>
+                </div>
             </div>
         </div>
         <div id="io-panel">
-            <input type="text" id="project-name" placeholder="Project Name" value="nanoblock_scene">
-            <button class="io-btn" id="btn-save">Save</button>
-            <button class="io-btn" id="btn-load">Load</button>
-            <button class="io-btn" id="btn-new">New</button>
+            <button id="mobile-io-toggle" class="mobile-only">💾</button>
+            <div id="io-controls-wrapper">
+                <input type="text" id="project-name" placeholder="Name" value="nanoblock_scene">
+                <div class="io-btn-group">
+                    <button class="io-btn" id="btn-save">Save</button>
+                    <button class="io-btn" id="btn-load">Load</button>
+                    <button class="io-btn" id="btn-new">New</button>
+                </div>
+            </div>
             <input type="file" id="load-upload" style="display:none" accept=".json">
         </div>
         <div id="palette-panel">
@@ -113,6 +125,7 @@
         let composer, saoPass;
         let popup; // Global for palette
         let selectedSlotForPopup = null;
+        let previewCamera, previewRenderer; // For Isometric Preview
 
         // Settings History & Reset System (Unified Full-State Snapshots)
         let guiParams = {
@@ -306,9 +319,9 @@
             directionalLight.shadow.camera.right = d;
             directionalLight.shadow.camera.top = d;
             directionalLight.shadow.camera.bottom = -d;
-            directionalLight.shadow.bias = -0.0001; // Fine-tuned bias
-            directionalLight.shadow.normalBias = 0.05; // Help with VSM shadow artifacts
-            directionalLight.shadow.radius = 4;
+            directionalLight.shadow.bias = -0.0005; // Slightly deeper bias to prevent acne on mobile
+            directionalLight.shadow.normalBias = 0.02; // Fine-tuned normal bias
+            directionalLight.shadow.radius = 2; // Stabilize soft shadows
             scene.add(directionalLight);
 
             // 6. Setup Renderer
@@ -316,7 +329,7 @@
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.VSMShadowMap; // Softer, more professional shadows
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap; // More stable on mobile than VSM
             document.body.appendChild(renderer.domElement);
 
             // Environment Setup for Reflections
@@ -364,54 +377,105 @@
             setupModeButtons();
             setupGUI();
             setupIO();
-            setupRefUpload();
+            initPreview();
         }
 
-        function setupRefUpload() {
-            const refUpload = document.getElementById('ref-upload');
-            const refImg = document.getElementById('pikachu-img');
-            const wrapper = document.getElementById('pikachu-img-wrapper');
+        function initPreview() {
+            const container = document.getElementById('preview-container');
+            const width = 200;
+            const height = 200;
 
-            const triggerUpload = (e) => {
-                e.preventDefault();
-                refUpload.click();
-            };
+            // Orthographic Camera for Isometric feel
+            const aspect = width / height;
+            const d = 500;
+            previewCamera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 10000);
+            previewCamera.position.set(500, 500, 500);
+            previewCamera.lookAt(0, 0, 0);
 
-            wrapper.addEventListener('click', triggerUpload);
-            wrapper.addEventListener('touchstart', triggerUpload, { passive: false });
-
-            refUpload.addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (re) => {
-                    refImg.src = re.target.result;
-                    autoPixelate(re.target.result); // Trigger auto-pixelation
-                };
-                reader.readAsDataURL(file);
-            });
+            previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            previewRenderer.setPixelRatio(window.devicePixelRatio);
+            previewRenderer.setSize(width, height);
+            previewRenderer.domElement.style.width = '100%';
+            previewRenderer.domElement.style.height = '100%';
+            container.appendChild(previewRenderer.domElement);
         }
 
-        function autoPixelate(srcBase64) {
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                const size = 32; // Pixelation resolution
-                canvas.width = size;
-                canvas.height = size;
+        function updatePreview() {
+            if (!previewRenderer) return;
+            // Temporarily hide rollover and plane for clean preview
+            rollOverMesh.visible = false;
+            plane.visible = false;
 
-                // 1. Sharpen/Contrast Boost Conceptually during downsample
-                ctx.filter = 'contrast(1.2) saturate(1.1)';
-                ctx.drawImage(img, 0, 0, size, size);
+            previewRenderer.render(scene, previewCamera);
 
-                // Update Example Image
-                document.getElementById('example-img').src = canvas.toDataURL();
-            };
-            img.src = srcBase64;
+            rollOverMesh.visible = true;
+            plane.visible = true;
+        }
+
+        function snapPreviewCamera(dir) {
+            // Find all built objects
+            const structureObjects = objects.filter(obj => obj !== plane);
+            const box = new THREE.Box3();
+
+            if (structureObjects.length > 0) {
+                structureObjects.forEach(obj => box.expandByObject(obj));
+            } else {
+                // If empty, look at the center of the base board
+                box.setFromObject(plane);
+            }
+
+            const center = new THREE.Vector3();
+            box.getCenter(center);
+
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const maxDim = Math.max(size.x, size.y, size.z, 200); // minimum scale
+            const d = maxDim * 2.5; // Distance for cardinal
+            const iso = maxDim * 1.8; // Distance for isometric
+
+            // Reset UP vector to default (Y is up)
+            previewCamera.up.set(0, 1, 0);
+
+            switch (dir) {
+                case 'iso-1': previewCamera.position.set(center.x + iso, center.y + iso, center.z + iso); break;
+                case 'iso-2': previewCamera.position.set(center.x - iso, center.y + iso, center.z + iso); break;
+                case 'iso-3': previewCamera.position.set(center.x - iso, center.y + iso, center.z - iso); break;
+                case 'iso-4': previewCamera.position.set(center.x + iso, center.y + iso, center.z - iso); break;
+
+                case 'top':
+                    previewCamera.position.set(center.x, center.y + d, center.z);
+                    previewCamera.up.set(0, 0, -1); // Oriented with Front (towards +Z) facing up
+                    break;
+                case 'bottom':
+                    previewCamera.position.set(center.x, center.y - d, center.z);
+                    previewCamera.up.set(0, 0, 1);
+                    break;
+                case 'front': previewCamera.position.set(center.x, center.y, center.z + d); break;
+                case 'back': previewCamera.position.set(center.x, center.y, center.z - d); break;
+                case 'left': previewCamera.position.set(center.x - d, center.y, center.z); break;
+                case 'right': previewCamera.position.set(center.x + d, center.y, center.z); break;
+            }
+
+            previewCamera.lookAt(center);
+            updatePreview();
         }
 
         function setupIO() {
+            // Mobile IO Toggle
+            const ioToggle = document.getElementById('mobile-io-toggle');
+            const ioWrapper = document.getElementById('io-controls-wrapper');
+            if (ioToggle) {
+                ioToggle.addEventListener('click', () => {
+                    ioWrapper.classList.toggle('mobile-open');
+                });
+            }
+
+            // Preview Snap Buttons
+            document.querySelectorAll('.snap-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    snapPreviewCamera(btn.dataset.dir);
+                });
+            });
             const saveBtn = document.getElementById('btn-save');
             const loadBtn = document.getElementById('btn-load');
             const newBtn = document.getElementById('btn-new');
@@ -470,11 +534,9 @@
                 };
             }
 
-            const img = document.getElementById('pikachu-img');
             const exportObj = {
                 blocks: data,
                 materials: matDefs,
-                refImage: img.src,
                 lighting: {
                     ambient: ambientLight.intensity,
                     dirPosX: directionalLight.position.x,
@@ -493,7 +555,7 @@
 
             // Get project name for filename
             const projectName = document.getElementById('project-name').value.trim() || 'scene';
-            const fileName = `NanoBlock_${projectName.endsWith('.json') ? projectName : `${projectName}.json`}`;
+            const fileName = `NanoBlock_${projectName.endsWith('.json') ? projectName : `${projectName}.json`} `;
 
             // Standard Blob + a link method for maximum mobile compatibility
             const blob = new Blob([jsonString], { type: 'application/json' });
@@ -548,7 +610,7 @@
             });
 
             // Restore references and settings
-            if (parsed.refImage) document.getElementById('pikachu-img').src = parsed.refImage;
+            // Restore settings
 
             if (parsed.materials) {
                 for (const [key, def] of Object.entries(parsed.materials)) {
@@ -1157,6 +1219,10 @@
             }
 
             controls.update();
+
+            // Render Preview Side Window
+            updatePreview();
+
             if (composer) {
                 composer.render();
             } else {

@@ -25,7 +25,7 @@ body {
     pointer-events: auto;
 }
 
-#reference-panel {
+#preview-panel {
     position: absolute;
     top: 20px;
     left: 20px;
@@ -34,50 +34,64 @@ body {
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     pointer-events: auto;
+    width: 230px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
-#reference-panel h3 {
+#snap-controls {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: 100%;
+}
+
+.snap-row {
+    display: flex;
+    gap: 5px;
+    justify-content: center;
+}
+
+.snap-btn {
+    width: 32px;
+    height: 32px;
+    border: 1px solid #ccc;
+    background: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+
+.snap-btn:hover {
+    background: #f0f0f0;
+}
+
+.snap-btn.cardinal {
+    font-size: 10px;
+    font-weight: bold;
+    background: #f8f9fa;
+}
+
+
+#preview-panel h3 {
     margin-bottom: 10px;
     font-size: 16px;
     color: #333;
 }
 
-#pikachu-img-wrapper {
+#preview-container {
     width: 200px;
     height: 200px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     background-color: #f8f9fa;
     border-radius: 4px;
     overflow: hidden;
-    border: 2px dashed #ccc;
-    cursor: pointer;
-    position: relative;
-    transition: border-color 0.2s;
-}
-
-#pikachu-img-wrapper:hover {
-    border-color: #2196F3;
-}
-
-#pikachu-img-wrapper::after {
-    content: 'Click to Upload';
-    position: absolute;
-    font-size: 12px;
-    color: #888;
-    pointer-events: none;
-}
-
-#pikachu-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    z-index: 1;
-}
-
-#pikachu-img[src=""] {
-    display: none;
+    border: 2px solid #eee;
 }
 
 #palette-panel {
@@ -191,69 +205,7 @@ body {
     background: #1976D2;
 }
 
-#example-panel {
-    position: absolute;
-    top: 290px;
-    /* Shifted down to avoid overlap */
-    left: 20px;
-    background: rgba(255, 255, 255, 0.9);
-    padding: 15px;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    pointer-events: auto;
-}
 
-#example-panel h3 {
-    margin-bottom: 10px;
-    font-size: 16px;
-    color: #333;
-}
-
-#example-img-wrapper {
-    width: 200px;
-    height: 200px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: #f8f9fa;
-    border-radius: 4px;
-    overflow: hidden;
-    border: 2px dashed #ccc;
-    cursor: pointer;
-    position: relative;
-    transition: border-color 0.2s;
-}
-
-#example-img-wrapper:hover {
-    border-color: #ccc;
-    /* No hover color change */
-    cursor: default;
-}
-
-#example-img-wrapper::after {
-    content: "" !important;
-    /* Remove upload text */
-    position: absolute;
-    font-size: 11px;
-    color: #888;
-    pointer-events: none;
-    text-align: center;
-    padding: 0 10px;
-}
-
-#example-img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    z-index: 1;
-    image-rendering: pixelated;
-    /* Sharp pixel art look */
-    image-rendering: crisp-edges;
-}
-
-#example-img[src=""] {
-    display: none;
-}
 
 #edit-mode-panel {
     position: absolute;
@@ -327,7 +279,6 @@ body {
     cursor: pointer;
 }
 
-/* Save/Load Panel */
 #io-panel {
     position: absolute;
     top: 20px;
@@ -337,8 +288,20 @@ body {
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    z-index: 1000;
+}
+
+#io-controls-wrapper {
+    display: flex;
     align-items: center;
     gap: 10px;
+}
+
+.io-btn-group {
+    display: flex;
+    gap: 5px;
 }
 
 #project-name {
@@ -373,7 +336,7 @@ body {
     display: none !important;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1200px) {
     .mobile-only {
         display: flex !important;
     }
@@ -382,8 +345,26 @@ body {
         display: none !important;
     }
 
-    #reference-panel,
-    #example-panel,
+    /* Tablet (Pad) - Keep preview panel large */
+    #preview-panel {
+        top: 10px;
+        left: 10px;
+        width: 230px;
+        /* Keep desktop width */
+        padding: 10px;
+    }
+
+    #preview-container {
+        width: 200px;
+        /* Keep desktop size */
+        height: 200px;
+    }
+
+    #snap-controls {
+        display: flex;
+        /* Show snap controls on tablet */
+    }
+
     #instructions,
     .lil-gui {
         display: none !important;
@@ -437,23 +418,58 @@ body {
 
     #io-panel {
         top: 10px;
-        left: 10px;
+        right: 140px;
+        /* Adjust to stay clear of buttons */
+        left: auto;
+        padding: 0;
+        background: transparent;
+        box-shadow: none;
+    }
+
+    #mobile-io-toggle {
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background: white;
+        border: none;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        font-size: 24px;
+        cursor: pointer;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+    }
+
+    #io-controls-wrapper {
+        display: none;
+        position: absolute;
+        top: 60px;
+        right: 0;
+        background: white;
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        flex-direction: column;
+        width: 200px;
+        gap: 10px;
+    }
+
+    #io-controls-wrapper.mobile-open {
         display: flex;
-        flex-direction: row;
-        flex-wrap: wrap;
-        gap: 6px;
-        max-width: calc(100% - 20px);
-        background: rgba(255, 255, 255, 0.95);
     }
 
     #project-name {
         width: 100%;
-        min-height: 40px;
-        font-size: 14px;
-        margin-top: 4px;
-        margin-bottom: 2px;
-        order: 10;
-        /* Move to bottom of flex container */
+        margin: 0;
+    }
+
+    .io-btn-group {
+        width: 100%;
+        flex-direction: column;
+    }
+
+    .io-btn {
+        width: 100%;
     }
 
     #btn-save {
@@ -487,5 +503,29 @@ body {
     .color-btn {
         width: 36px;
         height: 36px;
+    }
+}
+
+@media (max-width: 768px) {
+
+    /* Mobile - Shrink preview panel to save space */
+    #preview-panel {
+        width: 140px;
+        padding: 8px;
+    }
+
+    #preview-panel h3 {
+        font-size: 12px;
+        margin-bottom: 5px;
+    }
+
+    #preview-container {
+        width: 120px;
+        height: 120px;
+    }
+
+    #snap-controls {
+        display: none;
+        /* Hide snap buttons on small mobile */
     }
 }
