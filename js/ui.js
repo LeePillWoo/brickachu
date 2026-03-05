@@ -2,7 +2,6 @@ import GUI from 'three/addons/libs/lil-gui.module.min.js';
 import { state, guiParams, defaultParams, materials, presetColors, numCustomSlots } from './state.js';
 import { explodeBricks, pushHistory, applyActionState } from './scene.js';
 import { snapPreviewCamera } from './camera.js';
-import { saveScene, resetScene, loadScene } from './saveLoad.js';
 import { spawnDog } from './entities.js';
 
 export function setupPalette() {
@@ -298,7 +297,7 @@ export function setupGUI() {
     gui.close();
 }
 
-export function setupIO() {
+export function setupSnapControls() {
     const snapBtns = document.querySelectorAll('.snap-btn');
     snapBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -307,14 +306,4 @@ export function setupIO() {
             snapPreviewCamera(btn.dataset.dir);
         });
     });
-
-    const saveBtn = document.getElementById('btn-save');
-    const loadBtn = document.getElementById('btn-load');
-    const newBtn = document.getElementById('btn-new');
-
-    saveBtn.addEventListener('click', (e) => { e.preventDefault(); saveScene(); });
-    loadBtn.addEventListener('click', (e) => { e.preventDefault(); document.getElementById('load-upload').click(); });
-    newBtn.addEventListener('click', (e) => { e.preventDefault(); resetScene(); });
-
-    document.getElementById('load-upload').addEventListener('change', loadScene);
 }

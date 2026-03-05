@@ -10,7 +10,7 @@ import { state, guiParams, objects, voxelSize, materials, presetColors, numCusto
 import { pushHistory, getFullSnapshot } from './scene.js';
 import { updatePreview } from './camera.js';
 import { onPointerMove, onPointerDown, onPointerUp, onWindowResize, onKeyDown, onKeyUp } from './input.js';
-import { setupPalette, setupModeButtons, setupGUI, setupIO } from './ui.js';
+import { setupPalette, setupModeButtons, setupGUI, setupSnapControls } from './ui.js';
 import { updateDogs } from './entities.js';
 
 function init() {
@@ -139,6 +139,7 @@ function init() {
     setupPalette();
     setupModeButtons();
     setupGUI();
+    setupSnapControls();
     initPreview();
 }
 
