@@ -6,7 +6,6 @@ export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
 const MAX_ANIMALS = 10;
 
-// Helper to pick a completely random bright color
 function getRandomColor() {
     const r = Math.floor(Math.random() * 200 + 55);
     const g = Math.floor(Math.random() * 200 + 55);
@@ -20,7 +19,7 @@ export function spawnDog() {
     }
 
     const animalGroup = new THREE.Group();
-    const u = voxelSize / 20; // 1/20th scale unit
+    const u = voxelSize / 25; // 1/25th scale unit
 
     const types = [
         'dog', 'cat', 'rabbit', 'sheep', 'snake', 'horse', 'pikachu', 'squirtle', 'charmander',
@@ -29,7 +28,6 @@ export function spawnDog() {
     ];
     const type = types[Math.floor(Math.random() * types.length)];
 
-    // Randomize base colors for this specific animal instance
     const baseColor = getRandomColor();
     const secondaryColor = getRandomColor();
     const accentColor = getRandomColor();
@@ -50,231 +48,259 @@ export function spawnDog() {
         return mesh;
     }
 
-    // Build models based on type
-    let heightOffset = 10;
+    // All dimensions multiplied by 2. Extra nanoblock details added.
+    let heightOffset = 20;
 
     if (type === 'dog') {
-        addPart(10, 8, 16, 0, 8, 0); // Body
-        addPart(8, 8, 8, 0, 16, 12); // Head
-        addPart(4, 3, 4, 0, 14, 18, blackMat); // Snout
-        addPart(2, 4, 2, -3, 22, 12, matSec); // L Ear
-        addPart(2, 4, 2, 3, 22, 12, matSec); // R Ear
-        const tail = addPart(2, 6, 2, 0, 14, -8, matAcc);
+        heightOffset = 20;
+        addPart(20, 16, 32, 0, 16, 0); // Body
+        addPart(16, 16, 16, 0, 32, 24); // Head
+        addPart(8, 6, 8, 0, 28, 36, matSec); // Snout
+        addPart(2, 2, 2, 0, 31, 40, blackMat); // Nose
+        addPart(2, 2, 2, -5, 36, 32, blackMat); addPart(2, 2, 2, 5, 36, 32, blackMat); // Eyes
+        addPart(4, 8, 4, -6, 44, 24, matSec); addPart(4, 8, 4, 6, 44, 24, matSec); // Ears
+        const tail = addPart(4, 12, 4, 0, 28, -16, matAcc);
         tail.rotation.x = -Math.PI / 4;
-        addPart(3, 6, 3, -3, 3, 5); addPart(3, 6, 3, 3, 3, 5);
-        addPart(3, 6, 3, -3, 3, -5); addPart(3, 6, 3, 3, 3, -5);
+        addPart(6, 12, 6, -6, 6, 10); addPart(6, 12, 6, 6, 6, 10); // Front legs
+        addPart(6, 12, 6, -6, 6, -10); addPart(6, 12, 6, 6, 6, -10); // Back legs
     } else if (type === 'cat') {
-        heightOffset = 8;
-        addPart(8, 6, 12, 0, 6, 0); // Body
-        addPart(6, 6, 6, 0, 12, 9); // Head
-        addPart(2, 2, 2, 0, 10, 13, matSec); // Nose
-        addPart(2, 3, 2, -2, 16, 10, matAcc); // L Ear (pointy)
-        addPart(2, 3, 2, 2, 16, 10, matAcc); // R Ear (pointy)
-        const tail = addPart(2, 10, 2, 0, 12, -6, matSec);
-        tail.rotation.x = Math.PI / 6; // High tail
-        addPart(2, 4, 2, -2, 2, 4); addPart(2, 4, 2, 2, 2, 4);
-        addPart(2, 4, 2, -2, 2, -4); addPart(2, 4, 2, 2, 2, -4);
-    } else if (type === 'rabbit') {
-        heightOffset = 6;
-        addPart(6, 6, 8, 0, 5, 0, whiteMat); // Body
-        addPart(5, 5, 5, 0, 10, 5, whiteMat); // Head
-        addPart(2, 8, 2, -1.5, 16, 6, matSec); // L Ear (long)
-        addPart(2, 8, 2, 1.5, 16, 6, matSec); // R Ear (long)
-        addPart(3, 3, 3, 0, 6, -5, whiteMat); // Tail (fluff)
-        addPart(2, 3, 2, -2, 1.5, 3, whiteMat); addPart(2, 3, 2, 2, 1.5, 3, whiteMat); // Front
-        addPart(2, 4, 4, -2, 2, -3, whiteMat); addPart(2, 4, 4, 2, 2, -3, whiteMat); // Back (big feet)
-    } else if (type === 'sheep') {
-        heightOffset = 10;
-        addPart(12, 10, 14, 0, 9, 0, whiteMat); // Fluffy Body
-        addPart(6, 6, 8, 0, 14, 11, blackMat); // Head (black face)
-        addPart(2, 2, 4, -4, 14, 10, whiteMat); // L Ear
-        addPart(2, 2, 4, 4, 14, 10, whiteMat); // R Ear
-        addPart(2, 5, 2, -3, 2.5, 5, blackMat); addPart(2, 5, 2, 3, 2.5, 5, blackMat); // Legs
-        addPart(2, 5, 2, -3, 2.5, -5, blackMat); addPart(2, 5, 2, 3, 2.5, -5, blackMat);
-    } else if (type === 'snake') {
-        heightOffset = 3;
-        addPart(4, 3, 24, 0, 1.5, 0, matBase); // Long Body
-        addPart(5, 4, 6, 0, 2, 15, matSec); // Head
-        addPart(2, 1, 4, 0, 2, 19, matAcc); // Tongue
-    } else if (type === 'horse') {
         heightOffset = 16;
-        addPart(10, 10, 20, 0, 16, 0); // Body
-        addPart(6, 12, 6, 0, 24, 12); // Neck
-        addPart(6, 6, 10, 0, 28, 16); // Head
-        addPart(2, 12, 4, 0, 24, 9, matSec); // Mane
-        const tail = addPart(3, 12, 3, 0, 16, -10, matSec);
+        addPart(16, 12, 24, 0, 12, 0); // Body
+        addPart(12, 12, 12, 0, 24, 18); // Head
+        addPart(2, 2, 2, 0, 22, 25, matSec); // Nose
+        addPart(2, 2, 2, -4, 26, 24, blackMat); addPart(2, 2, 2, 4, 26, 24, blackMat); // Eyes
+        addPart(4, 6, 4, -4, 32, 20, matAcc); addPart(4, 6, 4, 4, 32, 20, matAcc); // Pointy Ears
+        const tail = addPart(4, 20, 4, 0, 24, -12, matSec);
+        tail.rotation.x = Math.PI / 6; // High tail
+        addPart(4, 8, 4, -4, 4, 8); addPart(4, 8, 4, 4, 4, 8);
+        addPart(4, 8, 4, -4, 4, -8); addPart(4, 8, 4, 4, 4, -8);
+    } else if (type === 'rabbit') {
+        heightOffset = 12;
+        addPart(12, 12, 16, 0, 10, 0, whiteMat); // Body
+        addPart(10, 10, 10, 0, 20, 10, whiteMat); // Head
+        addPart(2, 2, 2, 0, 18, 16, matSec); // Nose
+        addPart(2, 2, 2, -3, 22, 15, blackMat); addPart(2, 2, 2, 3, 22, 15, blackMat); // Eyes
+        addPart(4, 16, 4, -3, 32, 12, matSec); addPart(4, 16, 4, 3, 32, 12, matSec); // Long Ears
+        addPart(6, 6, 6, 0, 12, -10, whiteMat); // Fluff tail
+        addPart(4, 6, 4, -4, 3, 6, whiteMat); addPart(4, 6, 4, 4, 3, 6, whiteMat); // Front
+        addPart(4, 8, 8, -4, 4, -6, whiteMat); addPart(4, 8, 8, 4, 4, -6, whiteMat); // Back (big feet)
+    } else if (type === 'sheep') {
+        heightOffset = 20;
+        addPart(24, 20, 28, 0, 18, 0, whiteMat); // Fluffy Body
+        addPart(12, 12, 16, 0, 28, 22, blackMat); // Head
+        addPart(2, 2, 2, -4, 30, 28, whiteMat); addPart(2, 2, 2, 4, 30, 28, whiteMat); // Eyes
+        addPart(4, 4, 8, -8, 28, 20, whiteMat); addPart(4, 4, 8, 8, 28, 20, whiteMat); // Ears
+        addPart(4, 10, 4, -6, 5, 10, blackMat); addPart(4, 10, 4, 6, 5, 10, blackMat); // Legs
+        addPart(4, 10, 4, -6, 5, -10, blackMat); addPart(4, 10, 4, 6, 5, -10, blackMat);
+    } else if (type === 'snake') {
+        heightOffset = 6;
+        addPart(8, 6, 48, 0, 3, 0, matBase); // Long Body
+        addPart(10, 8, 12, 0, 4, 30, matSec); // Head
+        addPart(2, 2, 2, -4, 8, 34, blackMat); addPart(2, 2, 2, 4, 8, 34, blackMat); // Eyes
+        addPart(4, 2, 8, 0, 4, 38, matAcc); // Tongue
+    } else if (type === 'horse') {
+        heightOffset = 32;
+        addPart(20, 20, 40, 0, 32, 0); // Body
+        addPart(12, 24, 12, 0, 48, 24); // Neck
+        addPart(12, 12, 20, 0, 56, 32); // Head
+        addPart(2, 2, 2, -5, 60, 40, blackMat); addPart(2, 2, 2, 5, 60, 40, blackMat); // Eyes
+        addPart(4, 24, 8, 0, 48, 18, matSec); // Mane
+        const tail = addPart(6, 24, 6, 0, 32, -20, matSec);
         tail.rotation.x = -Math.PI / 8;
-        addPart(3, 12, 3, -3.5, 6, 8, matAcc); addPart(3, 12, 3, 3.5, 6, 8, matAcc); // Legs
-        addPart(3, 12, 3, -3.5, 6, -8, matAcc); addPart(3, 12, 3, 3.5, 6, -8, matAcc);
+        addPart(6, 24, 6, -7, 12, 16, matAcc); addPart(6, 24, 6, 7, 12, 16, matAcc); // Legs
+        addPart(6, 24, 6, -7, 12, -16, matAcc); addPart(6, 24, 6, 7, 12, -16, matAcc);
     } else if (type === 'pikachu') {
-        heightOffset = 8;
+        heightOffset = 16;
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.6 });
         const red = new THREE.MeshPhysicalMaterial({ color: 0xff0000, roughness: 0.8 });
-        addPart(8, 10, 8, 0, 5, 0, yellow); // Body
-        addPart(8, 8, 8, 0, 14, 2, yellow); // Head
-        addPart(2, 2, 1, -3, 13, 6, red); addPart(2, 2, 1, 3, 13, 6, red); // Cheeks
-        addPart(2, 8, 2, -3, 20, 2, yellow); addPart(2, 2, 2, -3, 24, 2, blackMat); // L Ear
-        addPart(2, 8, 2, 3, 20, 2, yellow); addPart(2, 2, 2, 3, 24, 2, blackMat); // R Ear
-        const pTail = addPart(2, 10, 6, 0, 8, -6, yellow); pTail.rotation.x = -Math.PI / 4; // Tail
-        addPart(2, 3, 3, -2, 1.5, 2, yellow); addPart(2, 3, 3, 2, 1.5, 2, yellow); // Feet
+        addPart(16, 20, 16, 0, 10, 0, yellow); // Body
+        addPart(16, 16, 16, 0, 28, 4, yellow); // Head
+        addPart(2, 2, 2, -5, 28, 12, blackMat); addPart(2, 2, 2, 5, 28, 12, blackMat); // Eyes
+        addPart(4, 4, 2, -6, 26, 12, red); addPart(4, 4, 2, 6, 26, 12, red); // Cheeks
+        addPart(4, 16, 4, -6, 40, 4, yellow); addPart(4, 4, 4, -6, 48, 4, blackMat); // L Ear
+        addPart(4, 16, 4, 6, 40, 4, yellow); addPart(4, 4, 4, 6, 48, 4, blackMat); // R Ear
+        const pTail = addPart(4, 20, 12, 0, 16, -12, yellow); pTail.rotation.x = -Math.PI / 4; // Tail
+        addPart(4, 6, 6, -4, 3, 4, yellow); addPart(4, 6, 6, 4, 3, 4, yellow); // Feet
     } else if (type === 'squirtle') {
-        heightOffset = 8;
+        heightOffset = 16;
         const blue = new THREE.MeshPhysicalMaterial({ color: 0x4fc3f7, roughness: 0.6 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8d6e63, roughness: 0.8 });
-        addPart(8, 8, 6, 0, 6, 0, blue); // Body
-        addPart(10, 10, 4, 0, 6, -2, brown); // Shell
-        addPart(8, 8, 8, 0, 14, 2, blue); // Head
-        addPart(3, 3, 3, -4, 8, 4, blue); addPart(3, 3, 3, 4, 8, 4, blue); // Arms
-        addPart(3, 4, 4, -3, 2, 2, blue); addPart(3, 4, 4, 3, 2, 2, blue); // Legs
-        const sTail = addPart(4, 4, 6, 0, 4, -6, blue); sTail.rotation.x = Math.PI / 4;
+        addPart(16, 16, 12, 0, 12, 0, blue); // Body
+        addPart(20, 20, 8, 0, 12, -4, brown); // Shell
+        addPart(16, 16, 16, 0, 28, 4, blue); // Head
+        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat); // Eyes
+        addPart(6, 6, 6, -8, 16, 8, blue); addPart(6, 6, 6, 8, 16, 8, blue); // Arms
+        addPart(6, 8, 8, -6, 4, 4, blue); addPart(6, 8, 8, 6, 4, 4, blue); // Legs
+        const sTail = addPart(8, 8, 12, 0, 8, -12, blue); sTail.rotation.x = Math.PI / 4;
     } else if (type === 'charmander') {
-        heightOffset = 8;
+        heightOffset = 16;
         const orange = new THREE.MeshPhysicalMaterial({ color: 0xff9800, roughness: 0.6 });
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffeb3b, roughness: 0.8 });
         const fire = new THREE.MeshPhysicalMaterial({ color: 0xff3d00, roughness: 0.2, emissive: 0xff3d00 });
-        addPart(8, 9, 8, 0, 6, 0, orange); // Body
-        addPart(6, 7, 1, 0, 5, 4, yellow); // Belly
-        addPart(8, 8, 8, 0, 14, 2, orange); // Head
-        addPart(2, 4, 2, -4, 8, 4, orange); addPart(2, 4, 2, 4, 8, 4, orange); // Arms
-        addPart(3, 4, 4, -3, 2, 2, orange); addPart(3, 4, 4, 3, 2, 2, orange); // Legs
-        const cTail = addPart(3, 3, 10, 0, 4, -6, orange); cTail.rotation.x = Math.PI / 6;
-        addPart(2, 4, 2, 0, 8, -12, fire); // Tail flame
+        addPart(16, 18, 16, 0, 12, 0, orange); // Body
+        addPart(12, 14, 2, 0, 10, 8, yellow); // Belly
+        addPart(16, 16, 16, 0, 28, 4, orange); // Head
+        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat); // Eyes
+        addPart(4, 8, 4, -8, 16, 8, orange); addPart(4, 8, 4, 8, 16, 8, orange); // Arms
+        addPart(6, 8, 8, -6, 4, 4, orange); addPart(6, 8, 8, 6, 4, 4, orange); // Legs
+        const cTail = addPart(6, 6, 20, 0, 8, -12, orange); cTail.rotation.x = Math.PI / 6;
+        addPart(4, 8, 4, 0, 16, -24, fire); // Tail flame
     } else if (type === 'meowth') {
-        heightOffset = 8;
+        heightOffset = 16;
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffdd0, roughness: 0.7 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.7 });
         const gold = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.3 });
-        addPart(6, 8, 6, 0, 6, 0, cream); // Body
-        addPart(8, 8, 6, 0, 14, 1, cream); // Head
-        addPart(2, 4, 2, -3, 19, 1, brown); addPart(2, 4, 2, 3, 19, 1, brown); // Ears
-        addPart(3, 4, 1, 0, 16, 4, gold); // Coin
-        addPart(2, 6, 2, -4, 8, 1, cream); addPart(2, 6, 2, 4, 8, 1, cream); // Arms
-        addPart(3, 3, 4, -2.5, 1.5, 2, brown); addPart(3, 3, 4, 2.5, 1.5, 2, brown); // Feet
-        const mTail = addPart(2, 10, 2, 0, 6, -4, brown); mTail.rotation.x = Math.PI / 8; // Tail
+        addPart(12, 16, 12, 0, 12, 0, cream); // Body
+        addPart(16, 16, 12, 0, 28, 2, cream); // Head
+        addPart(2, 2, 2, -4, 30, 8, blackMat); addPart(2, 2, 2, 4, 30, 8, blackMat); // Eyes
+        addPart(4, 8, 4, -6, 38, 2, brown); addPart(4, 8, 4, 6, 38, 2, brown); // Ears
+        addPart(6, 8, 2, 0, 32, 8, gold); // Coin
+        addPart(4, 12, 4, -8, 16, 2, cream); addPart(4, 12, 4, 8, 16, 2, cream); // Arms
+        addPart(6, 6, 8, -5, 3, 4, brown); addPart(6, 6, 8, 5, 3, 4, brown); // Feet
+        const mTail = addPart(4, 20, 4, 0, 12, -8, brown); mTail.rotation.x = Math.PI / 8; // Tail
     } else if (type === 'snorlax') {
-        heightOffset = 12;
+        heightOffset = 24;
         const teal = new THREE.MeshPhysicalMaterial({ color: 0x008080, roughness: 0.8 });
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xf5f5dc, roughness: 0.8 });
-        addPart(20, 18, 16, 0, 10, 0, teal); // Big body
-        addPart(16, 14, 4, 0, 9, 8, cream); // Belly
-        addPart(12, 10, 10, 0, 24, 0, teal); // Head
-        addPart(8, 6, 2, 0, 24, 5, cream); // Face mask
-        addPart(3, 4, 3, -4, 30, 0, teal); addPart(3, 4, 3, 4, 30, 0, teal); // Ears
-        addPart(5, 8, 5, -12, 12, 2, teal); addPart(5, 8, 5, 12, 12, 2, teal); // Arms
-        addPart(5, 5, 6, -6, 2.5, 6, cream); addPart(5, 5, 6, 6, 2.5, 6, cream); // Feet
+        addPart(40, 36, 32, 0, 20, 0, teal); // Big body
+        addPart(32, 28, 8, 0, 18, 16, cream); // Belly
+        addPart(24, 20, 20, 0, 48, 0, teal); // Head
+        addPart(16, 12, 4, 0, 48, 10, cream); // Face mask
+        addPart(4, 2, 2, -6, 50, 12, blackMat); addPart(4, 2, 2, 6, 50, 12, blackMat); // Sleepy Eyes
+        addPart(6, 8, 6, -8, 60, 0, teal); addPart(6, 8, 6, 8, 60, 0, teal); // Ears
+        addPart(10, 16, 10, -24, 24, 4, teal); addPart(10, 16, 10, 24, 24, 4, teal); // Arms
+        addPart(10, 10, 12, -12, 5, 12, cream); addPart(10, 10, 12, 12, 5, 12, cream); // Feet
     } else if (type === 'jigglypuff') {
-        heightOffset = 6;
+        heightOffset = 12;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb6c1, roughness: 0.7 });
-        addPart(12, 12, 12, 0, 6, 0, pink); // Round body
-        addPart(3, 4, 3, -3, 13, 0, pink); addPart(3, 4, 3, 3, 13, 0, pink); // Ears
-        addPart(4, 3, 3, 0, 13, 4, pink); // Hair tuft
-        addPart(3, 3, 3, -6, 6, 2, pink); addPart(3, 3, 3, 6, 6, 2, pink); // Arms
-        addPart(4, 2, 5, -3, 1, 4, pink); addPart(4, 2, 5, 3, 1, 4, pink); // Feet
+        addPart(24, 24, 24, 0, 12, 0, pink); // Round body
+        addPart(4, 4, 2, -6, 14, 12, blackMat); addPart(4, 4, 2, 6, 14, 12, blackMat); // Eyes
+        addPart(6, 8, 6, -6, 26, 0, pink); addPart(6, 8, 6, 6, 26, 0, pink); // Ears
+        addPart(8, 6, 6, 0, 26, 8, pink); // Hair tuft
+        addPart(6, 6, 6, -12, 12, 4, pink); addPart(6, 6, 6, 12, 12, 4, pink); // Arms
+        addPart(8, 4, 10, -6, 2, 8, pink); addPart(8, 4, 10, 6, 2, 8, pink); // Feet
     } else if (type === 'diglett') {
-        heightOffset = 4;
+        heightOffset = 8;
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
         const dirt = new THREE.MeshPhysicalMaterial({ color: 0x5c4033, roughness: 1.0 });
-        addPart(14, 2, 14, 0, 1, 0, dirt); // Dirt mound
-        addPart(8, 10, 8, 0, 6, 0, brown); // Body sticking out
-        addPart(4, 2, 3, 0, 8, 4, pink); // Big nose
+        addPart(28, 4, 28, 0, 2, 0, dirt); // Dirt mound
+        addPart(16, 20, 16, 0, 12, 0, brown); // Body sticking out
+        addPart(2, 4, 2, -4, 16, 8, blackMat); addPart(2, 4, 2, 4, 16, 8, blackMat); // Eyes
+        addPart(8, 4, 6, 0, 12, 8, pink); // Big nose
     } else if (type === 'porygon') {
-        heightOffset = 8;
+        heightOffset = 16;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
         const blue = new THREE.MeshPhysicalMaterial({ color: 0x00bfff, roughness: 0.5 });
-        addPart(8, 8, 8, 0, 6, 0, pink); // Body
-        addPart(6, 6, 6, 0, 14, 3, pink); // Head
-        addPart(4, 4, 8, 0, 12, 9, blue); // Snout
-        addPart(6, 8, 4, -6, 6, 0, blue); addPart(6, 8, 4, 6, 6, 0, blue); // Legs
-        const pTail = addPart(4, 4, 6, 0, 6, -6, blue); pTail.rotation.x = -Math.PI / 4; // Tail
+        addPart(16, 16, 16, 0, 12, 0, pink); // Body
+        addPart(12, 12, 12, 0, 28, 6, pink); // Head
+        addPart(4, 4, 4, -6, 30, 8, blackMat); addPart(4, 4, 4, 6, 30, 8, blackMat); // Eyes
+        addPart(8, 8, 16, 0, 24, 18, blue); // Snout
+        addPart(12, 16, 8, -12, 12, 0, blue); addPart(12, 16, 8, 12, 12, 0, blue); // Legs
+        const pTail = addPart(8, 8, 12, 0, 12, -12, blue); pTail.rotation.x = -Math.PI / 4; // Tail
     } else if (type === 'ditto') {
-        heightOffset = 4;
+        heightOffset = 8;
         const purple = new THREE.MeshPhysicalMaterial({ color: 0xdda0dd, roughness: 0.4, transmission: 0.2 });
-        addPart(12, 6, 10, 0, 3, 0, purple); // Blob base
-        addPart(8, 6, 8, 0, 7, 0, purple); // Blob top
-        addPart(4, 4, 4, -5, 5, 2, purple); addPart(4, 4, 4, 5, 5, 2, purple); // Little arms
+        addPart(24, 12, 20, 0, 6, 0, purple); // Blob base
+        addPart(16, 12, 16, 0, 14, 0, purple); // Blob top
+        addPart(2, 2, 2, -4, 16, 8, blackMat); addPart(2, 2, 2, 4, 16, 8, blackMat); // Dot eyes
+        addPart(8, 8, 8, -10, 10, 4, purple); addPart(8, 8, 8, 10, 10, 4, purple); // Little arms
     } else if (type === 'lion') {
-        heightOffset = 12;
+        heightOffset = 24;
         const gold = new THREE.MeshPhysicalMaterial({ color: 0xdaa520, roughness: 0.8 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        addPart(10, 10, 18, 0, 12, 0, gold); // Body
-        addPart(14, 14, 6, 0, 16, 10, brown); // Mane
-        addPart(8, 8, 8, 0, 16, 14, gold); // Head
-        addPart(4, 4, 4, 0, 14, 18, blackMat); // Snout
-        const tail = addPart(2, 10, 2, 0, 12, -10, gold); tail.rotation.x = -Math.PI / 6;
-        addPart(3, 8, 3, -3.5, 4, 7, gold); addPart(3, 8, 3, 3.5, 4, 7, gold); // Front legs
-        addPart(3, 8, 3, -3.5, 4, -7, gold); addPart(3, 8, 3, 3.5, 4, -7, gold); // Back legs
+        addPart(20, 20, 36, 0, 24, 0, gold); // Body
+        // Mane details
+        addPart(28, 28, 12, 0, 32, 20, brown); // Mane base
+        addPart(16, 16, 16, 0, 32, 28, gold); // Head
+        addPart(4, 4, 4, -6, 34, 36, blackMat); addPart(4, 4, 4, 6, 34, 36, blackMat); // Eyes
+        addPart(8, 8, 8, 0, 28, 36, blackMat); // Snout
+        const tail = addPart(4, 20, 4, 0, 24, -20, gold); tail.rotation.x = -Math.PI / 6;
+        addPart(6, 6, 6, 0, 4, -28, brown); // Tail tuft
+        addPart(6, 16, 6, -7, 8, 14, gold); addPart(6, 16, 6, 7, 8, 14, gold); // Front legs
+        addPart(6, 16, 6, -7, 8, -14, gold); addPart(6, 16, 6, 7, 8, -14, gold); // Back legs
     } else if (type === 'elephant') {
-        heightOffset = 18;
+        heightOffset = 36;
         const grey = new THREE.MeshPhysicalMaterial({ color: 0x808080, roughness: 0.8 });
-        addPart(18, 16, 24, 0, 16, 0, grey); // Huge body
-        addPart(14, 14, 14, 0, 20, 16, grey); // Head
-        addPart(2, 20, 2, 0, 12, 24, grey); // Trunk
-        addPart(10, 14, 2, -12, 18, 14, grey); addPart(10, 14, 2, 12, 18, 14, grey); // Big ears
-        addPart(6, 10, 6, -6, 5, 8, grey); addPart(6, 10, 6, 6, 5, 8, grey); // Front legs
-        addPart(6, 10, 6, -6, 5, -8, grey); addPart(6, 10, 6, 6, 5, -8, grey); // Back legs
+        addPart(36, 32, 48, 0, 32, 0, grey); // Huge body
+        addPart(28, 28, 28, 0, 40, 32, grey); // Head
+        addPart(4, 4, 4, -10, 44, 46, blackMat); addPart(4, 4, 4, 10, 44, 46, blackMat); // Eyes
+        // Trunk details
+        addPart(8, 20, 8, 0, 30, 48, grey);
+        addPart(6, 10, 6, 0, 15, 48, grey);
+        addPart(20, 28, 4, -24, 36, 28, grey); addPart(20, 28, 4, 24, 36, 28, grey); // Big ears
+        addPart(12, 20, 12, -12, 10, 16, grey); addPart(12, 20, 12, 12, 10, 16, grey); // Front legs
+        addPart(12, 20, 12, -12, 10, -16, grey); addPart(12, 20, 12, 12, 10, -16, grey); // Back legs
     } else if (type === 'giraffe') {
-        heightOffset = 30; // Very tall
+        heightOffset = 60; // Very tall
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.8 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        addPart(10, 10, 16, 0, 20, 0, yellow); // Body
-        addPart(4, 20, 6, 0, 32, 10, yellow); // Long neck
-        addPart(6, 6, 10, 0, 42, 14, yellow); // Head
-        addPart(2, 3, 2, -2, 46, 12, brown); addPart(2, 3, 2, 2, 46, 12, brown); // Ossicones (horns)
-        addPart(3, 18, 3, -3.5, 9, 6, yellow); addPart(3, 18, 3, 3.5, 9, 6, yellow); // Front tall legs
-        addPart(3, 18, 3, -3.5, 9, -6, yellow); addPart(3, 18, 3, 3.5, 9, -6, yellow); // Back tall legs
+        addPart(20, 20, 32, 0, 40, 0, yellow); // Body
+        // Random brown spots on body
+        addPart(6, 2, 6, -10, 40, 5, brown); addPart(6, 2, 6, 10, 40, -5, brown);
+        addPart(8, 40, 12, 0, 64, 20, yellow); // Long neck
+        addPart(12, 12, 20, 0, 84, 28, yellow); // Head
+        addPart(4, 4, 4, -6, 86, 38, blackMat); addPart(4, 4, 4, 6, 86, 38, blackMat); // Eyes
+        addPart(4, 6, 4, -4, 92, 24, brown); addPart(4, 6, 4, 4, 92, 24, brown); // Ossicones (horns)
+        addPart(6, 36, 6, -7, 18, 12, yellow); addPart(6, 36, 6, 7, 18, 12, yellow); // Front tall legs
+        addPart(6, 36, 6, -7, 18, -12, yellow); addPart(6, 36, 6, 7, 18, -12, yellow); // Back tall legs
     } else if (type === 'penguin') {
-        heightOffset = 8;
+        heightOffset = 16;
         const black = new THREE.MeshPhysicalMaterial({ color: 0x111111, roughness: 0.6 });
         const white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.8 });
         const orange = new THREE.MeshPhysicalMaterial({ color: 0xffa500, roughness: 0.6 });
-        addPart(10, 14, 8, 0, 8, 0, black); // Body
-        addPart(8, 12, 2, 0, 8, 4.5, white); // White belly
-        addPart(8, 8, 8, 0, 18, 0, black); // Head
-        addPart(6, 6, 2, 0, 18, 4.5, white); // White face
-        addPart(4, 2, 4, 0, 16, 6, orange); // Beak
-        addPart(2, 10, 4, -6, 10, 0, black); addPart(2, 10, 4, 6, 10, 0, black); // Flippers
-        addPart(4, 2, 6, -3, 1, 3, orange); addPart(4, 2, 6, 3, 1, 3, orange); // Feet
+        addPart(20, 28, 16, 0, 16, 0, black); // Body
+        addPart(16, 24, 4, 0, 16, 9, white); // White belly
+        addPart(16, 16, 16, 0, 36, 0, black); // Head
+        addPart(4, 4, 4, -4, 38, 8, blackMat); addPart(4, 4, 4, 4, 38, 8, blackMat); // Eyes
+        addPart(12, 12, 4, 0, 36, 9, white); // White face
+        addPart(8, 4, 8, 0, 32, 12, orange); // Beak
+        // Wings (flippers) detailed
+        addPart(4, 20, 8, -12, 20, 0, black); addPart(4, 20, 8, 12, 20, 0, black);
+        addPart(8, 4, 12, -6, 2, 6, orange); addPart(8, 4, 12, 6, 2, 6, orange); // Feet
     } else if (type === 'crocodile') {
-        heightOffset = 3;
-        const green = new THREE.MeshPhysicalMaterial({ color: 0x2e8b57, roughness: 0.9 });
-        addPart(12, 4, 20, 0, 2, 0, green); // Flat body
-        addPart(10, 4, 12, 0, 2, 16, green); // Long snout
-        addPart(8, 4, 18, 0, 2, -18, green); // Tail
-        addPart(4, 3, 4, -8, 1.5, 6, green); addPart(4, 3, 4, 8, 1.5, 6, green); // Front legs
-        addPart(4, 3, 4, -8, 1.5, -6, green); addPart(4, 3, 4, 8, 1.5, -6, green); // Back legs
-    } else if (type === 'pig') {
         heightOffset = 6;
+        const green = new THREE.MeshPhysicalMaterial({ color: 0x2e8b57, roughness: 0.9 });
+        addPart(24, 8, 40, 0, 4, 0, green); // Flat body
+        addPart(20, 8, 24, 0, 4, 32, green); // Long snout
+        addPart(4, 4, 4, -8, 8, 36, blackMat); addPart(4, 4, 4, 8, 8, 36, blackMat); // Eyes
+        addPart(16, 8, 36, 0, 4, -36, green); // Tail
+        addPart(8, 6, 8, -16, 3, 12, green); addPart(8, 6, 8, 16, 3, 12, green); // Front legs
+        addPart(8, 6, 8, -16, 3, -12, green); addPart(8, 6, 8, 16, 3, -12, green); // Back legs
+    } else if (type === 'pig') {
+        heightOffset = 12;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xffc0cb, roughness: 0.8 });
-        addPart(12, 10, 16, 0, 7, 0, pink); // Plump body
-        addPart(8, 8, 8, 0, 12, 10, pink); // Head
-        addPart(4, 4, 2, 0, 10, 15, pink); // Snout
-        addPart(2, 3, 2, -3, 16, 8, pink); addPart(2, 3, 2, 3, 16, 8, pink); // Ears
-        addPart(3, 4, 3, -4, 2, 5, pink); addPart(3, 4, 3, 4, 2, 5, pink); // Front legs
-        addPart(3, 4, 3, -4, 2, -5, pink); addPart(3, 4, 3, 4, 2, -5, pink); // Back legs
+        addPart(24, 20, 32, 0, 14, 0, pink); // Plump body
+        addPart(16, 16, 16, 0, 24, 20, pink); // Head
+        addPart(4, 4, 4, -4, 26, 28, blackMat); addPart(4, 4, 4, 4, 26, 28, blackMat); // Eyes
+        addPart(8, 8, 4, 0, 20, 30, pink); // Snout
+        addPart(4, 6, 4, -6, 32, 16, pink); addPart(4, 6, 4, 6, 32, 16, pink); // Ears
+        addPart(6, 8, 6, -8, 4, 10, pink); addPart(6, 8, 6, 8, 4, 10, pink); // Front legs
+        addPart(6, 8, 6, -8, 4, -10, pink); addPart(6, 8, 6, 8, 4, -10, pink); // Back legs
     } else if (type === 'turtle') {
-        heightOffset = 4;
+        heightOffset = 8;
         const green = new THREE.MeshPhysicalMaterial({ color: 0x3cb371, roughness: 0.8 });
         const darkGreen = new THREE.MeshPhysicalMaterial({ color: 0x006400, roughness: 0.9 });
-        addPart(14, 6, 16, 0, 4, 0, darkGreen); // Shell
-        addPart(6, 6, 6, 0, 4, 10, green); // Head
-        addPart(4, 2, 4, -8, 2, 6, green); addPart(4, 2, 4, 8, 2, 6, green); // Front flippers
-        addPart(4, 2, 4, -8, 2, -6, green); addPart(4, 2, 4, 8, 2, -6, green); // Back flippers
-        addPart(2, 2, 4, 0, 2, -10, green); // Small tail
+        addPart(28, 12, 32, 0, 8, 0, darkGreen); // Shell
+        addPart(12, 12, 12, 0, 8, 20, green); // Head
+        addPart(2, 2, 2, -4, 10, 26, blackMat); addPart(2, 2, 2, 4, 10, 26, blackMat); // Eyes
+        addPart(8, 4, 8, -16, 4, 12, green); addPart(8, 4, 8, 16, 4, 12, green); // Front flippers
+        addPart(8, 4, 8, -16, 4, -12, green); addPart(8, 4, 8, 16, 4, -12, green); // Back flippers
+        addPart(4, 4, 8, 0, 4, -20, green); // Small tail
     }
 
     state.scene.add(animalGroup);
 
-    // Physics Body (Bounding Box representation)
-    const boxShape = new CANNON.Box(new CANNON.Vec3((12 * u) / 2, (heightOffset * 2 * u) / 2, (20 * u) / 2));
+    // Physics Bounding Box updated for bigger size
+    const boxShape = new CANNON.Box(new CANNON.Vec3((24 * u) / 2, (heightOffset * 2 * u) / 2, (40 * u) / 2));
 
-    // Spawn randomly on board, drop from sky (halved height)
     const spawnX = (Math.random() - 0.5) * 1600;
     const spawnZ = (Math.random() - 0.5) * 1600;
-    const spawnY = 400 + Math.random() * 200; // Halved from 800 + 400
+    const spawnY = 400 + Math.random() * 200;
 
+    // Adjusting weight to keep it stable
     const body = new CANNON.Body({
-        mass: 5,
+        mass: 10,
         shape: boxShape,
         position: new CANNON.Vec3(spawnX, spawnY, spawnZ),
         material: new CANNON.Material(),
@@ -285,7 +311,8 @@ export function spawnDog() {
         state.world.addBody(body);
     }
 
-    const speed = 150 + Math.random() * 150; // Faster roaming (150-300 units/sec)
+    // Wandering speeds adjusted for larger size
+    const speed = 200 + Math.random() * 200;
 
     const animalData = {
         mesh: animalGroup,
@@ -309,12 +336,11 @@ function removeOldestAnimal() {
 }
 
 export function updateDogs(dt) {
-    const boardLimit = 1000 - voxelSize;
+    const boardLimit = 1000 - voxelSize * 2; // more generous margin
 
     animals.forEach(animal => {
-        // If falling, wait until resting on ground
         if (animal.state === 'falling') {
-            if (animal.body && Math.abs(animal.body.velocity.y) < 1.0 && animal.body.position.y < 50) {
+            if (animal.body && Math.abs(animal.body.velocity.y) < 1.0 && animal.body.position.y < 80) {
                 animal.state = 'idle';
                 animal.timer = 0.5;
             }
@@ -336,7 +362,6 @@ export function updateDogs(dt) {
 
         if (animal.state === 'walking' && animal.body) {
             let hitBoundary = false;
-            // Very proactive boundary checking to keep them inside the board
             const predictX = animal.body.position.x + animal.targetDir.x * animal.speed * 0.5;
             const predictZ = animal.body.position.z + animal.targetDir.z * animal.speed * 0.5;
 
@@ -349,11 +374,9 @@ export function updateDogs(dt) {
                 hitBoundary = true;
             }
 
-            // Apply velocity
             animal.body.velocity.x = animal.targetDir.x * animal.speed;
             animal.body.velocity.z = animal.targetDir.z * animal.speed;
 
-            // Turn smoothly or instantly
             animal.mesh.rotation.y = Math.atan2(animal.targetDir.x, animal.targetDir.z);
 
         } else if (animal.state === 'idle' && animal.body) {
@@ -363,8 +386,7 @@ export function updateDogs(dt) {
 
         if (animal.body) {
             animal.mesh.position.copy(animal.body.position);
-            // offset body slightly so feet touch ground (body center vs mesh origin)
-            animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));
+            animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20)); // Anchor to feet
         }
     });
 }
