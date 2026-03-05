@@ -136,7 +136,7 @@ export function explodeBricks() {
             dir.set(Math.random() - 0.5, 1, Math.random() - 0.5).normalize();
         }
 
-        const forceMagnitude = 5000 + Math.random() * 10000;
+        const forceMagnitude = 2500 + Math.random() * 5000;
         const impulse = new CANNON.Vec3(dir.x * forceMagnitude, Math.abs(dir.y * forceMagnitude) + forceMagnitude * 0.5, dir.z * forceMagnitude);
 
         // Ensure it doesn't sleep immediately upon applying impulse
@@ -147,7 +147,7 @@ export function explodeBricks() {
             state.world.addBody(body);
         }
 
-        explodingBricks.push({ mesh: brick, body: body });
+        explodingBricks.push({ mesh: brick, body: body, startTime: performance.now() });
 
         const index = objects.indexOf(brick);
         if (index > -1) objects.splice(index, 1);

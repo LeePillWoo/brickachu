@@ -171,10 +171,23 @@ function animate() {
 
     for (let i = explodingBricks.length - 1; i >= 0; i--) {
         const item = explodingBricks[i];
+        const elapsed = (now - item.startTime) / 1000;
+
+        if (elapsed > 7.0) {
+            if (item.mesh) state.scene.remove(item.mesh);
+            if (item.body && state.world) state.world.removeBody(item.body);
+            explodingBricks.splice(i, 1);
+            continue;
+        }
 
         if (item.body) {
             item.mesh.position.copy(item.body.position);
             item.mesh.quaternion.copy(item.body.quaternion);
+
+            if (elapsed > 6.0) {
+                const s = 1.0 - (elapsed - 6.0);
+                item.mesh.scale.set(Math.max(s, 0.01), Math.max(s, 0.01), Math.max(s, 0.01));
+            }
 
             // Hide/remove blocks that fall way off the board
             if (item.body.position.y < -1000) {
