@@ -19,8 +19,7 @@ export function spawnDog() {
         removeOldestAnimal();
     }
 
-    const animalGroup = new THREE.Group();
-    const u = voxelSize / 10; // 1/10th scale unit
+    const u = voxelSize / 20; // 1/20th scale unit
 
     const types = ['dog', 'cat', 'rabbit', 'sheep', 'snake', 'horse', 'pikachu', 'squirtle', 'charmander'];
     const type = types[Math.floor(Math.random() * types.length)];
@@ -142,10 +141,10 @@ export function spawnDog() {
     // Physics Body (Bounding Box representation)
     const boxShape = new CANNON.Box(new CANNON.Vec3((12 * u) / 2, (heightOffset * 2 * u) / 2, (20 * u) / 2));
 
-    // Spawn randomly on board, drop from sky
+    // Spawn randomly on board, drop from sky (halved height)
     const spawnX = (Math.random() - 0.5) * 1600;
     const spawnZ = (Math.random() - 0.5) * 1600;
-    const spawnY = 800 + Math.random() * 400; // High in the sky
+    const spawnY = 400 + Math.random() * 200; // Halved from 800 + 400
 
     const body = new CANNON.Body({
         mass: 5,
@@ -238,7 +237,7 @@ export function updateDogs(dt) {
         if (animal.body) {
             animal.mesh.position.copy(animal.body.position);
             // offset body slightly so feet touch ground (body center vs mesh origin)
-            animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 10));
+            animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));
         }
     });
 }

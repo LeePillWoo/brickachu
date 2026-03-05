@@ -170,14 +170,6 @@ export function setupModeButtons() {
         });
     }
 
-    const ioToggle = document.getElementById('mobile-io-toggle');
-    const ioWrapper = document.getElementById('io-controls-wrapper');
-    if (ioToggle) {
-        ioToggle.addEventListener('click', () => {
-            ioWrapper.classList.toggle('mobile-open');
-        });
-    }
-
     const helpBtn = document.getElementById('btn-help');
     const closeHelpBtn = document.getElementById('btn-close-help');
     const instructionsPanel = document.getElementById('instructions');

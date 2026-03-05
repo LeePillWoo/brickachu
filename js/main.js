@@ -139,7 +139,6 @@ function init() {
     setupPalette();
     setupModeButtons();
     setupGUI();
-    setupIO();
     initPreview();
 }
 
