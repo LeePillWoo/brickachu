@@ -22,7 +22,11 @@ export function spawnDog() {
     const animalGroup = new THREE.Group();
     const u = voxelSize / 20; // 1/20th scale unit
 
-    const types = ['dog', 'cat', 'rabbit', 'sheep', 'snake', 'horse', 'pikachu', 'squirtle', 'charmander'];
+    const types = [
+        'dog', 'cat', 'rabbit', 'sheep', 'snake', 'horse', 'pikachu', 'squirtle', 'charmander',
+        'meowth', 'snorlax', 'jigglypuff', 'diglett', 'porygon', 'ditto',
+        'lion', 'elephant', 'giraffe', 'penguin', 'crocodile', 'pig', 'turtle'
+    ];
     const type = types[Math.floor(Math.random() * types.length)];
 
     // Randomize base colors for this specific animal instance
@@ -135,6 +139,128 @@ export function spawnDog() {
         addPart(3, 4, 4, -3, 2, 2, orange); addPart(3, 4, 4, 3, 2, 2, orange); // Legs
         const cTail = addPart(3, 3, 10, 0, 4, -6, orange); cTail.rotation.x = Math.PI / 6;
         addPart(2, 4, 2, 0, 8, -12, fire); // Tail flame
+    } else if (type === 'meowth') {
+        heightOffset = 8;
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffdd0, roughness: 0.7 });
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.7 });
+        const gold = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.3 });
+        addPart(6, 8, 6, 0, 6, 0, cream); // Body
+        addPart(8, 8, 6, 0, 14, 1, cream); // Head
+        addPart(2, 4, 2, -3, 19, 1, brown); addPart(2, 4, 2, 3, 19, 1, brown); // Ears
+        addPart(3, 4, 1, 0, 16, 4, gold); // Coin
+        addPart(2, 6, 2, -4, 8, 1, cream); addPart(2, 6, 2, 4, 8, 1, cream); // Arms
+        addPart(3, 3, 4, -2.5, 1.5, 2, brown); addPart(3, 3, 4, 2.5, 1.5, 2, brown); // Feet
+        const mTail = addPart(2, 10, 2, 0, 6, -4, brown); mTail.rotation.x = Math.PI / 8; // Tail
+    } else if (type === 'snorlax') {
+        heightOffset = 12;
+        const teal = new THREE.MeshPhysicalMaterial({ color: 0x008080, roughness: 0.8 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xf5f5dc, roughness: 0.8 });
+        addPart(20, 18, 16, 0, 10, 0, teal); // Big body
+        addPart(16, 14, 4, 0, 9, 8, cream); // Belly
+        addPart(12, 10, 10, 0, 24, 0, teal); // Head
+        addPart(8, 6, 2, 0, 24, 5, cream); // Face mask
+        addPart(3, 4, 3, -4, 30, 0, teal); addPart(3, 4, 3, 4, 30, 0, teal); // Ears
+        addPart(5, 8, 5, -12, 12, 2, teal); addPart(5, 8, 5, 12, 12, 2, teal); // Arms
+        addPart(5, 5, 6, -6, 2.5, 6, cream); addPart(5, 5, 6, 6, 2.5, 6, cream); // Feet
+    } else if (type === 'jigglypuff') {
+        heightOffset = 6;
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb6c1, roughness: 0.7 });
+        addPart(12, 12, 12, 0, 6, 0, pink); // Round body
+        addPart(3, 4, 3, -3, 13, 0, pink); addPart(3, 4, 3, 3, 13, 0, pink); // Ears
+        addPart(4, 3, 3, 0, 13, 4, pink); // Hair tuft
+        addPart(3, 3, 3, -6, 6, 2, pink); addPart(3, 3, 3, 6, 6, 2, pink); // Arms
+        addPart(4, 2, 5, -3, 1, 4, pink); addPart(4, 2, 5, 3, 1, 4, pink); // Feet
+    } else if (type === 'diglett') {
+        heightOffset = 4;
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
+        const dirt = new THREE.MeshPhysicalMaterial({ color: 0x5c4033, roughness: 1.0 });
+        addPart(14, 2, 14, 0, 1, 0, dirt); // Dirt mound
+        addPart(8, 10, 8, 0, 6, 0, brown); // Body sticking out
+        addPart(4, 2, 3, 0, 8, 4, pink); // Big nose
+    } else if (type === 'porygon') {
+        heightOffset = 8;
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x00bfff, roughness: 0.5 });
+        addPart(8, 8, 8, 0, 6, 0, pink); // Body
+        addPart(6, 6, 6, 0, 14, 3, pink); // Head
+        addPart(4, 4, 8, 0, 12, 9, blue); // Snout
+        addPart(6, 8, 4, -6, 6, 0, blue); addPart(6, 8, 4, 6, 6, 0, blue); // Legs
+        const pTail = addPart(4, 4, 6, 0, 6, -6, blue); pTail.rotation.x = -Math.PI / 4; // Tail
+    } else if (type === 'ditto') {
+        heightOffset = 4;
+        const purple = new THREE.MeshPhysicalMaterial({ color: 0xdda0dd, roughness: 0.4, transmission: 0.2 });
+        addPart(12, 6, 10, 0, 3, 0, purple); // Blob base
+        addPart(8, 6, 8, 0, 7, 0, purple); // Blob top
+        addPart(4, 4, 4, -5, 5, 2, purple); addPart(4, 4, 4, 5, 5, 2, purple); // Little arms
+    } else if (type === 'lion') {
+        heightOffset = 12;
+        const gold = new THREE.MeshPhysicalMaterial({ color: 0xdaa520, roughness: 0.8 });
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
+        addPart(10, 10, 18, 0, 12, 0, gold); // Body
+        addPart(14, 14, 6, 0, 16, 10, brown); // Mane
+        addPart(8, 8, 8, 0, 16, 14, gold); // Head
+        addPart(4, 4, 4, 0, 14, 18, blackMat); // Snout
+        const tail = addPart(2, 10, 2, 0, 12, -10, gold); tail.rotation.x = -Math.PI / 6;
+        addPart(3, 8, 3, -3.5, 4, 7, gold); addPart(3, 8, 3, 3.5, 4, 7, gold); // Front legs
+        addPart(3, 8, 3, -3.5, 4, -7, gold); addPart(3, 8, 3, 3.5, 4, -7, gold); // Back legs
+    } else if (type === 'elephant') {
+        heightOffset = 18;
+        const grey = new THREE.MeshPhysicalMaterial({ color: 0x808080, roughness: 0.8 });
+        addPart(18, 16, 24, 0, 16, 0, grey); // Huge body
+        addPart(14, 14, 14, 0, 20, 16, grey); // Head
+        addPart(2, 20, 2, 0, 12, 24, grey); // Trunk
+        addPart(10, 14, 2, -12, 18, 14, grey); addPart(10, 14, 2, 12, 18, 14, grey); // Big ears
+        addPart(6, 10, 6, -6, 5, 8, grey); addPart(6, 10, 6, 6, 5, 8, grey); // Front legs
+        addPart(6, 10, 6, -6, 5, -8, grey); addPart(6, 10, 6, 6, 5, -8, grey); // Back legs
+    } else if (type === 'giraffe') {
+        heightOffset = 30; // Very tall
+        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.8 });
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
+        addPart(10, 10, 16, 0, 20, 0, yellow); // Body
+        addPart(4, 20, 6, 0, 32, 10, yellow); // Long neck
+        addPart(6, 6, 10, 0, 42, 14, yellow); // Head
+        addPart(2, 3, 2, -2, 46, 12, brown); addPart(2, 3, 2, 2, 46, 12, brown); // Ossicones (horns)
+        addPart(3, 18, 3, -3.5, 9, 6, yellow); addPart(3, 18, 3, 3.5, 9, 6, yellow); // Front tall legs
+        addPart(3, 18, 3, -3.5, 9, -6, yellow); addPart(3, 18, 3, 3.5, 9, -6, yellow); // Back tall legs
+    } else if (type === 'penguin') {
+        heightOffset = 8;
+        const black = new THREE.MeshPhysicalMaterial({ color: 0x111111, roughness: 0.6 });
+        const white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.8 });
+        const orange = new THREE.MeshPhysicalMaterial({ color: 0xffa500, roughness: 0.6 });
+        addPart(10, 14, 8, 0, 8, 0, black); // Body
+        addPart(8, 12, 2, 0, 8, 4.5, white); // White belly
+        addPart(8, 8, 8, 0, 18, 0, black); // Head
+        addPart(6, 6, 2, 0, 18, 4.5, white); // White face
+        addPart(4, 2, 4, 0, 16, 6, orange); // Beak
+        addPart(2, 10, 4, -6, 10, 0, black); addPart(2, 10, 4, 6, 10, 0, black); // Flippers
+        addPart(4, 2, 6, -3, 1, 3, orange); addPart(4, 2, 6, 3, 1, 3, orange); // Feet
+    } else if (type === 'crocodile') {
+        heightOffset = 3;
+        const green = new THREE.MeshPhysicalMaterial({ color: 0x2e8b57, roughness: 0.9 });
+        addPart(12, 4, 20, 0, 2, 0, green); // Flat body
+        addPart(10, 4, 12, 0, 2, 16, green); // Long snout
+        addPart(8, 4, 18, 0, 2, -18, green); // Tail
+        addPart(4, 3, 4, -8, 1.5, 6, green); addPart(4, 3, 4, 8, 1.5, 6, green); // Front legs
+        addPart(4, 3, 4, -8, 1.5, -6, green); addPart(4, 3, 4, 8, 1.5, -6, green); // Back legs
+    } else if (type === 'pig') {
+        heightOffset = 6;
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffc0cb, roughness: 0.8 });
+        addPart(12, 10, 16, 0, 7, 0, pink); // Plump body
+        addPart(8, 8, 8, 0, 12, 10, pink); // Head
+        addPart(4, 4, 2, 0, 10, 15, pink); // Snout
+        addPart(2, 3, 2, -3, 16, 8, pink); addPart(2, 3, 2, 3, 16, 8, pink); // Ears
+        addPart(3, 4, 3, -4, 2, 5, pink); addPart(3, 4, 3, 4, 2, 5, pink); // Front legs
+        addPart(3, 4, 3, -4, 2, -5, pink); addPart(3, 4, 3, 4, 2, -5, pink); // Back legs
+    } else if (type === 'turtle') {
+        heightOffset = 4;
+        const green = new THREE.MeshPhysicalMaterial({ color: 0x3cb371, roughness: 0.8 });
+        const darkGreen = new THREE.MeshPhysicalMaterial({ color: 0x006400, roughness: 0.9 });
+        addPart(14, 6, 16, 0, 4, 0, darkGreen); // Shell
+        addPart(6, 6, 6, 0, 4, 10, green); // Head
+        addPart(4, 2, 4, -8, 2, 6, green); addPart(4, 2, 4, 8, 2, 6, green); // Front flippers
+        addPart(4, 2, 4, -8, 2, -6, green); addPart(4, 2, 4, 8, 2, -6, green); // Back flippers
+        addPart(2, 2, 4, 0, 2, -10, green); // Small tail
     }
 
     state.scene.add(animalGroup);
