@@ -11,6 +11,7 @@ import { pushHistory, getFullSnapshot } from './scene.js';
 import { updatePreview } from './camera.js';
 import { onPointerMove, onPointerDown, onPointerUp, onWindowResize, onKeyDown, onKeyUp } from './input.js';
 import { setupPalette, setupModeButtons, setupGUI, setupIO } from './ui.js';
+import { updateDogs } from './entities.js';
 
 function init() {
     state.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
@@ -168,6 +169,8 @@ function animate() {
     if (state.world) {
         state.world.step(dt);
     }
+
+    updateDogs(dt);
 
     for (let i = explodingBricks.length - 1; i >= 0; i--) {
         const item = explodingBricks[i];

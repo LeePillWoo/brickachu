@@ -3,6 +3,7 @@ import { state, guiParams, defaultParams, materials, presetColors, numCustomSlot
 import { explodeBricks, pushHistory, applyActionState } from './scene.js';
 import { snapPreviewCamera } from './camera.js';
 import { saveScene, resetScene, loadScene } from './saveLoad.js';
+import { spawnDog } from './entities.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -151,6 +152,14 @@ export function setupModeButtons() {
         e.stopPropagation();
         import('./scene.js').then(m => m.undo());
     });
+
+    const btnDog = document.getElementById('add-dog-btn');
+    if (btnDog) {
+        btnDog.addEventListener('click', (e) => {
+            e.stopPropagation();
+            spawnDog();
+        });
+    }
 
     // Mobile UI Toggles
     const paletteToggle = document.getElementById('mobile-palette-toggle');
