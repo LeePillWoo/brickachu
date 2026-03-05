@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import { state, guiParams, objects, voxelSize, materials, explodingBricks } from './state.js';
 
 export function getFullSnapshot() {
@@ -82,8 +83,13 @@ export function applyActionState(stateStr) {
     });
 
     while (explodingBricks.length > 0) {
-        const b = explodingBricks.pop();
-        state.scene.remove(b);
+        const item = explodingBricks.pop();
+        if (item.mesh) state.scene.remove(item.mesh);
+        else state.scene.remove(item); // Fallback old
+
+        if (item.body && state.world) {
+            state.world.removeBody(item.body);
+        }
     }
 
     data.blocks.forEach(b => {
@@ -103,22 +109,45 @@ export function explodeBricks() {
     bricks.forEach(b => center.add(b.position));
     center.divideScalar(bricks.length);
 
+    // Common box shape for all bricks
+    const halfExtents = new CANNON.Vec3(voxelSize / 2, voxelSize / 2, voxelSize / 2);
+    const boxShape = new CANNON.Box(halfExtents);
+    const brickMaterial = new CANNON.Material();
+
     bricks.forEach(brick => {
+        const body = new CANNON.Body({
+            mass: 10, // Mass of individual block
+            shape: boxShape,
+            material: brickMaterial,
+            position: new CANNON.Vec3(brick.position.x, brick.position.y, brick.position.z),
+            quaternion: new CANNON.Quaternion(brick.quaternion.x, brick.quaternion.y, brick.quaternion.z, brick.quaternion.w)
+        });
+
+        // Add some angular velocity for a tumble effect
+        body.angularVelocity.set(
+            (Math.random() - 0.5) * 5,
+            (Math.random() - 0.5) * 5,
+            (Math.random() - 0.5) * 5
+        );
+
+        // Calculate outward impulse direction
         const dir = new THREE.Vector3().subVectors(brick.position, center).normalize();
         if (dir.lengthSq() === 0) {
             dir.set(Math.random() - 0.5, 1, Math.random() - 0.5).normalize();
         }
 
-        const force = 5 + Math.random() * 10;
-        brick.userData.velocity = dir.multiplyScalar(force);
-        brick.userData.angularVelocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.2,
-            (Math.random() - 0.5) * 0.2,
-            (Math.random() - 0.5) * 0.2
-        );
-        brick.userData.startTime = performance.now();
+        const forceMagnitude = 5000 + Math.random() * 10000;
+        const impulse = new CANNON.Vec3(dir.x * forceMagnitude, Math.abs(dir.y * forceMagnitude) + forceMagnitude * 0.5, dir.z * forceMagnitude);
 
-        explodingBricks.push(brick);
+        // Ensure it doesn't sleep immediately upon applying impulse
+        body.wakeUp();
+        body.applyImpulse(impulse, new CANNON.Vec3(0, 0, 0)); // Apply at center of mass
+
+        if (state.world) {
+            state.world.addBody(body);
+        }
+
+        explodingBricks.push({ mesh: brick, body: body });
 
         const index = objects.indexOf(brick);
         if (index > -1) objects.splice(index, 1);

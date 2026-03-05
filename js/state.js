@@ -62,5 +62,6 @@ export const state = {
     keys: { w: false, a: false, s: false, d: false, q: false, e: false },
     velocity: new THREE.Vector3(),
     downPointerPos: new THREE.Vector2(),
-    pointerDownTime: 0
+    pointerDownTime: 0,
+    world: null
 };

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -30,6 +31,19 @@ function init() {
     state.plane = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ visible: false }));
     state.scene.add(state.plane);
     objects.push(state.plane);
+
+    state.world = new CANNON.World({
+        gravity: new CANNON.Vec3(0, -980, 0), // Realistic feeling gravity for blocks
+        allowSleep: true
+    });
+    const groundMaterial = new CANNON.Material();
+    const groundBody = new CANNON.Body({
+        type: CANNON.Body.STATIC,
+        shape: new CANNON.Plane(),
+        material: groundMaterial
+    });
+    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+    state.world.addBody(groundBody);
 
     state.scene.add(state.previewGroup);
 
@@ -150,25 +164,28 @@ function animate() {
     requestAnimationFrame(animate);
 
     const now = performance.now();
+    const dt = 1 / 60; // Fixed time step
+    if (state.world) {
+        state.world.step(dt);
+    }
+
     for (let i = explodingBricks.length - 1; i >= 0; i--) {
-        const brick = explodingBricks[i];
-        const elapsed = (now - brick.userData.startTime) / 1000;
+        const item = explodingBricks[i];
 
-        if (elapsed > 3.0) {
-            state.scene.remove(brick);
+        if (item.body) {
+            item.mesh.position.copy(item.body.position);
+            item.mesh.quaternion.copy(item.body.quaternion);
+
+            // Hide/remove blocks that fall way off the board
+            if (item.body.position.y < -1000) {
+                state.scene.remove(item.mesh);
+                state.world.removeBody(item.body);
+                explodingBricks.splice(i, 1);
+            }
+        } else {
+            // Fallback for old snapshot objects if any
+            state.scene.remove(item);
             explodingBricks.splice(i, 1);
-            continue;
-        }
-
-        brick.position.add(brick.userData.velocity);
-        brick.rotation.x += brick.userData.angularVelocity.x;
-        brick.rotation.y += brick.userData.angularVelocity.y;
-        brick.rotation.z += brick.userData.angularVelocity.z;
-        brick.userData.velocity.y -= 0.3;
-
-        if (elapsed > 2.0) {
-            const s = 1.0 - (elapsed - 2.0);
-            brick.scale.set(Math.max(s, 0), Math.max(s, 0), Math.max(s, 0));
         }
     }
 
