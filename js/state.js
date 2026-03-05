@@ -20,7 +20,7 @@ export const guiParams = {
     block: { slotTarget: 'preset-0', color: 0xffffff, roughness: 0.2 },
     board: { color: 0xd6d6d6, roughness: 1.0 },
     light: { intensity: 3, color: 0xffffff, x: 500, y: 1500, z: 750, ambientInt: 5.0 },
-    ao: { enabled: true, intensity: 1, radius: 250, bias: 0.5 }
+    ao: { enabled: true, intensity: 2, radius: 250, bias: 0.5 }
 };
 
 export const defaultParams = JSON.parse(JSON.stringify(guiParams));
@@ -34,6 +34,7 @@ export const state = {
     raycaster: new THREE.Raycaster(),
     rollOverMesh: null,
     rollOverMaterial: null,
+    targetGuideOpacity: 0,
     cubeGeo: new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize),
     controls: null,
     ambientLight: null,

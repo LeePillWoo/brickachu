@@ -149,11 +149,7 @@ export function setupModeButtons() {
 
     btnRestore.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (state.preExplosionSnapshot) {
-            applyActionState(state.preExplosionSnapshot);
-        } else {
-            alert("No previous state to restore. Try after an explosion!");
-        }
+        import('./scene.js').then(m => m.undo());
     });
 
     // Mobile UI Toggles
@@ -302,8 +298,11 @@ export function setupGUI() {
 }
 
 export function setupIO() {
-    document.querySelectorAll('.snap-btn').forEach(btn => {
+    const snapBtns = document.querySelectorAll('.snap-btn');
+    snapBtns.forEach(btn => {
         btn.addEventListener('click', () => {
+            snapBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
             snapPreviewCamera(btn.dataset.dir);
         });
     });

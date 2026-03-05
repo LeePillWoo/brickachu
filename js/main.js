@@ -200,6 +200,15 @@ function animate() {
         state.controls.target.copy(state.camera.position).addScaledVector(lookDirection, Math.max(distance, 100));
     }
 
+    if (state.rollOverMaterial) {
+        state.rollOverMaterial.opacity += (state.targetGuideOpacity - state.rollOverMaterial.opacity) * 0.2;
+        if (state.rollOverMaterial.opacity > 0.01) {
+            state.rollOverMesh.visible = true;
+        } else {
+            state.rollOverMesh.visible = false;
+        }
+    }
+
     state.controls.update();
     updatePreview();
 

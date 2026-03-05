@@ -3,6 +3,7 @@ import { state, objects, voxelSize, materials } from './state.js';
 import { applyActionState, placeVoxel, removeVoxel } from './scene.js';
 import { frameCamera } from './camera.js';
 
+
 export function onKeyDown(event) {
     const key = event.key.toLowerCase();
     if (state.keys.hasOwnProperty(key)) state.keys[key] = true;
@@ -12,20 +13,11 @@ export function onKeyDown(event) {
     if (event.ctrlKey) {
         if (key === 'z') {
             event.preventDefault();
-            if (state.actionHistory.length > 1) {
-                const current = state.actionHistory.pop();
-                state.actionRedoStack.push(current);
-                const prev = state.actionHistory[state.actionHistory.length - 1];
-                applyActionState(prev);
-            }
+            import('./scene.js').then(m => m.undo());
         }
         if (key === 'y') {
             event.preventDefault();
-            if (state.actionRedoStack.length > 0) {
-                const next = state.actionRedoStack.pop();
-                state.actionHistory.push(next);
-                applyActionState(next);
-            }
+            import('./scene.js').then(m => m.redo());
         }
     }
 
@@ -55,31 +47,36 @@ export function onPointerMove(event) {
         const intersect = intersects[0];
 
         if (state.isAddMode) {
-            state.rollOverMesh.visible = true;
-            state.rollOverMaterial.color.set(0x00ff00);
-            state.rollOverMaterial.opacity = 0.3;
-            state.rollOverMesh.position.copy(intersect.point).add(intersect.face.normal);
-            state.rollOverMesh.position.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+            const pos = intersect.point.clone().add(intersect.face.normal);
+            pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+
+            const isColliding = objects.some(obj => obj !== state.plane && obj.position.distanceToSquared(pos) < 1);
+            if (isColliding) {
+                state.targetGuideOpacity = 0;
+            } else {
+                state.rollOverMaterial.color.set(0x00ff00);
+                state.targetGuideOpacity = 0.5;
+                state.rollOverMesh.position.copy(pos);
+            }
 
             if (state.isDraggingBuild) {
                 updatePreviewPath(state.rollOverMesh.position);
             }
         } else {
             if (intersect.object !== state.plane) {
-                state.rollOverMesh.visible = true;
                 state.rollOverMaterial.color.set(0xff0000);
-                state.rollOverMaterial.opacity = 0.5;
+                state.targetGuideOpacity = 0.5;
                 state.rollOverMesh.position.copy(intersect.object.position);
 
                 if (state.isDraggingRemove) {
                     removeVoxel(intersect.object);
                 }
             } else {
-                state.rollOverMesh.visible = false;
+                state.targetGuideOpacity = 0;
             }
         }
     } else {
-        state.rollOverMesh.visible = false;
+        state.targetGuideOpacity = 0;
     }
 }
 
@@ -134,6 +131,8 @@ export function onPointerUp(event) {
         }
         state.isDraggingBuild = false;
         state.isDraggingRemove = false;
+        state.targetGuideOpacity = 0;
+        state.rollOverMaterial.opacity = 0;
     }
 
     const dist = state.downPointerPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
@@ -155,6 +154,8 @@ export function onPointerUp(event) {
                     removeVoxel(intersect.object);
                 }
             }
+            state.targetGuideOpacity = 0;
+            state.rollOverMaterial.opacity = 0;
         }
     }
 }

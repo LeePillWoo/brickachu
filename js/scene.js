@@ -23,6 +23,23 @@ export function pushHistory() {
     }
 }
 
+export function undo() {
+    if (state.actionHistory.length > 1) {
+        const current = state.actionHistory.pop();
+        state.actionRedoStack.push(current);
+        const prev = state.actionHistory[state.actionHistory.length - 1];
+        applyActionState(prev);
+    }
+}
+
+export function redo() {
+    if (state.actionRedoStack.length > 0) {
+        const next = state.actionRedoStack.pop();
+        state.actionHistory.push(next);
+        applyActionState(next);
+    }
+}
+
 export function placeVoxel(position, slotOverride = null, skipHistory = false) {
     const duplicate = objects.find(obj => obj !== state.plane && obj.position.equals(position));
     if (duplicate) return;
