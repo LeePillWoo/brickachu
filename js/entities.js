@@ -19,6 +19,7 @@ export function spawnDog() {
         removeOldestAnimal();
     }
 
+    const animalGroup = new THREE.Group();
     const u = voxelSize / 20; // 1/20th scale unit
 
     const types = ['dog', 'cat', 'rabbit', 'sheep', 'snake', 'horse', 'pikachu', 'squirtle', 'charmander'];
