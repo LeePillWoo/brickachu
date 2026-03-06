@@ -34,18 +34,27 @@ function getBlockObjects() {
     return objects && state.plane ? objects.filter(o => o !== state.plane) : [];
 }
 
-/** (x, yStart, z)에서 아래 방향(-Y)으로 레이. 블록 윗면 또는 기본 지면(Plane) 감지. 충돌 없으면 defaultY(GROUND_BASE_HEIGHT) 반환 */
+/**
+ * (x, yStart, z)에서 아래 방향(-Y)으로 레이를 쏴서 바닥 높이를 감지합니다.
+ * 블록 위나 기본 보드판(Y=80) 모두를 바닥으로 인식합니다.
+ */
 export function getGroundHeightBelow(x, yStart, z, defaultY = GROUND_BASE_HEIGHT) {
-    if (!objects || objects.length === 0) return defaultY;
-    RAY_ORIGIN.set(x, yStart, z);
+    if (!objects || objects.length === 0) return GROUND_BASE_HEIGHT; 
+
+    // 레이 시작점을 yStart보다 10만큼 높여서 '위에서 아래로' 확실히 쏘게 합니다.
+    RAY_ORIGIN.set(x, yStart + 10, z); 
     _groundRaycaster.set(RAY_ORIGIN, _groundRayDown);
-    const hits = _groundRaycaster.intersectObjects(objects, false);
+    
+    // recursive 매개변수를 true로 하여 블록의 세부 메쉬까지 감지합니다.
+    const hits = _groundRaycaster.intersectObjects(objects, true);
+
     if (hits.length > 0) {
-        const hit = hits[0];
-        if (hit.object === state.plane) return GROUND_BASE_HEIGHT;
-        return hit.point.y;
+        // 가장 먼저 닿은 표면(블록 윗면 혹은 보드판)의 Y 좌표를 반환합니다.
+        return hits[0].point.y; 
     }
-    return defaultY;
+
+    // 아무것도 감지되지 않으면 기본 지면 높이(80)를 반환하여 추락을 방지합니다.
+    return GROUND_BASE_HEIGHT; 
 }
 
 /** (x, yStart, z)에서 위 방향(+Y)으로 레이를 쏴, 가장 먼저 닿는 블록의 아랫면(천장) Y를 반환. 없으면 Infinity */
