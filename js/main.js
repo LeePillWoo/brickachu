@@ -12,6 +12,7 @@ import { updatePreview } from './camera.js';
 import { onPointerMove, onPointerDown, onPointerUp, onWindowResize, onKeyDown, onKeyUp } from './input.js';
 import { setupPalette, setupModeButtons, setupGUI, setupSnapControls } from './ui.js';
 import { updateDogs } from './entities.js';
+import { updateFoods, initFoodGhost } from './food.js';
 
 function init() {
     state.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
@@ -156,6 +157,7 @@ function init() {
     setupGUI();
     setupSnapControls();
     initPreview();
+    initFoodGhost();
 }
 
 function initPreview() {
@@ -191,12 +193,16 @@ function animate() {
     }
 
     updateDogs(scaledDt);
+    updateFoods(scaledDt);
 
     for (let i = explodingBricks.length - 1; i >= 0; i--) {
         const item = explodingBricks[i];
         const elapsed = (now - item.startTime) / 1000;
 
-        if (elapsed > 7.0) {
+        const maxLife = item.maxLife ?? 7.0;
+        const fadeLife = item.fadeLife ?? 6.0;
+
+        if (elapsed > maxLife) {
             if (item.mesh) state.scene.remove(item.mesh);
             if (item.body && state.world) state.world.removeBody(item.body);
             explodingBricks.splice(i, 1);
@@ -207,8 +213,9 @@ function animate() {
             item.mesh.position.copy(item.body.position);
             item.mesh.quaternion.copy(item.body.quaternion);
 
-            if (elapsed > 6.0) {
-                const s = 1.0 - (elapsed - 6.0);
+            if (elapsed > fadeLife) {
+                const fadeDuration = maxLife - fadeLife;
+                const s = 1.0 - (elapsed - fadeLife) / fadeDuration;
                 item.mesh.scale.set(Math.max(s, 0.01), Math.max(s, 0.01), Math.max(s, 0.01));
             }
 
@@ -260,6 +267,16 @@ function animate() {
         } else {
             state.rollOverMesh.visible = false;
         }
+    }
+
+    // ── 화면 흔들림 (HEAVY 동물 클릭 시) ──
+    if (state.screenShakeTimer > 0) {
+        state.screenShakeTimer -= dt;
+        if (state.screenShakeTimer < 0) state.screenShakeTimer = 0;
+        const decay = state.screenShakeTimer / 0.5;
+        const shakeAmt = state.screenShakeIntensity * decay;
+        state.camera.position.x += (Math.random() - 0.5) * 2 * shakeAmt;
+        state.camera.position.y += (Math.random() - 0.5) * shakeAmt;
     }
 
     state.controls.update();

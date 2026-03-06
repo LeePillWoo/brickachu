@@ -3,6 +3,7 @@ import { state, guiParams, defaultParams, materials, presetColors, numCustomSlot
 import { explodeBricks, pushHistory, applyActionState } from './scene.js';
 import { snapPreviewCamera } from './camera.js';
 import { spawnDog, clearAllAnimals } from './entities.js';
+import { clearAllFood } from './food.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -106,18 +107,23 @@ export function setupModeButtons() {
     const btnRestore = document.getElementById('btn-restore');
     const countdownEl = document.getElementById('countdown-overlay');
 
+    const btnFood = document.getElementById('btn-food');
+
+    const setMode = (mode) => {
+        state.currentMode = mode;
+        btnAdd.classList.toggle('active', mode === 'add');
+        btnRemove.classList.toggle('active', mode === 'remove');
+        if (btnFood) btnFood.classList.toggle('active', mode === 'food');
+    };
+
     btnAdd.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
-        state.isAddMode = true;
-        btnAdd.classList.add('active');
-        btnRemove.classList.remove('active');
+        setMode('add');
     });
 
     btnRemove.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
-        state.isAddMode = false;
-        btnRemove.classList.add('active');
-        btnAdd.classList.remove('active');
+        setMode('remove');
     });
 
     let explosionInProgress = false;
@@ -165,6 +171,21 @@ export function setupModeButtons() {
         btnClearAnimals.addEventListener('click', (e) => {
             e.stopPropagation();
             clearAllAnimals();
+        });
+    }
+
+    if (btnFood) {
+        btnFood.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            setMode(state.currentMode === 'food' ? 'add' : 'food');
+        });
+    }
+
+    const btnClearFood = document.getElementById('btn-clear-food');
+    if (btnClearFood) {
+        btnClearFood.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearAllFood();
         });
     }
 

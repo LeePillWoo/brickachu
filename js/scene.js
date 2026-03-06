@@ -152,6 +152,85 @@ export function applyActionState(stateStr) {
     state.isRestoringHistory = false;
 }
 
+// HEAVY 동물이 블록을 파괴할 때: 파편 8조각이 폭발하며 날아감
+export function explodeBlockHeavy(block, hitDirection) {
+    if (!block || block === state.plane) return;
+
+    const blockPos = block.position.clone();
+    const blockColor = block.material ? block.material.color.getHex() : 0xffffff;
+    const blockRoughness = (block.material && block.material.roughness != null) ? block.material.roughness : 0.5;
+
+    // 원본 블록 제거 (물리 바디 포함)
+    state.scene.remove(block);
+    const blockIdx = objects.indexOf(block);
+    if (blockIdx > -1) objects.splice(blockIdx, 1);
+    if (block.userData.physicsBody && state.world) {
+        state.world.removeBody(block.userData.physicsBody);
+        block.userData.physicsBody = null;
+    }
+    if (state.previewScene && block.userData.previewMesh) {
+        state.previewScene.remove(block.userData.previewMesh);
+        const idx = state.previewObjects.indexOf(block.userData.previewMesh);
+        if (idx > -1) state.previewObjects.splice(idx, 1);
+    }
+    pushHistory();
+
+    // 파편 8조각 (2×2×2 분할)
+    const fragSize = voxelSize * 0.46;
+    const halfF = fragSize / 2;
+    const spread = voxelSize * 0.55;
+    const fragGeo = new THREE.BoxGeometry(fragSize, fragSize, fragSize);
+    const fragMat = new THREE.MeshPhysicalMaterial({ color: blockColor, roughness: blockRoughness });
+
+    const offsets = [
+        [-1, -1, -1], [1, -1, -1], [-1, 1, -1], [1, 1, -1],
+        [-1, -1,  1], [1, -1,  1], [-1, 1,  1], [1, 1,  1],
+    ];
+
+    offsets.forEach(([ox, oy, oz]) => {
+        const fragMesh = new THREE.Mesh(fragGeo, fragMat);
+        fragMesh.castShadow = true;
+        const sx = blockPos.x + ox * spread;
+        const sy = blockPos.y + oy * spread;
+        const sz = blockPos.z + oz * spread;
+        fragMesh.position.set(sx, sy, sz);
+        state.scene.add(fragMesh);
+
+        const fragBody = new CANNON.Body({
+            mass: 2,
+            shape: new CANNON.Box(new CANNON.Vec3(halfF, halfF, halfF)),
+            position: new CANNON.Vec3(sx, sy, sz),
+            material: state.groundMaterial || new CANNON.Material(),
+            linearDamping: 0.12,
+        });
+
+        // 폭발 속도: 방사형 확산 + 히트 방향 편향 + 위쪽 힘
+        const angle = Math.random() * Math.PI * 2;
+        const radial = 350 + Math.random() * 450;
+        const dirBias = hitDirection ? 550 : 0;
+        fragBody.velocity.set(
+            Math.sin(angle) * radial + (hitDirection ? hitDirection.x * dirBias : 0),
+            480 + Math.random() * 380,
+            Math.cos(angle) * radial + (hitDirection ? hitDirection.z * dirBias : 0)
+        );
+        fragBody.angularVelocity.set(
+            (Math.random() - 0.5) * 28,
+            (Math.random() - 0.5) * 28,
+            (Math.random() - 0.5) * 28
+        );
+
+        if (state.world) state.world.addBody(fragBody);
+
+        explodingBricks.push({
+            mesh: fragMesh,
+            body: fragBody,
+            startTime: performance.now(),
+            maxLife: 2.5,   // 커스텀 수명 (초)
+            fadeLife: 1.8,  // 이 시점부터 축소 페이드
+        });
+    });
+}
+
 export function explodeBricks() {
     const bricks = objects.filter(obj => obj !== state.plane);
     if (bricks.length === 0) return;

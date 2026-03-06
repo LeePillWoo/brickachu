@@ -61,7 +61,8 @@ export const state = {
     previewGroup: new THREE.Group(),
     previewMaterial: new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.5, transparent: true }),
     currentColor: '#FCDb00',
-    isAddMode: true,
+    /** 'add' | 'remove' | 'food' */
+    currentMode: 'add',
     currentSlot: 'preset-0',
     keys: { w: false, a: false, s: false, d: false, q: false, e: false },
     velocity: new THREE.Vector3(),
@@ -69,5 +70,8 @@ export const state = {
     pointerDownTime: 0,
     world: null,
     /** 게임 배속 (1, 2, 3). 물리·동물 이동·애니메이션에 즉시 반영 */
-    gameSpeed: 1
+    gameSpeed: 1,
+    /** HEAVY 동물 클릭 시 화면 흔들림 (초 단위 카운트다운) */
+    screenShakeTimer: 0,
+    screenShakeIntensity: 0
 };

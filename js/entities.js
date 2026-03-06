@@ -1,19 +1,19 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, voxelSize, objects } from './state.js';
+import { removeVoxel, explodeBlockHeavy } from './scene.js';
+import { foods } from './food.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
 const MAX_ANIMALS = 10;
 
-// 기본 지면 높이 (바닥 plane 기준)
 const GROUND_BASE_HEIGHT = 80;
+const EAT_RADIUS = voxelSize * 1.8;
 
-// 현재 잡고 있는 동물 참조
 export let grabbedAnimal = null;
 export function setGrabbedAnimal(a) { grabbedAnimal = a; }
 
-// 모든 동물 제거
 export function clearAllAnimals() {
     while (animals.length > 0) {
         const animal = animals.pop();
@@ -30,34 +30,24 @@ const _groundRayUp = new THREE.Vector3(0, 1, 0);
 const MAX_GROUND_CHECK_HEIGHT = 5000;
 const RAY_ORIGIN = new THREE.Vector3();
 
+// ── 전방 장애물 감지용 Raycaster ──
+const _aimRay = new THREE.Raycaster();
+const _aimOrigin = new THREE.Vector3();
+const _thicknessCheck = new THREE.Vector3();
+
 function getBlockObjects() {
     return objects && state.plane ? objects.filter(o => o !== state.plane) : [];
 }
 
-/**
- * (x, yStart, z)에서 아래 방향(-Y)으로 레이를 쏴서 바닥 높이를 감지합니다.
- * 블록 위나 기본 보드판(Y=80) 모두를 바닥으로 인식합니다.
- */
 export function getGroundHeightBelow(x, yStart, z, defaultY = GROUND_BASE_HEIGHT) {
-    if (!objects || objects.length === 0) return GROUND_BASE_HEIGHT; 
-
-    // 레이 시작점을 yStart보다 10만큼 높여서 '위에서 아래로' 확실히 쏘게 합니다.
-    RAY_ORIGIN.set(x, yStart + 10, z); 
+    if (!objects || objects.length === 0) return GROUND_BASE_HEIGHT;
+    RAY_ORIGIN.set(x, yStart + 10, z);
     _groundRaycaster.set(RAY_ORIGIN, _groundRayDown);
-    
-    // recursive 매개변수를 true로 하여 블록의 세부 메쉬까지 감지합니다.
     const hits = _groundRaycaster.intersectObjects(objects, true);
-
-    if (hits.length > 0) {
-        // 가장 먼저 닿은 표면(블록 윗면 혹은 보드판)의 Y 좌표를 반환합니다.
-        return hits[0].point.y; 
-    }
-
-    // 아무것도 감지되지 않으면 기본 지면 높이(80)를 반환하여 추락을 방지합니다.
-    return GROUND_BASE_HEIGHT; 
+    if (hits.length > 0) return hits[0].point.y;
+    return GROUND_BASE_HEIGHT;
 }
 
-/** (x, yStart, z)에서 위 방향(+Y)으로 레이를 쏴, 가장 먼저 닿는 블록의 아랫면(천장) Y를 반환. 없으면 Infinity */
 export function getCeilingHeightAbove(x, yStart, z) {
     const blockObjects = getBlockObjects();
     if (blockObjects.length === 0) return Infinity;
@@ -68,7 +58,6 @@ export function getCeilingHeightAbove(x, yStart, z) {
     return Infinity;
 }
 
-/** 레거시: (x,z) 열에서 가장 위쪽 바닥(위에서 아래로 첫 충돌). getGroundHeightBelow(x, MAX, z)와 동일 */
 export function getGroundHeightAt(x, z, defaultY = GROUND_BASE_HEIGHT) {
     return getGroundHeightBelow(x, MAX_GROUND_CHECK_HEIGHT, z, defaultY);
 }
@@ -88,38 +77,128 @@ export function snapAnimalToGround(animal) {
     animal.mesh.position.y -= halfHeight;
 }
 
-// ── 타입별 애니메이션 그룹 / 클릭 액션 매핑 ──
-const ANIM_TYPE = {};
-[
-    // 사족보행: 상하 바운스 + 살짝 기울기
-    ['quadruped', ['dog', 'cat', 'sheep', 'horse', 'lion', 'elephant', 'giraffe', 'pig']],
-    // 뒤뚱거림: 좌우 기울기 중심
-    ['waddling', ['pikachu', 'penguin', 'snorlax', 'jigglypuff', 'meowth', 'squirtle', 'charmander']],
-    // 점프: 토끼만 점프 이동
-    ['hopping', ['rabbit']],
-    // 슬라이딩: 뱀/악어/거북이
-    ['sliding', ['snake', 'crocodile', 'turtle']],
-    // 특수: 블롭/디지털 느낌
-    ['special', ['porygon', 'ditto', 'diglett']],
-].forEach(([grp, list]) => list.forEach(name => { ANIM_TYPE[name] = grp; }));
-
-// 그룹별 클릭 액션 타입 매핑
-const CLICK_ACTION_MAP = {
-    quadruped: 'spin',   // 제자리 회전
-    waddling: 'scale',   // 일시적 확대 (통통 튀는 느낌)
-    hopping: 'jump',     // 위로 점프
-    sliding: 'squash',   // 살짝 눌렸다가 복원
-    special: 'pulse',    // 작게 맥동
-};
-
-// 클릭 액션 트리거 (input.js에서 호출)
-export function triggerClickAction(animal) {
-    if (animal.clickActionTimer > 0) return; // 이미 진행 중
-    animal.clickActionTimer = 0.75;
-    animal.clickActionPhase = 0;
-    animal.clickActionType = CLICK_ACTION_MAP[animal.animGroup] || 'spin';
+// ── 전방 장애물 감지 ──
+// 발 높이 + 중간 높이 두 개의 레이를 쏴서 블록 히트를 반환
+function probeAhead(animalPos, direction, groundY, halfHeight) {
+    const blockObjects = getBlockObjects();
+    if (blockObjects.length === 0) return null;
+    const PROBE_DIST = voxelSize * 2.2;
+    // 발 높이 레이 (블록 하단부 감지)
+    _aimOrigin.set(animalPos.x, groundY + 2, animalPos.z);
+    _aimRay.set(_aimOrigin, direction);
+    const hitsLow = _aimRay.intersectObjects(blockObjects, false);
+    if (hitsLow.length > 0 && hitsLow[0].distance < PROBE_DIST) return hitsLow[0];
+    // 중간 높이 레이 (블록 상단부 감지)
+    _aimOrigin.set(animalPos.x, groundY + halfHeight * 1.5 + 1, animalPos.z);
+    _aimRay.set(_aimOrigin, direction);
+    const hitsMid = _aimRay.intersectObjects(blockObjects, false);
+    if (hitsMid.length > 0 && hitsMid[0].distance < PROBE_DIST) return hitsMid[0];
+    return null;
 }
 
+// ── 벽 두께 측정 (히트 포인트에서 direction 방향으로 연속 블록 수 카운트) ──
+function countThickness(firstHit, direction) {
+    const blockObjects = getBlockObjects();
+    if (blockObjects.length === 0) return 1;
+    let count = 1;
+    // 첫 히트 블록을 지나쳐 연속된 블록을 단계적으로 확인
+    for (let step = 1; step <= 3; step++) {
+        _thicknessCheck.copy(firstHit.point).addScaledVector(direction, voxelSize * step);
+        const found = blockObjects.some(obj => {
+            const dx = obj.position.x - _thicknessCheck.x;
+            const dz = obj.position.z - _thicknessCheck.z;
+            return (dx * dx + dz * dz) < (voxelSize * voxelSize);
+        });
+        if (found) count++;
+        else break;
+    }
+    return count;
+}
+
+// ── 장애물 우회 방향 탐색 (±30°~±150° 순서로 시도) ──
+function steerAround(animalPos, desiredDir, groundY, halfHeight) {
+    const angles = [
+        Math.PI / 6, -Math.PI / 6,
+        Math.PI / 3, -Math.PI / 3,
+        Math.PI / 2, -Math.PI / 2,
+        2 * Math.PI / 3, -2 * Math.PI / 3,
+    ];
+    for (const angle of angles) {
+        const c = Math.cos(angle), s = Math.sin(angle);
+        const tryDir = new THREE.Vector3(
+            desiredDir.x * c - desiredDir.z * s,
+            0,
+            desiredDir.x * s + desiredDir.z * c
+        ).normalize();
+        if (!probeAhead(animalPos, tryDir, groundY, halfHeight)) return tryDir;
+    }
+    return null;
+}
+
+// ── 가장 가까운 먹이 찾기 ──
+function findNearestFood(animal) {
+    if (foods.length === 0 || !animal.body) return null;
+    let nearest = null;
+    let minDist = Infinity;
+    for (const food of foods) {
+        if (food.eaten || food.consumeTimer > 0) continue;
+        const dx = food.position.x - animal.body.position.x;
+        const dz = food.position.z - animal.body.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < minDist) { minDist = dist; nearest = food; }
+    }
+    return nearest;
+}
+
+// ── 애니메이션 그룹 매핑 ──
+const ANIM_TYPE = {};
+[
+    ['WADDLE',    ['penguin', 'psyduck', 'togepi', 'clefairy', 'jigglypuff']],
+    ['HOP',       ['rabbit', 'pikachu', 'marill']],
+    ['SNEAK',     ['cat', 'eevee', 'vulpix', 'meowth']],
+    ['HEAVY',     ['snorlax', 'elephant', 'slowpoke', 'wobbuffet']],
+    ['quadruped', ['dog', 'sheep', 'horse', 'lion', 'giraffe', 'pig', 'bulbasaur', 'squirtle', 'charmander']],
+    ['sliding',   ['snake', 'crocodile', 'turtle']],
+    ['special',   ['porygon', 'ditto', 'diglett', 'gengar']],
+].forEach(([grp, list]) => list.forEach(name => { ANIM_TYPE[name] = grp; }));
+
+const CLICK_ACTION_MAP = {
+    WADDLE:    'waddleSpin',
+    HOP:       'aerialSpin',
+    SNEAK:     'dash',
+    HEAVY:     'groundShake',
+    quadruped: 'spin',
+    sliding:   'squash',
+    special:   'pulse',
+};
+
+const ACTION_DURATION = {
+    waddleSpin:  1.0,
+    aerialSpin:  0.8,
+    dash:        0.5,
+    groundShake: 0.6,
+    spin:        0.75,
+    squash:      0.75,
+    pulse:       0.75,
+};
+
+const SPEED_MULT = {
+    HEAVY:     0.35,
+    WADDLE:    0.65,
+    SNEAK:     1.1,
+    HOP:       1.25,
+    quadruped: 1.0,
+    sliding:   0.8,
+    special:   0.9,
+};
+
+export function triggerClickAction(animal) {
+    if (animal.clickActionTimer > 0) return;
+    const actionType = CLICK_ACTION_MAP[animal.animGroup] || 'spin';
+    animal.clickActionTimer = ACTION_DURATION[actionType] || 0.75;
+    animal.clickActionPhase = 0;
+    animal.clickActionType = actionType;
+}
 
 function getRandomColor() {
     const r = Math.floor(Math.random() * 200 + 55);
@@ -129,17 +208,17 @@ function getRandomColor() {
 }
 
 export function spawnDog() {
-    if (animals.length >= MAX_ANIMALS) {
-        removeOldestAnimal();
-    }
+    if (animals.length >= MAX_ANIMALS) removeOldestAnimal();
 
     const animalGroup = new THREE.Group();
-    const u = voxelSize / 25; // 1/25th scale unit
+    const u = voxelSize / 25;
 
     const types = [
         'dog', 'cat', 'rabbit', 'sheep', 'snake', 'horse', 'pikachu', 'squirtle', 'charmander',
         'meowth', 'snorlax', 'jigglypuff', 'diglett', 'porygon', 'ditto',
-        'lion', 'elephant', 'giraffe', 'penguin', 'crocodile', 'pig', 'turtle'
+        'lion', 'elephant', 'giraffe', 'penguin', 'crocodile', 'pig', 'turtle',
+        'eevee', 'vulpix', 'gengar', 'psyduck', 'bulbasaur',
+        'slowpoke', 'marill', 'togepi', 'clefairy', 'wobbuffet',
     ];
     const type = types[Math.floor(Math.random() * types.length)];
 
@@ -148,8 +227,8 @@ export function spawnDog() {
     const accentColor = getRandomColor();
 
     const matBase = new THREE.MeshPhysicalMaterial({ color: baseColor, roughness: 0.8 });
-    const matSec = new THREE.MeshPhysicalMaterial({ color: secondaryColor, roughness: 0.8 });
-    const matAcc = new THREE.MeshPhysicalMaterial({ color: accentColor, roughness: 0.8 });
+    const matSec  = new THREE.MeshPhysicalMaterial({ color: secondaryColor, roughness: 0.8 });
+    const matAcc  = new THREE.MeshPhysicalMaterial({ color: accentColor, roughness: 0.8 });
     const blackMat = new THREE.MeshPhysicalMaterial({ color: 0x222222, roughness: 0.9 });
     const whiteMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.9 });
 
@@ -159,260 +238,364 @@ export function spawnDog() {
         mesh.position.set(x * u, y * u, z * u);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
-        // raycasting으로 동물을 식별하기 위한 태깅 (나중에 animalData 연결)
         mesh.userData.isAnimalPart = true;
         animalGroup.add(mesh);
         return mesh;
     }
 
-    // All dimensions multiplied by 2. Extra nanoblock details added.
     let heightOffset = 20;
 
     if (type === 'dog') {
         heightOffset = 20;
-        addPart(20, 16, 32, 0, 16, 0); // Body
-        addPart(16, 16, 16, 0, 32, 24); // Head
-        addPart(8, 6, 8, 0, 28, 36, matSec); // Snout
-        addPart(2, 2, 2, 0, 31, 40, blackMat); // Nose
-        addPart(2, 2, 2, -5, 36, 32, blackMat); addPart(2, 2, 2, 5, 36, 32, blackMat); // Eyes
-        addPart(4, 8, 4, -6, 44, 24, matSec); addPart(4, 8, 4, 6, 44, 24, matSec); // Ears
-        const tail = addPart(4, 12, 4, 0, 28, -16, matAcc);
-        tail.rotation.x = -Math.PI / 4;
-        addPart(6, 12, 6, -6, 6, 10); addPart(6, 12, 6, 6, 6, 10); // Front legs
-        addPart(6, 12, 6, -6, 6, -10); addPart(6, 12, 6, 6, 6, -10); // Back legs
+        addPart(20, 16, 32, 0, 16, 0);
+        addPart(16, 16, 16, 0, 32, 24);
+        addPart(8, 6, 8, 0, 28, 36, matSec);
+        addPart(2, 2, 2, 0, 31, 40, blackMat);
+        addPart(2, 2, 2, -5, 36, 32, blackMat); addPart(2, 2, 2, 5, 36, 32, blackMat);
+        addPart(4, 8, 4, -6, 44, 24, matSec); addPart(4, 8, 4, 6, 44, 24, matSec);
+        const tail = addPart(4, 12, 4, 0, 28, -16, matAcc); tail.rotation.x = -Math.PI / 4;
+        addPart(6, 12, 6, -6, 6, 10); addPart(6, 12, 6, 6, 6, 10);
+        addPart(6, 12, 6, -6, 6, -10); addPart(6, 12, 6, 6, 6, -10);
     } else if (type === 'cat') {
         heightOffset = 16;
-        addPart(16, 12, 24, 0, 12, 0); // Body
-        addPart(12, 12, 12, 0, 24, 18); // Head
-        addPart(2, 2, 2, 0, 22, 25, matSec); // Nose
-        addPart(2, 2, 2, -4, 26, 24, blackMat); addPart(2, 2, 2, 4, 26, 24, blackMat); // Eyes
-        addPart(4, 6, 4, -4, 32, 20, matAcc); addPart(4, 6, 4, 4, 32, 20, matAcc); // Pointy Ears
-        const tail = addPart(4, 20, 4, 0, 24, -12, matSec);
-        tail.rotation.x = Math.PI / 6; // High tail
+        addPart(16, 12, 24, 0, 12, 0);
+        addPart(12, 12, 12, 0, 24, 18);
+        addPart(2, 2, 2, 0, 22, 25, matSec);
+        addPart(2, 2, 2, -4, 26, 24, blackMat); addPart(2, 2, 2, 4, 26, 24, blackMat);
+        addPart(4, 6, 4, -4, 32, 20, matAcc); addPart(4, 6, 4, 4, 32, 20, matAcc);
+        const tail = addPart(4, 20, 4, 0, 24, -12, matSec); tail.rotation.x = Math.PI / 6;
         addPart(4, 8, 4, -4, 4, 8); addPart(4, 8, 4, 4, 4, 8);
         addPart(4, 8, 4, -4, 4, -8); addPart(4, 8, 4, 4, 4, -8);
     } else if (type === 'rabbit') {
         heightOffset = 12;
-        addPart(12, 12, 16, 0, 10, 0, whiteMat); // Body
-        addPart(10, 10, 10, 0, 20, 10, whiteMat); // Head
-        addPart(2, 2, 2, 0, 18, 16, matSec); // Nose
-        addPart(2, 2, 2, -3, 22, 15, blackMat); addPart(2, 2, 2, 3, 22, 15, blackMat); // Eyes
-        addPart(4, 16, 4, -3, 32, 12, matSec); addPart(4, 16, 4, 3, 32, 12, matSec); // Long Ears
-        addPart(6, 6, 6, 0, 12, -10, whiteMat); // Fluff tail
-        addPart(4, 6, 4, -4, 3, 6, whiteMat); addPart(4, 6, 4, 4, 3, 6, whiteMat); // Front
-        addPart(4, 8, 8, -4, 4, -6, whiteMat); addPart(4, 8, 8, 4, 4, -6, whiteMat); // Back (big feet)
+        addPart(12, 12, 16, 0, 10, 0, whiteMat);
+        addPart(10, 10, 10, 0, 20, 10, whiteMat);
+        addPart(2, 2, 2, 0, 18, 16, matSec);
+        addPart(2, 2, 2, -3, 22, 15, blackMat); addPart(2, 2, 2, 3, 22, 15, blackMat);
+        addPart(4, 16, 4, -3, 32, 12, matSec); addPart(4, 16, 4, 3, 32, 12, matSec);
+        addPart(6, 6, 6, 0, 12, -10, whiteMat);
+        addPart(4, 6, 4, -4, 3, 6, whiteMat); addPart(4, 6, 4, 4, 3, 6, whiteMat);
+        addPart(4, 8, 8, -4, 4, -6, whiteMat); addPart(4, 8, 8, 4, 4, -6, whiteMat);
     } else if (type === 'sheep') {
         heightOffset = 20;
-        addPart(24, 20, 28, 0, 18, 0, whiteMat); // Fluffy Body
-        addPart(12, 12, 16, 0, 28, 22, blackMat); // Head
-        addPart(2, 2, 2, -4, 30, 28, whiteMat); addPart(2, 2, 2, 4, 30, 28, whiteMat); // Eyes
-        addPart(4, 4, 8, -8, 28, 20, whiteMat); addPart(4, 4, 8, 8, 28, 20, whiteMat); // Ears
-        addPart(4, 10, 4, -6, 5, 10, blackMat); addPart(4, 10, 4, 6, 5, 10, blackMat); // Legs
+        addPart(24, 20, 28, 0, 18, 0, whiteMat);
+        addPart(12, 12, 16, 0, 28, 22, blackMat);
+        addPart(2, 2, 2, -4, 30, 28, whiteMat); addPart(2, 2, 2, 4, 30, 28, whiteMat);
+        addPart(4, 4, 8, -8, 28, 20, whiteMat); addPart(4, 4, 8, 8, 28, 20, whiteMat);
+        addPart(4, 10, 4, -6, 5, 10, blackMat); addPart(4, 10, 4, 6, 5, 10, blackMat);
         addPart(4, 10, 4, -6, 5, -10, blackMat); addPart(4, 10, 4, 6, 5, -10, blackMat);
     } else if (type === 'snake') {
         heightOffset = 6;
-        addPart(8, 6, 48, 0, 3, 0, matBase); // Long Body
-        addPart(10, 8, 12, 0, 4, 30, matSec); // Head
-        addPart(2, 2, 2, -4, 8, 34, blackMat); addPart(2, 2, 2, 4, 8, 34, blackMat); // Eyes
-        addPart(4, 2, 8, 0, 4, 38, matAcc); // Tongue
+        addPart(8, 6, 48, 0, 3, 0, matBase);
+        addPart(10, 8, 12, 0, 4, 30, matSec);
+        addPart(2, 2, 2, -4, 8, 34, blackMat); addPart(2, 2, 2, 4, 8, 34, blackMat);
+        addPart(4, 2, 8, 0, 4, 38, matAcc);
     } else if (type === 'horse') {
         heightOffset = 32;
-        addPart(20, 20, 40, 0, 32, 0); // Body
-        addPart(12, 24, 12, 0, 48, 24); // Neck
-        addPart(12, 12, 20, 0, 56, 32); // Head
-        addPart(2, 2, 2, -5, 60, 40, blackMat); addPart(2, 2, 2, 5, 60, 40, blackMat); // Eyes
-        addPart(4, 24, 8, 0, 48, 18, matSec); // Mane
-        const tail = addPart(6, 24, 6, 0, 32, -20, matSec);
-        tail.rotation.x = -Math.PI / 8;
-        addPart(6, 24, 6, -7, 12, 16, matAcc); addPart(6, 24, 6, 7, 12, 16, matAcc); // Legs
+        addPart(20, 20, 40, 0, 32, 0);
+        addPart(12, 24, 12, 0, 48, 24);
+        addPart(12, 12, 20, 0, 56, 32);
+        addPart(2, 2, 2, -5, 60, 40, blackMat); addPart(2, 2, 2, 5, 60, 40, blackMat);
+        addPart(4, 24, 8, 0, 48, 18, matSec);
+        const tail = addPart(6, 24, 6, 0, 32, -20, matSec); tail.rotation.x = -Math.PI / 8;
+        addPart(6, 24, 6, -7, 12, 16, matAcc); addPart(6, 24, 6, 7, 12, 16, matAcc);
         addPart(6, 24, 6, -7, 12, -16, matAcc); addPart(6, 24, 6, 7, 12, -16, matAcc);
     } else if (type === 'pikachu') {
         heightOffset = 16;
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.6 });
         const red = new THREE.MeshPhysicalMaterial({ color: 0xff0000, roughness: 0.8 });
-        addPart(16, 20, 16, 0, 10, 0, yellow); // Body
-        addPart(16, 16, 16, 0, 28, 4, yellow); // Head
-        addPart(2, 2, 2, -5, 28, 12, blackMat); addPart(2, 2, 2, 5, 28, 12, blackMat); // Eyes
-        addPart(4, 4, 2, -6, 26, 12, red); addPart(4, 4, 2, 6, 26, 12, red); // Cheeks
-        addPart(4, 16, 4, -6, 40, 4, yellow); addPart(4, 4, 4, -6, 48, 4, blackMat); // L Ear
-        addPart(4, 16, 4, 6, 40, 4, yellow); addPart(4, 4, 4, 6, 48, 4, blackMat); // R Ear
-        const pTail = addPart(4, 20, 12, 0, 16, -12, yellow); pTail.rotation.x = -Math.PI / 4; // Tail
-        addPart(4, 6, 6, -4, 3, 4, yellow); addPart(4, 6, 6, 4, 3, 4, yellow); // Feet
+        addPart(16, 20, 16, 0, 10, 0, yellow);
+        addPart(16, 16, 16, 0, 28, 4, yellow);
+        addPart(2, 2, 2, -5, 28, 12, blackMat); addPart(2, 2, 2, 5, 28, 12, blackMat);
+        addPart(4, 4, 2, -6, 26, 12, red); addPart(4, 4, 2, 6, 26, 12, red);
+        addPart(4, 16, 4, -6, 40, 4, yellow); addPart(4, 4, 4, -6, 48, 4, blackMat);
+        addPart(4, 16, 4, 6, 40, 4, yellow); addPart(4, 4, 4, 6, 48, 4, blackMat);
+        const pTail = addPart(4, 20, 12, 0, 16, -12, yellow); pTail.rotation.x = -Math.PI / 4;
+        addPart(4, 6, 6, -4, 3, 4, yellow); addPart(4, 6, 6, 4, 3, 4, yellow);
     } else if (type === 'squirtle') {
         heightOffset = 16;
         const blue = new THREE.MeshPhysicalMaterial({ color: 0x4fc3f7, roughness: 0.6 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8d6e63, roughness: 0.8 });
-        addPart(16, 16, 12, 0, 12, 0, blue); // Body
-        addPart(20, 20, 8, 0, 12, -4, brown); // Shell
-        addPart(16, 16, 16, 0, 28, 4, blue); // Head
-        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat); // Eyes
-        addPart(6, 6, 6, -8, 16, 8, blue); addPart(6, 6, 6, 8, 16, 8, blue); // Arms
-        addPart(6, 8, 8, -6, 4, 4, blue); addPart(6, 8, 8, 6, 4, 4, blue); // Legs
+        addPart(16, 16, 12, 0, 12, 0, blue); addPart(20, 20, 8, 0, 12, -4, brown);
+        addPart(16, 16, 16, 0, 28, 4, blue);
+        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat);
+        addPart(6, 6, 6, -8, 16, 8, blue); addPart(6, 6, 6, 8, 16, 8, blue);
+        addPart(6, 8, 8, -6, 4, 4, blue); addPart(6, 8, 8, 6, 4, 4, blue);
         const sTail = addPart(8, 8, 12, 0, 8, -12, blue); sTail.rotation.x = Math.PI / 4;
     } else if (type === 'charmander') {
         heightOffset = 16;
         const orange = new THREE.MeshPhysicalMaterial({ color: 0xff9800, roughness: 0.6 });
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffeb3b, roughness: 0.8 });
         const fire = new THREE.MeshPhysicalMaterial({ color: 0xff3d00, roughness: 0.2, emissive: 0xff3d00 });
-        addPart(16, 18, 16, 0, 12, 0, orange); // Body
-        addPart(12, 14, 2, 0, 10, 8, yellow); // Belly
-        addPart(16, 16, 16, 0, 28, 4, orange); // Head
-        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat); // Eyes
-        addPart(4, 8, 4, -8, 16, 8, orange); addPart(4, 8, 4, 8, 16, 8, orange); // Arms
-        addPart(6, 8, 8, -6, 4, 4, orange); addPart(6, 8, 8, 6, 4, 4, orange); // Legs
+        addPart(16, 18, 16, 0, 12, 0, orange); addPart(12, 14, 2, 0, 10, 8, yellow);
+        addPart(16, 16, 16, 0, 28, 4, orange);
+        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat);
+        addPart(4, 8, 4, -8, 16, 8, orange); addPart(4, 8, 4, 8, 16, 8, orange);
+        addPart(6, 8, 8, -6, 4, 4, orange); addPart(6, 8, 8, 6, 4, 4, orange);
         const cTail = addPart(6, 6, 20, 0, 8, -12, orange); cTail.rotation.x = Math.PI / 6;
-        addPart(4, 8, 4, 0, 16, -24, fire); // Tail flame
+        addPart(4, 8, 4, 0, 16, -24, fire);
     } else if (type === 'meowth') {
         heightOffset = 16;
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffdd0, roughness: 0.7 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.7 });
         const gold = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.3 });
-        addPart(12, 16, 12, 0, 12, 0, cream); // Body
-        addPart(16, 16, 12, 0, 28, 2, cream); // Head
-        addPart(2, 2, 2, -4, 30, 8, blackMat); addPart(2, 2, 2, 4, 30, 8, blackMat); // Eyes
-        addPart(4, 8, 4, -6, 38, 2, brown); addPart(4, 8, 4, 6, 38, 2, brown); // Ears
-        addPart(6, 8, 2, 0, 32, 8, gold); // Coin
-        addPart(4, 12, 4, -8, 16, 2, cream); addPart(4, 12, 4, 8, 16, 2, cream); // Arms
-        addPart(6, 6, 8, -5, 3, 4, brown); addPart(6, 6, 8, 5, 3, 4, brown); // Feet
-        const mTail = addPart(4, 20, 4, 0, 12, -8, brown); mTail.rotation.x = Math.PI / 8; // Tail
+        addPart(12, 16, 12, 0, 12, 0, cream); addPart(16, 16, 12, 0, 28, 2, cream);
+        addPart(2, 2, 2, -4, 30, 8, blackMat); addPart(2, 2, 2, 4, 30, 8, blackMat);
+        addPart(4, 8, 4, -6, 38, 2, brown); addPart(4, 8, 4, 6, 38, 2, brown);
+        addPart(6, 8, 2, 0, 32, 8, gold);
+        addPart(4, 12, 4, -8, 16, 2, cream); addPart(4, 12, 4, 8, 16, 2, cream);
+        addPart(6, 6, 8, -5, 3, 4, brown); addPart(6, 6, 8, 5, 3, 4, brown);
+        const mTail = addPart(4, 20, 4, 0, 12, -8, brown); mTail.rotation.x = Math.PI / 8;
     } else if (type === 'snorlax') {
         heightOffset = 24;
         const teal = new THREE.MeshPhysicalMaterial({ color: 0x008080, roughness: 0.8 });
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xf5f5dc, roughness: 0.8 });
-        addPart(40, 36, 32, 0, 20, 0, teal); // Big body
-        addPart(32, 28, 8, 0, 18, 16, cream); // Belly
-        addPart(24, 20, 20, 0, 48, 0, teal); // Head
-        addPart(16, 12, 4, 0, 48, 10, cream); // Face mask
-        addPart(4, 2, 2, -6, 50, 12, blackMat); addPart(4, 2, 2, 6, 50, 12, blackMat); // Sleepy Eyes
-        addPart(6, 8, 6, -8, 60, 0, teal); addPart(6, 8, 6, 8, 60, 0, teal); // Ears
-        addPart(10, 16, 10, -24, 24, 4, teal); addPart(10, 16, 10, 24, 24, 4, teal); // Arms
-        addPart(10, 10, 12, -12, 5, 12, cream); addPart(10, 10, 12, 12, 5, 12, cream); // Feet
+        addPart(40, 36, 32, 0, 20, 0, teal); addPart(32, 28, 8, 0, 18, 16, cream);
+        addPart(24, 20, 20, 0, 48, 0, teal); addPart(16, 12, 4, 0, 48, 10, cream);
+        addPart(4, 2, 2, -6, 50, 12, blackMat); addPart(4, 2, 2, 6, 50, 12, blackMat);
+        addPart(6, 8, 6, -8, 60, 0, teal); addPart(6, 8, 6, 8, 60, 0, teal);
+        addPart(10, 16, 10, -24, 24, 4, teal); addPart(10, 16, 10, 24, 24, 4, teal);
+        addPart(10, 10, 12, -12, 5, 12, cream); addPart(10, 10, 12, 12, 5, 12, cream);
     } else if (type === 'jigglypuff') {
         heightOffset = 12;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb6c1, roughness: 0.7 });
-        addPart(24, 24, 24, 0, 12, 0, pink); // Round body
-        addPart(4, 4, 2, -6, 14, 12, blackMat); addPart(4, 4, 2, 6, 14, 12, blackMat); // Eyes
-        addPart(6, 8, 6, -6, 26, 0, pink); addPart(6, 8, 6, 6, 26, 0, pink); // Ears
-        addPart(8, 6, 6, 0, 26, 8, pink); // Hair tuft
-        addPart(6, 6, 6, -12, 12, 4, pink); addPart(6, 6, 6, 12, 12, 4, pink); // Arms
-        addPart(8, 4, 10, -6, 2, 8, pink); addPart(8, 4, 10, 6, 2, 8, pink); // Feet
+        addPart(24, 24, 24, 0, 12, 0, pink);
+        addPart(4, 4, 2, -6, 14, 12, blackMat); addPart(4, 4, 2, 6, 14, 12, blackMat);
+        addPart(6, 8, 6, -6, 26, 0, pink); addPart(6, 8, 6, 6, 26, 0, pink);
+        addPart(8, 6, 6, 0, 26, 8, pink);
+        addPart(6, 6, 6, -12, 12, 4, pink); addPart(6, 6, 6, 12, 12, 4, pink);
+        addPart(8, 4, 10, -6, 2, 8, pink); addPart(8, 4, 10, 6, 2, 8, pink);
     } else if (type === 'diglett') {
         heightOffset = 8;
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
         const dirt = new THREE.MeshPhysicalMaterial({ color: 0x5c4033, roughness: 1.0 });
-        addPart(28, 4, 28, 0, 2, 0, dirt); // Dirt mound
-        addPart(16, 20, 16, 0, 12, 0, brown); // Body sticking out
-        addPart(2, 4, 2, -4, 16, 8, blackMat); addPart(2, 4, 2, 4, 16, 8, blackMat); // Eyes
-        addPart(8, 4, 6, 0, 12, 8, pink); // Big nose
+        addPart(28, 4, 28, 0, 2, 0, dirt); addPart(16, 20, 16, 0, 12, 0, brown);
+        addPart(2, 4, 2, -4, 16, 8, blackMat); addPart(2, 4, 2, 4, 16, 8, blackMat);
+        addPart(8, 4, 6, 0, 12, 8, pink);
     } else if (type === 'porygon') {
         heightOffset = 16;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
         const blue = new THREE.MeshPhysicalMaterial({ color: 0x00bfff, roughness: 0.5 });
-        addPart(16, 16, 16, 0, 12, 0, pink); // Body
-        addPart(12, 12, 12, 0, 28, 6, pink); // Head
-        addPart(4, 4, 4, -6, 30, 8, blackMat); addPart(4, 4, 4, 6, 30, 8, blackMat); // Eyes
-        addPart(8, 8, 16, 0, 24, 18, blue); // Snout
-        addPart(12, 16, 8, -12, 12, 0, blue); addPart(12, 16, 8, 12, 12, 0, blue); // Legs
-        const pTail = addPart(8, 8, 12, 0, 12, -12, blue); pTail.rotation.x = -Math.PI / 4; // Tail
+        addPart(16, 16, 16, 0, 12, 0, pink); addPart(12, 12, 12, 0, 28, 6, pink);
+        addPart(4, 4, 4, -6, 30, 8, blackMat); addPart(4, 4, 4, 6, 30, 8, blackMat);
+        addPart(8, 8, 16, 0, 24, 18, blue);
+        addPart(12, 16, 8, -12, 12, 0, blue); addPart(12, 16, 8, 12, 12, 0, blue);
+        const pTail = addPart(8, 8, 12, 0, 12, -12, blue); pTail.rotation.x = -Math.PI / 4;
     } else if (type === 'ditto') {
         heightOffset = 8;
         const purple = new THREE.MeshPhysicalMaterial({ color: 0xdda0dd, roughness: 0.4, transmission: 0.2 });
-        addPart(24, 12, 20, 0, 6, 0, purple); // Blob base
-        addPart(16, 12, 16, 0, 14, 0, purple); // Blob top
-        addPart(2, 2, 2, -4, 16, 8, blackMat); addPart(2, 2, 2, 4, 16, 8, blackMat); // Dot eyes
-        addPart(8, 8, 8, -10, 10, 4, purple); addPart(8, 8, 8, 10, 10, 4, purple); // Little arms
+        addPart(24, 12, 20, 0, 6, 0, purple); addPart(16, 12, 16, 0, 14, 0, purple);
+        addPart(2, 2, 2, -4, 16, 8, blackMat); addPart(2, 2, 2, 4, 16, 8, blackMat);
+        addPart(8, 8, 8, -10, 10, 4, purple); addPart(8, 8, 8, 10, 10, 4, purple);
     } else if (type === 'lion') {
         heightOffset = 24;
         const gold = new THREE.MeshPhysicalMaterial({ color: 0xdaa520, roughness: 0.8 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        addPart(20, 20, 36, 0, 24, 0, gold); // Body
-        // Mane details
-        addPart(28, 28, 12, 0, 32, 20, brown); // Mane base
-        addPart(16, 16, 16, 0, 32, 28, gold); // Head
-        addPart(4, 4, 4, -6, 34, 36, blackMat); addPart(4, 4, 4, 6, 34, 36, blackMat); // Eyes
-        addPart(8, 8, 8, 0, 28, 36, blackMat); // Snout
+        addPart(20, 20, 36, 0, 24, 0, gold); addPart(28, 28, 12, 0, 32, 20, brown);
+        addPart(16, 16, 16, 0, 32, 28, gold);
+        addPart(4, 4, 4, -6, 34, 36, blackMat); addPart(4, 4, 4, 6, 34, 36, blackMat);
+        addPart(8, 8, 8, 0, 28, 36, blackMat);
         const tail = addPart(4, 20, 4, 0, 24, -20, gold); tail.rotation.x = -Math.PI / 6;
-        addPart(6, 6, 6, 0, 4, -28, brown); // Tail tuft
-        addPart(6, 16, 6, -7, 8, 14, gold); addPart(6, 16, 6, 7, 8, 14, gold); // Front legs
-        addPart(6, 16, 6, -7, 8, -14, gold); addPart(6, 16, 6, 7, 8, -14, gold); // Back legs
+        addPart(6, 6, 6, 0, 4, -28, brown);
+        addPart(6, 16, 6, -7, 8, 14, gold); addPart(6, 16, 6, 7, 8, 14, gold);
+        addPart(6, 16, 6, -7, 8, -14, gold); addPart(6, 16, 6, 7, 8, -14, gold);
     } else if (type === 'elephant') {
         heightOffset = 36;
         const grey = new THREE.MeshPhysicalMaterial({ color: 0x808080, roughness: 0.8 });
-        addPart(36, 32, 48, 0, 32, 0, grey); // Huge body
-        addPart(28, 28, 28, 0, 40, 32, grey); // Head
-        addPart(4, 4, 4, -10, 44, 46, blackMat); addPart(4, 4, 4, 10, 44, 46, blackMat); // Eyes
-        // Trunk details
-        addPart(8, 20, 8, 0, 30, 48, grey);
-        addPart(6, 10, 6, 0, 15, 48, grey);
-        addPart(20, 28, 4, -24, 36, 28, grey); addPart(20, 28, 4, 24, 36, 28, grey); // Big ears
-        addPart(12, 20, 12, -12, 10, 16, grey); addPart(12, 20, 12, 12, 10, 16, grey); // Front legs
-        addPart(12, 20, 12, -12, 10, -16, grey); addPart(12, 20, 12, 12, 10, -16, grey); // Back legs
+        addPart(36, 32, 48, 0, 32, 0, grey); addPart(28, 28, 28, 0, 40, 32, grey);
+        addPart(4, 4, 4, -10, 44, 46, blackMat); addPart(4, 4, 4, 10, 44, 46, blackMat);
+        addPart(8, 20, 8, 0, 30, 48, grey); addPart(6, 10, 6, 0, 15, 48, grey);
+        addPart(20, 28, 4, -24, 36, 28, grey); addPart(20, 28, 4, 24, 36, 28, grey);
+        addPart(12, 20, 12, -12, 10, 16, grey); addPart(12, 20, 12, 12, 10, 16, grey);
+        addPart(12, 20, 12, -12, 10, -16, grey); addPart(12, 20, 12, 12, 10, -16, grey);
     } else if (type === 'giraffe') {
-        heightOffset = 60; // Very tall
+        heightOffset = 60;
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.8 });
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        addPart(20, 20, 32, 0, 40, 0, yellow); // Body
-        // Random brown spots on body
+        addPart(20, 20, 32, 0, 40, 0, yellow);
         addPart(6, 2, 6, -10, 40, 5, brown); addPart(6, 2, 6, 10, 40, -5, brown);
-        addPart(8, 40, 12, 0, 64, 20, yellow); // Long neck
-        addPart(12, 12, 20, 0, 84, 28, yellow); // Head
-        addPart(4, 4, 4, -6, 86, 38, blackMat); addPart(4, 4, 4, 6, 86, 38, blackMat); // Eyes
-        addPart(4, 6, 4, -4, 92, 24, brown); addPart(4, 6, 4, 4, 92, 24, brown); // Ossicones (horns)
-        addPart(6, 36, 6, -7, 18, 12, yellow); addPart(6, 36, 6, 7, 18, 12, yellow); // Front tall legs
-        addPart(6, 36, 6, -7, 18, -12, yellow); addPart(6, 36, 6, 7, 18, -12, yellow); // Back tall legs
+        addPart(8, 40, 12, 0, 64, 20, yellow); addPart(12, 12, 20, 0, 84, 28, yellow);
+        addPart(4, 4, 4, -6, 86, 38, blackMat); addPart(4, 4, 4, 6, 86, 38, blackMat);
+        addPart(4, 6, 4, -4, 92, 24, brown); addPart(4, 6, 4, 4, 92, 24, brown);
+        addPart(6, 36, 6, -7, 18, 12, yellow); addPart(6, 36, 6, 7, 18, 12, yellow);
+        addPart(6, 36, 6, -7, 18, -12, yellow); addPart(6, 36, 6, 7, 18, -12, yellow);
     } else if (type === 'penguin') {
         heightOffset = 16;
         const black = new THREE.MeshPhysicalMaterial({ color: 0x111111, roughness: 0.6 });
         const white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.8 });
         const orange = new THREE.MeshPhysicalMaterial({ color: 0xffa500, roughness: 0.6 });
-        addPart(20, 28, 16, 0, 16, 0, black); // Body
-        addPart(16, 24, 4, 0, 16, 9, white); // White belly
-        addPart(16, 16, 16, 0, 36, 0, black); // Head
-        addPart(4, 4, 4, -4, 38, 8, blackMat); addPart(4, 4, 4, 4, 38, 8, blackMat); // Eyes
-        addPart(12, 12, 4, 0, 36, 9, white); // White face
-        addPart(8, 4, 8, 0, 32, 12, orange); // Beak
-        // Wings (flippers) detailed
+        addPart(20, 28, 16, 0, 16, 0, black); addPart(16, 24, 4, 0, 16, 9, white);
+        addPart(16, 16, 16, 0, 36, 0, black);
+        addPart(4, 4, 4, -4, 38, 8, blackMat); addPart(4, 4, 4, 4, 38, 8, blackMat);
+        addPart(12, 12, 4, 0, 36, 9, white); addPart(8, 4, 8, 0, 32, 12, orange);
         addPart(4, 20, 8, -12, 20, 0, black); addPart(4, 20, 8, 12, 20, 0, black);
-        addPart(8, 4, 12, -6, 2, 6, orange); addPart(8, 4, 12, 6, 2, 6, orange); // Feet
+        addPart(8, 4, 12, -6, 2, 6, orange); addPart(8, 4, 12, 6, 2, 6, orange);
     } else if (type === 'crocodile') {
         heightOffset = 6;
         const green = new THREE.MeshPhysicalMaterial({ color: 0x2e8b57, roughness: 0.9 });
-        addPart(24, 8, 40, 0, 4, 0, green); // Flat body
-        addPart(20, 8, 24, 0, 4, 32, green); // Long snout
-        addPart(4, 4, 4, -8, 8, 36, blackMat); addPart(4, 4, 4, 8, 8, 36, blackMat); // Eyes
-        addPart(16, 8, 36, 0, 4, -36, green); // Tail
-        addPart(8, 6, 8, -16, 3, 12, green); addPart(8, 6, 8, 16, 3, 12, green); // Front legs
-        addPart(8, 6, 8, -16, 3, -12, green); addPart(8, 6, 8, 16, 3, -12, green); // Back legs
+        addPart(24, 8, 40, 0, 4, 0, green); addPart(20, 8, 24, 0, 4, 32, green);
+        addPart(4, 4, 4, -8, 8, 36, blackMat); addPart(4, 4, 4, 8, 8, 36, blackMat);
+        addPart(16, 8, 36, 0, 4, -36, green);
+        addPart(8, 6, 8, -16, 3, 12, green); addPart(8, 6, 8, 16, 3, 12, green);
+        addPart(8, 6, 8, -16, 3, -12, green); addPart(8, 6, 8, 16, 3, -12, green);
     } else if (type === 'pig') {
         heightOffset = 12;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xffc0cb, roughness: 0.8 });
-        addPart(24, 20, 32, 0, 14, 0, pink); // Plump body
-        addPart(16, 16, 16, 0, 24, 20, pink); // Head
-        addPart(4, 4, 4, -4, 26, 28, blackMat); addPart(4, 4, 4, 4, 26, 28, blackMat); // Eyes
-        addPart(8, 8, 4, 0, 20, 30, pink); // Snout
-        addPart(4, 6, 4, -6, 32, 16, pink); addPart(4, 6, 4, 6, 32, 16, pink); // Ears
-        addPart(6, 8, 6, -8, 4, 10, pink); addPart(6, 8, 6, 8, 4, 10, pink); // Front legs
-        addPart(6, 8, 6, -8, 4, -10, pink); addPart(6, 8, 6, 8, 4, -10, pink); // Back legs
+        addPart(24, 20, 32, 0, 14, 0, pink); addPart(16, 16, 16, 0, 24, 20, pink);
+        addPart(4, 4, 4, -4, 26, 28, blackMat); addPart(4, 4, 4, 4, 26, 28, blackMat);
+        addPart(8, 8, 4, 0, 20, 30, pink);
+        addPart(4, 6, 4, -6, 32, 16, pink); addPart(4, 6, 4, 6, 32, 16, pink);
+        addPart(6, 8, 6, -8, 4, 10, pink); addPart(6, 8, 6, 8, 4, 10, pink);
+        addPart(6, 8, 6, -8, 4, -10, pink); addPart(6, 8, 6, 8, 4, -10, pink);
     } else if (type === 'turtle') {
         heightOffset = 8;
         const green = new THREE.MeshPhysicalMaterial({ color: 0x3cb371, roughness: 0.8 });
         const darkGreen = new THREE.MeshPhysicalMaterial({ color: 0x006400, roughness: 0.9 });
-        addPart(28, 12, 32, 0, 8, 0, darkGreen); // Shell
-        addPart(12, 12, 12, 0, 8, 20, green); // Head
-        addPart(2, 2, 2, -4, 10, 26, blackMat); addPart(2, 2, 2, 4, 10, 26, blackMat); // Eyes
-        addPart(8, 4, 8, -16, 4, 12, green); addPart(8, 4, 8, 16, 4, 12, green); // Front flippers
-        addPart(8, 4, 8, -16, 4, -12, green); addPart(8, 4, 8, 16, 4, -12, green); // Back flippers
-        addPart(4, 4, 8, 0, 4, -20, green); // Small tail
+        addPart(28, 12, 32, 0, 8, 0, darkGreen); addPart(12, 12, 12, 0, 8, 20, green);
+        addPart(2, 2, 2, -4, 10, 26, blackMat); addPart(2, 2, 2, 4, 10, 26, blackMat);
+        addPart(8, 4, 8, -16, 4, 12, green); addPart(8, 4, 8, 16, 4, 12, green);
+        addPart(8, 4, 8, -16, 4, -12, green); addPart(8, 4, 8, 16, 4, -12, green);
+        addPart(4, 4, 8, 0, 4, -20, green);
+
+    // ── 신규 10종 ──
+    } else if (type === 'eevee') {
+        heightOffset = 14;
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0xc68642, roughness: 0.7 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xfff5dc, roughness: 0.6 });
+        addPart(14, 12, 20, 0, 10, 0, brown);
+        addPart(22, 8, 10, 0, 14, 6, cream);
+        addPart(14, 13, 14, 0, 24, 6, brown);
+        addPart(2, 2, 2, -4, 28, 13, blackMat); addPart(2, 2, 2, 4, 28, 13, blackMat);
+        addPart(6, 8, 2, -5, 35, 6, brown); addPart(6, 8, 2, 5, 35, 6, brown);
+        addPart(8, 5, 3, 0, 25, 13, cream);
+        addPart(4, 4, 14, 0, 12, -14, brown);
+        addPart(6, 5, 5, -4, 14, -22, cream); addPart(6, 5, 5, 2, 16, -22, cream); addPart(6, 5, 5, 6, 13, -21, cream);
+        addPart(4, 8, 4, -4, 3, 6, brown); addPart(4, 8, 4, 4, 3, 6, brown);
+        addPart(4, 8, 4, -4, 3, -6, brown); addPart(4, 8, 4, 4, 3, -6, brown);
+    } else if (type === 'vulpix') {
+        heightOffset = 12;
+        const orange = new THREE.MeshPhysicalMaterial({ color: 0xe8743b, roughness: 0.7 });
+        const redTip = new THREE.MeshPhysicalMaterial({ color: 0xcc3300, roughness: 0.8 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xfff0c0, roughness: 0.6 });
+        addPart(12, 12, 18, 0, 10, 0, orange); addPart(12, 12, 12, 0, 22, 5, orange);
+        addPart(2, 2, 2, -3, 26, 11, blackMat); addPart(2, 2, 2, 3, 26, 11, blackMat);
+        addPart(2, 2, 2, 0, 23, 13, blackMat);
+        addPart(4, 8, 2, -4, 32, 5, orange); addPart(4, 4, 2, -4, 40, 5, redTip);
+        addPart(4, 8, 2, 4, 32, 5, orange); addPart(4, 4, 2, 4, 40, 5, redTip);
+        addPart(6, 4, 4, 0, 24, 14, cream);
+        addPart(4, 4, 12, -5, 10, -12, orange); addPart(4, 4, 4, -5, 10, -22, redTip);
+        addPart(4, 4, 12, 0, 12, -12, orange); addPart(4, 4, 4, 0, 12, -22, redTip);
+        addPart(4, 4, 12, 5, 10, -12, orange); addPart(4, 4, 4, 5, 10, -22, redTip);
+        addPart(4, 6, 4, -4, 3, 6, orange); addPart(4, 6, 4, 4, 3, 6, orange);
+        addPart(4, 6, 4, -4, 3, -6, orange); addPart(4, 6, 4, 4, 3, -6, orange);
+    } else if (type === 'gengar') {
+        heightOffset = 16;
+        const purple = new THREE.MeshPhysicalMaterial({ color: 0x6a0dad, roughness: 0.5 });
+        const dpurple = new THREE.MeshPhysicalMaterial({ color: 0x4b0082, roughness: 0.6 });
+        const red = new THREE.MeshPhysicalMaterial({ color: 0xff2020, roughness: 0.5 });
+        addPart(24, 22, 20, 0, 12, 0, purple); addPart(22, 20, 20, 0, 26, 2, purple);
+        addPart(4, 4, 2, -6, 32, 10, red); addPart(4, 4, 2, 6, 32, 10, red);
+        addPart(2, 2, 2, -6, 32, 10, blackMat); addPart(2, 2, 2, 6, 32, 10, blackMat);
+        addPart(16, 3, 2, 0, 25, 12, whiteMat);
+        addPart(2, 4, 2, -5, 23, 12, whiteMat); addPart(2, 4, 2, -2, 23, 12, whiteMat);
+        addPart(2, 4, 2, 2, 23, 12, whiteMat); addPart(2, 4, 2, 5, 23, 12, whiteMat);
+        addPart(6, 10, 4, -6, 36, 2, dpurple); addPart(6, 10, 4, 6, 36, 2, dpurple);
+        addPart(10, 8, 8, -12, 16, 4, purple); addPart(10, 8, 8, 12, 16, 4, purple);
+        addPart(6, 8, 6, -8, 3, 0, dpurple); addPart(6, 8, 6, 0, 2, 0, dpurple); addPart(6, 8, 6, 8, 3, 0, dpurple);
+    } else if (type === 'psyduck') {
+        heightOffset = 16;
+        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd54f, roughness: 0.6 });
+        const orange = new THREE.MeshPhysicalMaterial({ color: 0xff6d00, roughness: 0.7 });
+        addPart(16, 18, 14, 0, 12, 0, yellow); addPart(18, 18, 18, 0, 28, 2, yellow);
+        addPart(2, 2, 2, -5, 32, 10, blackMat); addPart(2, 2, 2, 5, 32, 10, blackMat);
+        addPart(8, 5, 4, 0, 27, 12, orange);
+        addPart(4, 2, 4, -8, 32, 2, yellow); addPart(4, 2, 4, 8, 32, 2, yellow);
+        const lArm = addPart(6, 12, 4, -12, 22, 4, yellow); lArm.rotation.z = Math.PI / 3;
+        const rArm = addPart(6, 12, 4, 12, 22, 4, yellow); rArm.rotation.z = -Math.PI / 3;
+        addPart(8, 6, 10, -6, 3, 4, yellow); addPart(8, 6, 10, 6, 3, 4, yellow);
+    } else if (type === 'bulbasaur') {
+        heightOffset = 14;
+        const blueGreen = new THREE.MeshPhysicalMaterial({ color: 0x78c878, roughness: 0.7 });
+        const dgreen = new THREE.MeshPhysicalMaterial({ color: 0x228b22, roughness: 0.8 });
+        const spot = new THREE.MeshPhysicalMaterial({ color: 0x3a7d44, roughness: 0.8 });
+        addPart(18, 16, 22, 0, 12, 0, blueGreen);
+        addPart(6, 2, 6, -6, 18, -4, spot); addPart(6, 2, 6, 6, 18, 2, spot);
+        addPart(12, 16, 12, 0, 24, -6, dgreen); addPart(8, 6, 8, 0, 36, -6, dgreen);
+        addPart(16, 14, 16, 0, 24, 10, blueGreen);
+        addPart(2, 2, 2, -4, 28, 18, blackMat); addPart(2, 2, 2, 4, 28, 18, blackMat);
+        addPart(2, 2, 2, 0, 25, 18, blackMat);
+        addPart(4, 4, 2, -4, 34, 10, blueGreen); addPart(4, 4, 2, 4, 34, 10, blueGreen);
+        addPart(5, 8, 5, -6, 3, 8, blueGreen); addPart(5, 8, 5, 6, 3, 8, blueGreen);
+        addPart(5, 8, 5, -6, 3, -8, blueGreen); addPart(5, 8, 5, 6, 3, -8, blueGreen);
+    } else if (type === 'slowpoke') {
+        heightOffset = 18;
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb6b6, roughness: 0.7 });
+        const tailTip = new THREE.MeshPhysicalMaterial({ color: 0xff7070, roughness: 0.6 });
+        addPart(22, 18, 34, 0, 16, 0, pink); addPart(18, 16, 18, 0, 26, 14, pink);
+        addPart(2, 2, 2, -5, 28, 22, blackMat); addPart(2, 2, 2, 5, 28, 22, blackMat);
+        addPart(6, 4, 4, 0, 24, 24, pink);
+        addPart(6, 4, 4, -10, 30, 14, pink); addPart(6, 4, 4, 10, 30, 14, pink);
+        addPart(4, 4, 24, 0, 16, -20, pink); addPart(6, 6, 6, 0, 16, -34, tailTip);
+        addPart(8, 10, 8, -8, 3, 10, pink); addPart(8, 10, 8, 8, 3, 10, pink);
+        addPart(8, 10, 8, -8, 3, -10, pink); addPart(8, 10, 8, 8, 3, -10, pink);
+    } else if (type === 'marill') {
+        heightOffset = 12;
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x5b9bd5, roughness: 0.5 });
+        const lightBlue = new THREE.MeshPhysicalMaterial({ color: 0xadd8e6, roughness: 0.5 });
+        addPart(20, 20, 20, 0, 12, 0, blue); addPart(16, 10, 4, 0, 12, 11, lightBlue);
+        addPart(18, 18, 18, 0, 28, 0, blue);
+        addPart(4, 4, 2, -5, 30, 9, blackMat); addPart(4, 4, 2, 5, 30, 9, blackMat);
+        addPart(2, 2, 2, 0, 27, 10, blackMat);
+        addPart(8, 8, 2, -8, 36, 0, blue); addPart(8, 8, 2, 8, 36, 0, blue);
+        addPart(4, 4, 10, 0, 14, -12, blue); addPart(4, 4, 6, 4, 14, -20, blue);
+        addPart(6, 6, 6, 4, 14, -26, lightBlue);
+        addPart(6, 6, 6, -6, 3, 6, blue); addPart(6, 6, 6, 6, 3, 6, blue);
+    } else if (type === 'togepi') {
+        heightOffset = 14;
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffacd, roughness: 0.6 });
+        const red = new THREE.MeshPhysicalMaterial({ color: 0xff4444, roughness: 0.7 });
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x4488ff, roughness: 0.7 });
+        addPart(16, 22, 16, 0, 12, 0, cream);
+        addPart(5, 5, 2, -5, 18, 9, red); addPart(5, 5, 2, 5, 14, 9, blue); addPart(5, 5, 2, 0, 22, 9, red);
+        addPart(14, 14, 14, 0, 28, 0, cream);
+        addPart(2, 2, 2, -4, 32, 7, blackMat); addPart(2, 2, 2, 4, 32, 7, blackMat);
+        addPart(2, 3, 2, 0, 29, 7, blackMat);
+        addPart(2, 6, 2, -4, 38, 0, matBase); addPart(2, 8, 2, 0, 40, 0, matBase); addPart(2, 6, 2, 4, 38, 0, matBase);
+        addPart(5, 4, 5, -6, 1, 3, cream); addPart(5, 4, 5, 6, 1, 3, cream);
+    } else if (type === 'clefairy') {
+        heightOffset = 16;
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffafd7, roughness: 0.6 });
+        const dpink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.7 });
+        addPart(18, 18, 16, 0, 12, 0, pink); addPart(6, 8, 2, 0, 22, 8, pink);
+        addPart(16, 16, 16, 0, 26, 2, pink);
+        addPart(2, 2, 2, -4, 30, 9, blackMat); addPart(2, 2, 2, 4, 30, 9, blackMat);
+        addPart(2, 2, 2, 0, 28, 9, blackMat);
+        addPart(5, 8, 2, -5, 36, 2, pink); addPart(2, 3, 2, -5, 44, 2, blackMat);
+        addPart(5, 8, 2, 5, 36, 2, pink); addPart(2, 3, 2, 5, 44, 2, blackMat);
+        addPart(8, 10, 2, -10, 18, -6, dpink); addPart(8, 10, 2, 10, 18, -6, dpink);
+        addPart(6, 8, 4, -8, 14, 8, pink); addPart(6, 8, 4, 8, 14, 8, pink);
+        addPart(6, 6, 8, -5, 2, 5, pink); addPart(6, 6, 8, 5, 2, 5, pink);
+        addPart(4, 4, 10, 0, 12, -10, dpink);
+    } else if (type === 'wobbuffet') {
+        heightOffset = 28;
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x3a86c8, roughness: 0.6 });
+        const dblue = new THREE.MeshPhysicalMaterial({ color: 0x1a5a9a, roughness: 0.7 });
+        addPart(20, 44, 16, 0, 24, 0, blue); addPart(18, 14, 14, 0, 50, 0, blue);
+        addPart(16, 10, 3, 0, 44, 8, whiteMat);
+        addPart(3, 3, 2, -4, 46, 9, blackMat); addPart(3, 3, 2, 4, 46, 9, blackMat);
+        addPart(6, 3, 2, 0, 43, 9, blackMat);
+        addPart(8, 8, 4, -12, 28, 0, blue); addPart(8, 8, 4, 12, 28, 0, blue);
+        addPart(8, 8, 12, 0, 8, -12, dblue); addPart(8, 8, 8, 0, 8, -20, dblue);
+        addPart(4, 2, 1, -2, 10, -24, blackMat); addPart(4, 2, 1, 2, 10, -24, blackMat);
+        addPart(5, 2, 1, 0, 8, -24, blackMat);
     }
 
     state.scene.add(animalGroup);
 
-    // 모델 크기(u = voxelSize/25)에 맞춘 물리 바운딩 박스
-    // 너비: 모델 최대폭 ≈ 24u, 높이: heightOffset*u*2, 깊이: ≈ 40u
-    const hw = (24 * u) / 2;                   // x 반폭
-    const hh = (heightOffset * u);             // y 반높이 (= heightOffset * u)
-    const hd = (40 * u) / 2;                   // z 반깊이
+    const hw = (24 * u) / 2;
+    const hh = (heightOffset * u);
+    const hd = (40 * u) / 2;
     const boxShape = new CANNON.Box(new CANNON.Vec3(hw, hh, hd));
 
     const spawnX = (Math.random() - 0.5) * 1600;
@@ -424,18 +607,15 @@ export function spawnDog() {
         shape: boxShape,
         position: new CANNON.Vec3(spawnX, spawnY, spawnZ),
         material: state.animalMaterial || new CANNON.Material(),
-        fixedRotation: true,        // 기울어지지 않게
-        linearDamping: 0.95         // 미끄러짐 방지 (이동할 때만 속도 유지)
+        fixedRotation: true,
+        linearDamping: 0.95
     });
 
-    if (state.world) {
-        state.world.addBody(body);
-    }
-
-    // Wandering speeds (1.5x 기본): 배회 이동 속도
-    const speed = 300 + Math.random() * 300;
+    if (state.world) state.world.addBody(body);
 
     const animGroup = ANIM_TYPE[type] || 'quadruped';
+    const baseSpeed = 300 + Math.random() * 300;
+    const speed = baseSpeed * (SPEED_MULT[animGroup] || 1.0);
 
     const animalData = {
         mesh: animalGroup,
@@ -446,24 +626,22 @@ export function spawnDog() {
         speed: speed,
         heightOffset: heightOffset,
         grabbed: false,
-        // 애니메이션
         animalType: type,
         animGroup,
         animTime: 0,
         _animYOffset: 0,
         baseScale: animalGroup.scale.clone(),
-        // 클릭 액션
         clickActionTimer: 0,
         clickActionPhase: 0,
         clickActionType: CLICK_ACTION_MAP[animGroup] || 'spin',
         clickBaseRotY: 0,
+        // 먹이 AI 추가 필드
+        isEating: false,
+        eatTimer: 0,
+        jumpCooldown: 0,
     };
 
-    // 각 파트 mesh에 animalData 역참조 설정 (raycasting 식별용)
-    animalGroup.children.forEach(child => {
-        child.userData.animalRef = animalData;
-    });
-
+    animalGroup.children.forEach(child => { child.userData.animalRef = animalData; });
     animals.push(animalData);
 }
 
@@ -475,58 +653,38 @@ function removeOldestAnimal() {
     }
 }
 
-// 동물 전체 높이 (발바닥~머리, 월드 단위)
 function getAnimalFullHeight(animal) {
-    return animal.heightOffset * (voxelSize / 10); // halfHeight * 2
+    return animal.heightOffset * (voxelSize / 10);
 }
 
-// 현재 서 있는 바닥 높이 (발 밑 기준으로 정확히 체크)
 function getCurrentStandingGroundY(animal) {
-    const body = animal.body;
-    if (!body) return GROUND_BASE_HEIGHT;
+    if (!animal.body) return GROUND_BASE_HEIGHT;
     const halfHeight = animal.heightOffset * (voxelSize / 20);
-    return getGroundHeightBelow(
-        body.position.x,
-        body.position.y + 0.5,
-        body.position.z,
-        GROUND_BASE_HEIGHT
-    );
+    return getGroundHeightBelow(animal.body.position.x, animal.body.position.y + 0.5, animal.body.position.z, GROUND_BASE_HEIGHT);
 }
 
-// 계단/복층/지붕을 고려해 배회 방향 선택. 경로가 유효하면 전진하도록 방향만 설정.
 function pickWanderDirection(animal) {
     const body = animal.body;
     if (!body) return;
-
-    const halfHeight = animal.heightOffset * (voxelSize / 20);
     const fullHeight = getAnimalFullHeight(animal);
     const currentGroundY = getCurrentStandingGroundY(animal);
     const maxStep = voxelSize * 1.5;
     const sampleDist = voxelSize * 3;
-    const maxAttempts = 16;
 
-    for (let i = 0; i < maxAttempts; i++) {
+    for (let i = 0; i < 16; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const dirX = Math.sin(angle);
-        const dirZ = Math.cos(angle);
-
+        const dirX = Math.sin(angle), dirZ = Math.cos(angle);
         const sampleX = body.position.x + dirX * sampleDist;
         const sampleZ = body.position.z + dirZ * sampleDist;
-        const sampleYStart = currentGroundY + fullHeight + 1;
-        const newGroundY = getGroundHeightBelow(sampleX, sampleYStart, sampleZ, GROUND_BASE_HEIGHT);
-
+        const newGroundY = getGroundHeightBelow(sampleX, currentGroundY + fullHeight + 1, sampleZ, GROUND_BASE_HEIGHT);
         if (Math.abs(newGroundY - currentGroundY) > maxStep) continue;
-
         const ceilingY = getCeilingHeightAbove(sampleX, newGroundY + 0.1, sampleZ);
-        const headroom = ceilingY - newGroundY;
-        if (headroom < fullHeight * 0.95) continue;
-
+        if (ceilingY - newGroundY < fullHeight * 0.95) continue;
         animal.targetDir.set(dirX, 0, dirZ).normalize();
         animal.state = 'walking';
         animal.timer = 2 + Math.random() * 5;
         return;
     }
-
     const angleFallback = Math.random() * Math.PI * 2;
     animal.targetDir.set(Math.sin(angleFallback), 0, Math.cos(angleFallback)).normalize();
     animal.state = 'walking';
@@ -537,83 +695,189 @@ export function updateDogs(dt) {
     const boardLimit = 1000 - voxelSize * 2;
 
     animals.forEach(animal => {
-        // 공통 애니메이션 시간 누적
         animal.animTime += dt;
+        if (animal.jumpCooldown > 0) animal.jumpCooldown -= dt;
 
-        // ── 잡힌 상태: AI·물리 모두 정지 ──
+        // ── 잡힌 상태 ──
         if (animal.grabbed) {
-            if (animal.body) {
-                animal.body.velocity.set(0, 0, 0);
-                animal.body.angularVelocity.set(0, 0, 0);
-            }
+            if (animal.body) { animal.body.velocity.set(0, 0, 0); animal.body.angularVelocity.set(0, 0, 0); }
             return;
         }
 
-        // ── 착지 감지: 현재 위치에서 아래로 레이 쏴 첫 블록 윗면에 안착 ──
+        // ── 착지 감지 ──
         if (animal.state === 'falling') {
             if (animal.body) {
                 const halfHeight = animal.heightOffset * (voxelSize / 20);
-                const groundY = getGroundHeightBelow(
-                    animal.body.position.x,
-                    animal.body.position.y + 0.5,
-                    animal.body.position.z,
-                    GROUND_BASE_HEIGHT
-                );
+                const groundY = getGroundHeightBelow(animal.body.position.x, animal.body.position.y + 0.5, animal.body.position.z, GROUND_BASE_HEIGHT);
                 const targetY = groundY + halfHeight;
-                const distY = Math.abs(animal.body.position.y - targetY);
-
-                if (Math.abs(animal.body.velocity.y) < 2.0 && distY < halfHeight * 0.4) {
+                if (Math.abs(animal.body.velocity.y) < 2.0 && Math.abs(animal.body.position.y - targetY) < halfHeight * 0.4) {
                     animal.body.position.y = targetY;
                     animal.state = 'idle';
                     animal.timer = 0.3 + Math.random() * 0.7;
                 }
             }
         } else {
-            // ── 타이머 카운트다운 ──
-            animal.timer -= dt;
+            const halfHeight = animal.heightOffset * (voxelSize / 20);
+            const groundY = getCurrentStandingGroundY(animal);
+            const targetFood = findNearestFood(animal);
 
-            if (animal.timer <= 0) {
-                if (animal.state === 'idle') {
-                    // 휴식 끝 → 새 목적지로 이동 시작 (현재 층 기준으로 유효한 방향 선택)
-                    pickWanderDirection(animal);
-                } else {
-                    // 이동 끝 → 짧은 휴식 후 다시 이동
+            // ── 먹는 중 ──
+            if (animal.isEating) {
+                animal.eatTimer -= dt;
+                if (animal.body) { animal.body.velocity.x = 0; animal.body.velocity.z = 0; }
+                if (animal.eatTimer <= 0) {
+                    animal.isEating = false;
                     animal.state = 'idle';
-                    animal.timer = 0.5 + Math.random() * 1.5;
+                    animal.timer = 1.0 + Math.random() * 1.0;
                 }
             }
-        }
+            // ── 먹이 추적 AI ──
+            else if (targetFood && animal.clickActionTimer <= 0) {
+                const dx = targetFood.position.x - animal.body.position.x;
+                const dz = targetFood.position.z - animal.body.position.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
 
-        // ── 경계 반사 & 속도 적용. 경로가 유효하면 전진, 막히면 idle로 전환해 새 방향 선택 (제자리 회전 방지) ──
-        if (animal.state === 'walking' && animal.body) {
-            const predictX = animal.body.position.x + animal.targetDir.x * animal.speed * 0.5;
-            const predictZ = animal.body.position.z + animal.targetDir.z * animal.speed * 0.5;
-            const halfHeight = animal.heightOffset * (voxelSize / 20);
-            const fullHeight = getAnimalFullHeight(animal);
-            const currentGroundY = getCurrentStandingGroundY(animal);
-            const nextGroundY = getGroundHeightBelow(predictX, currentGroundY + fullHeight, predictZ, GROUND_BASE_HEIGHT);
-            const maxStep = voxelSize * 1.5;
+                if (dist < EAT_RADIUS) {
+                    // 먹기 시작!
+                    if (!targetFood.eaten) {
+                        targetFood.eaten = true;
+                        targetFood.consumeTimer = 2.0;
+                    }
+                    animal.isEating = true;
+                    animal.eatTimer = 1.2;
+                    animal.state = 'idle';
+                    if (animal.body) { animal.body.velocity.x = 0; animal.body.velocity.z = 0; }
+                } else {
+                    // 먹이 방향으로 이동
+                    const desiredDir = new THREE.Vector3(dx, 0, dz).normalize();
+                    animal.state = 'walking';
 
-            let blockForward = false;
-            if (predictX > boardLimit || predictX < -boardLimit) blockForward = true;
-            if (predictZ > boardLimit || predictZ < -boardLimit) blockForward = true;
-            if (Math.abs(nextGroundY - currentGroundY) > maxStep) blockForward = true;
-            const nextCeilingY = getCeilingHeightAbove(predictX, nextGroundY + 0.1, predictZ);
-            if (nextCeilingY - nextGroundY < fullHeight * 0.95) blockForward = true;
+                    // 점프 중(상승)이면 장애물 회피 건너뜀 — 방향만 유지
+                    if (animal.body.velocity.y > 80) {
+                        animal.body.velocity.x = desiredDir.x * animal.speed;
+                        animal.body.velocity.z = desiredDir.z * animal.speed;
+                        animal.mesh.rotation.y = Math.atan2(desiredDir.x, desiredDir.z);
+                    } else {
+                        const wallHit = probeAhead(animal.body.position, desiredDir, groundY, halfHeight);
 
-            if (blockForward) {
-                animal.state = 'idle';
-                animal.timer = 0.2 + Math.random() * 0.3;
-                animal.body.velocity.x = 0;
-                animal.body.velocity.z = 0;
-            } else {
-                animal.body.velocity.x = animal.targetDir.x * animal.speed;
-                animal.body.velocity.z = animal.targetDir.z * animal.speed;
-                animal.mesh.rotation.y = Math.atan2(animal.targetDir.x, animal.targetDir.z);
+                        if (wallHit) {
+                            const thickness = countThickness(wallHit, desiredDir);
+                            const blockTop = wallHit.object.position.y + voxelSize / 2;
+
+                            if (animal.animGroup === 'HOP' &&
+                                blockTop <= groundY + voxelSize * 2.5 &&
+                                thickness <= 2 &&
+                                animal.jumpCooldown <= 0) {
+                                // HOP: 점프로 넘기 (두께 ≤2, 높이 1~2블록)
+                                animal.body.velocity.y = 600;
+                                animal.jumpCooldown = 1.5;
+                                animal.body.velocity.x = desiredDir.x * animal.speed;
+                                animal.body.velocity.z = desiredDir.z * animal.speed;
+                                animal.mesh.rotation.y = Math.atan2(desiredDir.x, desiredDir.z);
+
+                            } else if (animal.animGroup === 'HEAVY' &&
+                                thickness <= 2 &&
+                                animal.jumpCooldown <= 0) {
+                                // HEAVY: 1칸 블록 폭발 파괴 후 관통
+                                explodeBlockHeavy(wallHit.object, desiredDir);
+                                state.screenShakeTimer = 0.6;
+                                state.screenShakeIntensity = 36;
+                                animal.jumpCooldown = 1.0;
+                                animal.body.velocity.x = desiredDir.x * animal.speed * 1.2;
+                                animal.body.velocity.z = desiredDir.z * animal.speed * 1.2;
+
+                            } else {
+                                // 우회 탐색
+                                const steerDir = steerAround(animal.body.position, desiredDir, groundY, halfHeight);
+                                if (steerDir) {
+                                    animal.body.velocity.x = steerDir.x * animal.speed;
+                                    animal.body.velocity.z = steerDir.z * animal.speed;
+                                    animal.mesh.rotation.y = Math.atan2(steerDir.x, steerDir.z);
+                                } else {
+                                    // 완전히 막힘 - 감속
+                                    animal.body.velocity.x *= 0.85;
+                                    animal.body.velocity.z *= 0.85;
+                                }
+                            }
+                        } else {
+                            // 직진
+                            animal.body.velocity.x = desiredDir.x * animal.speed;
+                            animal.body.velocity.z = desiredDir.z * animal.speed;
+                            animal.mesh.rotation.y = Math.atan2(desiredDir.x, desiredDir.z);
+                        }
+                    }
+                }
             }
-        } else if (animal.state === 'idle' && animal.body) {
-            animal.body.velocity.x = 0;
-            animal.body.velocity.z = 0;
+            // ── 일반 배회 AI ──
+            else {
+                animal.timer -= dt;
+                if (animal.timer <= 0) {
+                    if (animal.state === 'idle') {
+                        pickWanderDirection(animal);
+                    } else {
+                        animal.state = 'idle';
+                        const restTime = animal.animGroup === 'HEAVY'
+                            ? 1.5 + Math.random() * 3.0
+                            : 0.5 + Math.random() * 1.5;
+                        animal.timer = restTime;
+                    }
+                }
+
+                // 일반 이동 & 경계 반사
+                if (animal.state === 'walking' && animal.body) {
+                    const predictX = animal.body.position.x + animal.targetDir.x * animal.speed * 0.5;
+                    const predictZ = animal.body.position.z + animal.targetDir.z * animal.speed * 0.5;
+                    const fullHeight = getAnimalFullHeight(animal);
+                    const nextGroundY = getGroundHeightBelow(predictX, groundY + fullHeight, predictZ, GROUND_BASE_HEIGHT);
+                    const maxStep = voxelSize * 1.5;
+
+                    let blockForward = false;
+                    if (predictX > boardLimit || predictX < -boardLimit) blockForward = true;
+                    if (predictZ > boardLimit || predictZ < -boardLimit) blockForward = true;
+                    if (Math.abs(nextGroundY - groundY) > maxStep) blockForward = true;
+                    const nextCeilingY = getCeilingHeightAbove(predictX, nextGroundY + 0.1, predictZ);
+                    if (nextCeilingY - nextGroundY < fullHeight * 0.95) blockForward = true;
+
+                    // ── HOP/HEAVY 전방 벽 감지 (배회 모드) ──
+                    if (!blockForward && animal.body.velocity.y <= 80 && animal.jumpCooldown <= 0) {
+                        const wHit = probeAhead(animal.body.position, animal.targetDir, groundY, halfHeight);
+                        if (wHit) {
+                            const wThick = countThickness(wHit, animal.targetDir);
+                            const wTop = wHit.object.position.y + voxelSize / 2;
+                            if (animal.animGroup === 'HOP' && wTop <= groundY + voxelSize * 2.5 && wThick <= 2) {
+                                // HOP: 점프
+                                animal.body.velocity.y = 600;
+                                animal.jumpCooldown = 1.5;
+                                animal.body.velocity.x = animal.targetDir.x * animal.speed;
+                                animal.body.velocity.z = animal.targetDir.z * animal.speed;
+                            } else if (animal.animGroup === 'HEAVY' && wThick <= 2) {
+                                // HEAVY: 블록 폭발 파괴
+                                explodeBlockHeavy(wHit.object, animal.targetDir);
+                                state.screenShakeTimer = 0.6;
+                                state.screenShakeIntensity = 36;
+                                animal.jumpCooldown = 1.0;
+                            } else {
+                                blockForward = true; // 넘을 수 없으면 방향 전환
+                            }
+                        }
+                    }
+
+                    if (blockForward) {
+                        animal.state = 'idle';
+                        animal.timer = 0.2 + Math.random() * 0.3;
+                        animal.body.velocity.x = 0;
+                        animal.body.velocity.z = 0;
+                    } else if (animal.body.velocity.y <= 80) {
+                        // 점프 중이 아닐 때만 수평 속도 덮어씀
+                        animal.body.velocity.x = animal.targetDir.x * animal.speed;
+                        animal.body.velocity.z = animal.targetDir.z * animal.speed;
+                        animal.mesh.rotation.y = Math.atan2(animal.targetDir.x, animal.targetDir.z);
+                    }
+                } else if (animal.state === 'idle' && animal.body) {
+                    animal.body.velocity.x = 0;
+                    animal.body.velocity.z = 0;
+                }
+            }
         }
 
         // ── mesh 위치를 body에 동기화 ──
@@ -622,102 +886,127 @@ export function updateDogs(dt) {
             animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));
         }
 
-        // ── 이동 타입별 루프 애니메이션 (Math.sin 기반) ──
+        // ── 타입별 루프 애니메이션 ──
         const baseY = animal.mesh.position.y;
         const t = animal.animTime;
         const baseScale = animal.baseScale;
+        const isWalking = animal.state === 'walking';
+        let yOffset = 0, sideTilt = 0;
 
-        let yOffset = 0;
-        let sideTilt = 0;
-
-        switch (animal.animGroup) {
-            case 'quadruped':
-                // 살짝 상하 바운스 + 좌우 기울기
-                yOffset = Math.sin(t * 8) * 4;
-                sideTilt = Math.sin(t * 6) * 0.08;
-                break;
-            case 'waddling':
-                // 뒤뚱거림: 좌우 롤 중심
-                sideTilt = Math.sin(t * 4) * 0.25;
-                break;
-            case 'hopping':
-                // 토끼: 걷는 동안만 통통 튀는 점프
-                if (animal.state === 'walking') {
-                    const hop = Math.abs(Math.sin(t * 6));
-                    yOffset = hop * 18;
-                }
-                break;
-            case 'sliding':
-                // 슬라이딩: 거의 붙어서 살짝 흔들림만
-                yOffset = Math.sin(t * 3) * 2;
-                break;
-            case 'special':
-                // 특수: 살짝 떠오르며 회전
-                yOffset = Math.sin(t * 2) * 6;
-                animal.mesh.rotation.y += dt * 0.6;
-                break;
+        if (animal.isEating) {
+            // 귀여운 먹기 애니메이션: 빠른 통통 + 살짝 기울기
+            yOffset = Math.abs(Math.sin(t * 12)) * voxelSize * 0.18;
+            sideTilt = Math.sin(t * 10) * 0.12;
+        } else {
+            switch (animal.animGroup) {
+                case 'WADDLE':
+                    sideTilt = Math.sin(t * 5) * 0.22;
+                    yOffset = Math.abs(Math.sin(t * 5)) * 3;
+                    break;
+                case 'HOP':
+                    if (isWalking) { yOffset = Math.abs(Math.sin(t * 8)) * 24; sideTilt = Math.sin(t * 16) * 0.06; }
+                    else { yOffset = Math.abs(Math.sin(t * 3)) * 5; }
+                    break;
+                case 'SNEAK':
+                    if (isWalking) { yOffset = Math.sin(t * 7) * 2.5; sideTilt = Math.sin(t * 7) * 0.05; }
+                    else { sideTilt = Math.sin(t * 1.8) * 0.07; }
+                    break;
+                case 'HEAVY':
+                    yOffset = Math.sin(t * 1.8) * 5;
+                    sideTilt = Math.sin(t * 1.2) * 0.04;
+                    break;
+                case 'quadruped':
+                    yOffset = Math.sin(t * 8) * 4;
+                    sideTilt = Math.sin(t * 6) * 0.08;
+                    break;
+                case 'hopping':
+                    if (isWalking) yOffset = Math.abs(Math.sin(t * 6)) * 18;
+                    break;
+                case 'sliding':
+                    yOffset = Math.sin(t * 3) * 2;
+                    break;
+                case 'special':
+                    yOffset = Math.sin(t * 2) * 6;
+                    animal.mesh.rotation.y += dt * 0.6;
+                    break;
+            }
         }
 
         animal.mesh.position.y = baseY + yOffset;
-        if (sideTilt !== 0) {
+        if (sideTilt !== 0 && animal.clickActionTimer <= 0) {
             animal.mesh.rotation.z = sideTilt;
         }
 
         // ── 클릭 액션 오버레이 ──
         if (animal.clickActionTimer > 0) {
             animal.clickActionTimer -= dt;
-            const duration = 0.75;
+            const duration = ACTION_DURATION[animal.clickActionType] || 0.75;
             const remaining = Math.max(animal.clickActionTimer, 0);
-            const progress = 1 - remaining / duration; // 0 → 1
+            const progress = 1 - remaining / duration;
 
             switch (animal.clickActionType) {
-                case 'spin': {
-                    // 제자리 회전 (한 바퀴)
+                case 'aerialSpin': {
                     if (animal.clickActionPhase === 0) {
-                        animal.clickBaseRotY = animal.mesh.rotation.y;
                         animal.clickActionPhase = 1;
+                        animal.clickBaseRotY = animal.mesh.rotation.y;
+                        if (animal.body) animal.body.velocity.y = 420;
                     }
+                    animal.mesh.rotation.y = animal.clickBaseRotY + progress * Math.PI * 4;
+                    animal.mesh.rotation.z = Math.sin(progress * Math.PI) * 0.4;
+                    break;
+                }
+                case 'waddleSpin': {
+                    if (animal.clickActionPhase === 0) {
+                        animal.clickActionPhase = 1;
+                        animal.clickBaseRotY = animal.mesh.rotation.y;
+                    }
+                    animal.mesh.rotation.y = animal.clickBaseRotY + progress * Math.PI * 2;
+                    animal.mesh.rotation.z = Math.sin(progress * Math.PI * 6) * 0.4;
+                    break;
+                }
+                case 'dash': {
+                    if (animal.clickActionPhase === 0) {
+                        animal.clickActionPhase = 1;
+                        if (animal.body) {
+                            animal.body.velocity.x = Math.sin(animal.mesh.rotation.y) * 700;
+                            animal.body.velocity.z = Math.cos(animal.mesh.rotation.y) * 700;
+                        }
+                    }
+                    animal.mesh.rotation.x = -Math.sin(progress * Math.PI) * 0.3;
+                    break;
+                }
+                case 'groundShake': {
+                    if (animal.clickActionPhase === 0) {
+                        animal.clickActionPhase = 1;
+                        state.screenShakeTimer = 0.5;
+                        state.screenShakeIntensity = 18;
+                    }
+                    const squash = 1 - Math.sin(progress * Math.PI) * 0.3;
+                    animal.mesh.scale.set(baseScale.x / Math.max(squash, 0.01), baseScale.y * squash, baseScale.z / Math.max(squash, 0.01));
+                    break;
+                }
+                case 'spin': {
+                    if (animal.clickActionPhase === 0) { animal.clickBaseRotY = animal.mesh.rotation.y; animal.clickActionPhase = 1; }
                     animal.mesh.rotation.y = animal.clickBaseRotY + progress * Math.PI * 2;
                     break;
                 }
                 case 'scale': {
-                    // 통통 튀는 확대/축소
                     const s = 1 + Math.sin(progress * Math.PI) * 0.4;
-                    animal.mesh.scale.set(
-                        baseScale.x * s,
-                        baseScale.y * s,
-                        baseScale.z * s,
-                    );
+                    animal.mesh.scale.set(baseScale.x * s, baseScale.y * s, baseScale.z * s);
                     break;
                 }
                 case 'jump': {
-                    // 위로 한 번 점프
-                    if (animal.clickActionPhase === 0) {
-                        animal.clickActionPhase = 1;
-                        if (animal.body) {
-                            animal.body.velocity.y = 350;
-                        }
-                    }
+                    if (animal.clickActionPhase === 0) { animal.clickActionPhase = 1; if (animal.body) animal.body.velocity.y = 350; }
                     break;
                 }
                 case 'squash': {
-                    // 아래로 눌렸다가 복원
                     const squash = 1 + Math.sin(progress * Math.PI) * 0.3;
-                    animal.mesh.scale.set(
-                        baseScale.x * squash,
-                        baseScale.y / squash,
-                        baseScale.z * squash,
-                    );
+                    animal.mesh.scale.set(baseScale.x * squash, baseScale.y / squash, baseScale.z * squash);
                     break;
                 }
                 case 'pulse': {
-                    // 작게 펄스
                     const p = 1 + Math.sin(progress * Math.PI * 2) * 0.25;
-                    animal.mesh.scale.set(
-                        baseScale.x * p,
-                        baseScale.y * p,
-                        baseScale.z * p,
-                    );
+                    animal.mesh.scale.set(baseScale.x * p, baseScale.y * p, baseScale.z * p);
                     break;
                 }
             }
@@ -725,11 +1014,11 @@ export function updateDogs(dt) {
             if (animal.clickActionTimer <= 0) {
                 animal.clickActionTimer = 0;
                 animal.clickActionPhase = 0;
-                // 스케일/회전 원복
                 animal.mesh.scale.copy(baseScale);
+                animal.mesh.rotation.x = 0;
+                animal.mesh.rotation.z = 0;
             }
         } else {
-            // 클릭 액션이 없을 때는 기본 스케일 유지
             animal.mesh.scale.copy(baseScale);
         }
     });

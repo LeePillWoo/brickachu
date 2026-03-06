@@ -3,6 +3,7 @@ import { state, objects, voxelSize, materials } from './state.js';
 import { applyActionState, placeVoxel, removeVoxel } from './scene.js';
 import { frameCamera } from './camera.js';
 import { animals, setGrabbedAnimal, triggerClickAction, getGroundHeightAt, getGroundHeightBelow, snapAnimalToGround } from './entities.js';
+import { spawnFood, showFoodGhost, hideFoodGhost } from './food.js';
 
 // 동물 잡기 상태
 let _grabbedAnimal = null;
@@ -92,7 +93,18 @@ export function onPointerMove(event) {
     if (intersects.length > 0) {
         const intersect = intersects[0];
 
-        if (state.isAddMode) {
+        // 먹이 설치 모드: 고스트 프리뷰만 이동 (실제 스폰은 클릭 시)
+        if (state.currentMode === 'food') {
+            const ny = intersect.face ? intersect.face.normal.y : 0;
+            if (ny > 0.5) {
+                showFoodGhost(intersect.point.x, intersect.point.y, intersect.point.z);
+            } else {
+                hideFoodGhost();
+            }
+            return;
+        }
+
+        if (state.currentMode === 'add') {
             const pos = intersect.point.clone().add(intersect.face.normal);
             pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
 
@@ -123,6 +135,7 @@ export function onPointerMove(event) {
         }
     } else {
         state.targetGuideOpacity = 0;
+        hideFoodGhost();
     }
 }
 
@@ -159,7 +172,7 @@ export function onPointerDown(event) {
 
         const intersects = state.raycaster.intersectObjects(objects, false);
 
-        if (state.isAddMode) {
+        if (state.currentMode === 'add') {
             if (intersects.length > 0) {
                 if (!isSmallScreen) {
                     state.isDraggingBuild = true;
@@ -239,12 +252,17 @@ export function onPointerUp(event) {
             }
         }
 
-        // ── 2) 동물이 아니면 기존 블록 조작 ──
+        // ── 2) 동물이 아니면 모드별 처리 ──
         const intersects = state.raycaster.intersectObjects(objects, false);
 
         if (intersects.length > 0) {
             const intersect = intersects[0];
-            if (state.isAddMode) {
+            if (state.currentMode === 'food') {
+                const ny = intersect.face ? intersect.face.normal.y : 0;
+                if (ny > 0.5) {
+                    spawnFood(new THREE.Vector3(intersect.point.x, intersect.point.y, intersect.point.z));
+                }
+            } else if (state.currentMode === 'add') {
                 const pos = intersect.point.clone().add(intersect.face.normal);
                 pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
                 placeVoxel(pos);
