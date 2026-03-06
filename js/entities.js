@@ -765,18 +765,17 @@ export function updateDogs(dt) {
                             const blockTop = wallHit.object.position.y + voxelSize / 2;
 
                             if (animal.animGroup === 'HOP' &&
-                                blockTop <= groundY + voxelSize * 2.5 &&
-                                thickness <= 2 &&
+                                blockTop <= groundY + voxelSize * 5 &&
+                                thickness <= 4 &&
                                 animal.jumpCooldown <= 0) {
-                                // HOP: 점프로 넘기 (두께 ≤2, 높이 1~2블록)
-                                animal.body.velocity.y = 600;
+                                // HOP: 점프로 넘기 (두께 ≤4, 높이 1~4블록)
+                                animal.body.velocity.y = 1200;
                                 animal.jumpCooldown = 1.5;
                                 animal.body.velocity.x = desiredDir.x * animal.speed;
                                 animal.body.velocity.z = desiredDir.z * animal.speed;
                                 animal.mesh.rotation.y = Math.atan2(desiredDir.x, desiredDir.z);
 
                             } else if (animal.animGroup === 'HEAVY' &&
-                                thickness <= 2 &&
                                 animal.jumpCooldown <= 0) {
                                 // HEAVY: 1칸 블록 폭발 파괴 후 관통
                                 explodeBlockHeavy(wallHit.object, desiredDir);
@@ -844,13 +843,13 @@ export function updateDogs(dt) {
                         if (wHit) {
                             const wThick = countThickness(wHit, animal.targetDir);
                             const wTop = wHit.object.position.y + voxelSize / 2;
-                            if (animal.animGroup === 'HOP' && wTop <= groundY + voxelSize * 2.5 && wThick <= 2) {
+                            if (animal.animGroup === 'HOP' && wTop <= groundY + voxelSize * 5 && wThick <= 4) {
                                 // HOP: 점프
-                                animal.body.velocity.y = 600;
+                                animal.body.velocity.y = 1200;
                                 animal.jumpCooldown = 1.5;
                                 animal.body.velocity.x = animal.targetDir.x * animal.speed;
                                 animal.body.velocity.z = animal.targetDir.z * animal.speed;
-                            } else if (animal.animGroup === 'HEAVY' && wThick <= 2) {
+                            } else if (animal.animGroup === 'HEAVY') {
                                 // HEAVY: 블록 폭발 파괴
                                 explodeBlockHeavy(wHit.object, animal.targetDir);
                                 state.screenShakeTimer = 0.6;
