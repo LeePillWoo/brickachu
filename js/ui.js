@@ -168,6 +168,23 @@ export function setupModeButtons() {
         });
     }
 
+    const btnGameSpeed = document.getElementById('btn-game-speed');
+    if (btnGameSpeed) {
+        const cycle = [1, 2, 3];
+        const updateLabel = () => {
+            const s = state.gameSpeed || 1;
+            btnGameSpeed.textContent = `×${s}`;
+            btnGameSpeed.title = `배속 ×${s} (클릭 시 ×1 → ×2 → ×3 순환)`;
+        };
+        updateLabel();
+        btnGameSpeed.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = cycle.indexOf(state.gameSpeed || 1);
+            state.gameSpeed = cycle[(idx + 1) % cycle.length];
+            updateLabel();
+        });
+    }
+
     // Mobile UI Toggles
     const paletteToggle = document.getElementById('mobile-palette-toggle');
     const palettePanel = document.getElementById('palette-panel');

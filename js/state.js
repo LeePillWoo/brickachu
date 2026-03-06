@@ -67,5 +67,7 @@ export const state = {
     velocity: new THREE.Vector3(),
     downPointerPos: new THREE.Vector2(),
     pointerDownTime: 0,
-    world: null
+    world: null,
+    /** 게임 배속 (1, 2, 3). 물리·동물 이동·애니메이션에 즉시 반영 */
+    gameSpeed: 1
 };

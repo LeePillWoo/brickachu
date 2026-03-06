@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { state, objects, voxelSize, materials } from './state.js';
 import { applyActionState, placeVoxel, removeVoxel } from './scene.js';
 import { frameCamera } from './camera.js';
-import { animals, setGrabbedAnimal } from './entities.js';
+import { animals, setGrabbedAnimal, triggerClickAction, getGroundHeightAt, getGroundHeightBelow, snapAnimalToGround } from './entities.js';
 
 // 동물 잡기 상태
 let _grabbedAnimal = null;
@@ -53,13 +53,35 @@ export function onPointerMove(event) {
     state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
     state.raycaster.setFromCamera(state.pointer, state.camera);
 
-    // 잡힌 동물 이동 시 코드 (grab 중에는 블록 조작 안 됨)
+    // 잡힌 동물 이동 시: 커서가 가리키는 면이 지붕 위(바닥)인지 지붕 아래(천장)인지 구분해 안착 높이 계산
     if (_grabbedAnimal) {
-        _grabPlane.constant = -GRAB_HOVER_HEIGHT;
-        state.raycaster.ray.intersectPlane(_grabPlane, _grabIntersect);
-        _grabbedAnimal.mesh.position.set(_grabIntersect.x, GRAB_HOVER_HEIGHT, _grabIntersect.z);
+        const blockOnly = objects.filter(o => o !== state.plane);
+        const hits = blockOnly.length > 0 ? state.raycaster.intersectObjects(blockOnly, false) : [];
+
+        let groundY, posX, posZ;
+        if (hits.length > 0) {
+            const hit = hits[0];
+            posX = hit.point.x;
+            posZ = hit.point.z;
+            const ny = hit.face ? hit.face.normal.y : 0;
+            if (ny > 0.5) {
+                groundY = hit.point.y;
+            } else if (ny < -0.5) {
+                groundY = getGroundHeightBelow(hit.point.x, hit.point.y - 0.1, hit.point.z);
+            } else {
+                groundY = hit.object.position.y + voxelSize / 2;
+            }
+        } else {
+            _grabPlane.constant = 0;
+            state.raycaster.ray.intersectPlane(_grabPlane, _grabIntersect);
+            posX = _grabIntersect.x;
+            posZ = _grabIntersect.z;
+            groundY = getGroundHeightAt(_grabIntersect.x, _grabIntersect.z);
+        }
+        const hoverY = groundY + GRAB_HOVER_HEIGHT;
+        _grabbedAnimal.mesh.position.set(posX, hoverY, posZ);
         if (_grabbedAnimal.body) {
-            _grabbedAnimal.body.position.set(_grabIntersect.x, GRAB_HOVER_HEIGHT, _grabIntersect.z);
+            _grabbedAnimal.body.position.set(posX, hoverY, posZ);
             _grabbedAnimal.body.velocity.set(0, 0, 0);
         }
         return;
@@ -165,13 +187,15 @@ export function onPointerUp(event) {
         _grabHoldTimer = null;
     }
 
-    // 잡힘 동물 놓기: 다시 물리 적용
+    // 잡힘 동물 놓기: 다시 물리 적용 + 현재 층 최상단에 스냅
     if (_grabbedAnimal) {
         _grabbedAnimal.grabbed = false;
         _grabbedAnimal.state = 'falling';
         if (_grabbedAnimal.body) {
             _grabbedAnimal.body.wakeUp();
         }
+        // 놓는 순간, 현재 위치의 가장 높은 블록 윗면 위에 정확히 안착시킴
+        snapAnimalToGround(_grabbedAnimal);
         setGrabbedAnimal(null);
         _grabbedAnimal = null;
         return; // 놓을 때는 블록 조작 불필요
@@ -202,6 +226,20 @@ export function onPointerUp(event) {
     if (dist < 10 && timeDelta < 500 && !event.target.closest('#ui-layer')) {
         state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
         state.raycaster.setFromCamera(state.pointer, state.camera);
+
+        // ── 1) 동물 우선 클릭 처리 ──
+        const allAnimalMeshes = animals.flatMap(a => [...a.mesh.children]);
+        const animalHits = state.raycaster.intersectObjects(allAnimalMeshes, false);
+        if (animalHits.length > 0) {
+            const hitAnimal = animalHits[0].object.userData.animalRef;
+            if (hitAnimal) {
+                triggerClickAction(hitAnimal);
+                // 동물 인터랙션이 발생하면 이 클릭으로는 블록 설치/제거를 하지 않음
+                return;
+            }
+        }
+
+        // ── 2) 동물이 아니면 기존 블록 조작 ──
         const intersects = state.raycaster.intersectObjects(objects, false);
 
         if (intersects.length > 0) {

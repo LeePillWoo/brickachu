@@ -34,7 +34,7 @@ function init() {
     objects.push(state.plane);
 
     state.world = new CANNON.World({
-        gravity: new CANNON.Vec3(0, -980, 0),
+        gravity: new CANNON.Vec3(0, -1470, 0),  // 1.5x 낙하 속도 (기존 -980)
         allowSleep: false   // sleep으로 인한 AI velocity 무시 버그 방지
     });
 
@@ -185,11 +185,12 @@ function animate() {
 
     const now = performance.now();
     const dt = 1 / 60; // Fixed time step
+    const scaledDt = dt * (state.gameSpeed ?? 1);
     if (state.world) {
-        state.world.step(dt);
+        state.world.step(scaledDt);
     }
 
-    updateDogs(dt);
+    updateDogs(scaledDt);
 
     for (let i = explodingBricks.length - 1; i >= 0; i--) {
         const item = explodingBricks[i];

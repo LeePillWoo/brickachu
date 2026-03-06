@@ -1,10 +1,13 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { state, voxelSize } from './state.js';
+import { state, voxelSize, objects } from './state.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
 const MAX_ANIMALS = 10;
+
+// 기본 지면 높이 (바닥 plane 기준)
+const GROUND_BASE_HEIGHT = 80;
 
 // 현재 잡고 있는 동물 참조
 export let grabbedAnimal = null;
@@ -20,21 +23,92 @@ export function clearAllAnimals() {
     grabbedAnimal = null;
 }
 
-// ── 타입별 애니메이션 그룹 매핑 ──
+// ── 지형/천장 계산용 Raycaster ──
+const _groundRaycaster = new THREE.Raycaster();
+const _groundRayDown = new THREE.Vector3(0, -1, 0);
+const _groundRayUp = new THREE.Vector3(0, 1, 0);
+const MAX_GROUND_CHECK_HEIGHT = 5000;
+const RAY_ORIGIN = new THREE.Vector3();
+
+function getBlockObjects() {
+    return objects && state.plane ? objects.filter(o => o !== state.plane) : [];
+}
+
+/** (x, yStart, z)에서 아래 방향(-Y)으로 레이. 블록 윗면 또는 기본 지면(Plane) 감지. 충돌 없으면 defaultY(GROUND_BASE_HEIGHT) 반환 */
+export function getGroundHeightBelow(x, yStart, z, defaultY = GROUND_BASE_HEIGHT) {
+    if (!objects || objects.length === 0) return defaultY;
+    RAY_ORIGIN.set(x, yStart, z);
+    _groundRaycaster.set(RAY_ORIGIN, _groundRayDown);
+    const hits = _groundRaycaster.intersectObjects(objects, false);
+    if (hits.length > 0) {
+        const hit = hits[0];
+        if (hit.object === state.plane) return GROUND_BASE_HEIGHT;
+        return hit.point.y;
+    }
+    return defaultY;
+}
+
+/** (x, yStart, z)에서 위 방향(+Y)으로 레이를 쏴, 가장 먼저 닿는 블록의 아랫면(천장) Y를 반환. 없으면 Infinity */
+export function getCeilingHeightAbove(x, yStart, z) {
+    const blockObjects = getBlockObjects();
+    if (blockObjects.length === 0) return Infinity;
+    RAY_ORIGIN.set(x, yStart, z);
+    _groundRaycaster.set(RAY_ORIGIN, _groundRayUp);
+    const hits = _groundRaycaster.intersectObjects(blockObjects, false);
+    if (hits.length > 0) return hits[0].point.y;
+    return Infinity;
+}
+
+/** 레거시: (x,z) 열에서 가장 위쪽 바닥(위에서 아래로 첫 충돌). getGroundHeightBelow(x, MAX, z)와 동일 */
+export function getGroundHeightAt(x, z, defaultY = GROUND_BASE_HEIGHT) {
+    return getGroundHeightBelow(x, MAX_GROUND_CHECK_HEIGHT, z, defaultY);
+}
+
+export function snapAnimalToGround(animal) {
+    if (!animal || !animal.body || !animal.mesh) return;
+    const halfHeight = animal.heightOffset * (voxelSize / 20);
+    const groundY = getGroundHeightBelow(
+        animal.body.position.x,
+        animal.body.position.y + 1,
+        animal.body.position.z,
+        GROUND_BASE_HEIGHT
+    );
+    const targetY = groundY + halfHeight;
+    animal.body.position.y = targetY;
+    animal.mesh.position.copy(animal.body.position);
+    animal.mesh.position.y -= halfHeight;
+}
+
+// ── 타입별 애니메이션 그룹 / 클릭 액션 매핑 ──
 const ANIM_TYPE = {};
 [
-    ['quadruped', ['dog', 'cat', 'horse', 'lion', 'elephant', 'giraffe', 'pig', 'sheep']],
-    ['waddling', ['penguin', 'snorlax', 'jigglypuff', 'meowth', 'squirtle', 'charmander']],
-    ['hopping', ['rabbit', 'pikachu']],
-    ['crawling', ['snake', 'crocodile', 'turtle']],
+    // 사족보행: 상하 바운스 + 살짝 기울기
+    ['quadruped', ['dog', 'cat', 'sheep', 'horse', 'lion', 'elephant', 'giraffe', 'pig']],
+    // 뒤뚱거림: 좌우 기울기 중심
+    ['waddling', ['pikachu', 'penguin', 'snorlax', 'jigglypuff', 'meowth', 'squirtle', 'charmander']],
+    // 점프: 토끼만 점프 이동
+    ['hopping', ['rabbit']],
+    // 슬라이딩: 뱀/악어/거북이
+    ['sliding', ['snake', 'crocodile', 'turtle']],
+    // 특수: 블롭/디지털 느낌
     ['special', ['porygon', 'ditto', 'diglett']],
 ].forEach(([grp, list]) => list.forEach(name => { ANIM_TYPE[name] = grp; }));
+
+// 그룹별 클릭 액션 타입 매핑
+const CLICK_ACTION_MAP = {
+    quadruped: 'spin',   // 제자리 회전
+    waddling: 'scale',   // 일시적 확대 (통통 튀는 느낌)
+    hopping: 'jump',     // 위로 점프
+    sliding: 'squash',   // 살짝 눌렸다가 복원
+    special: 'pulse',    // 작게 맥동
+};
 
 // 클릭 액션 트리거 (input.js에서 호출)
 export function triggerClickAction(animal) {
     if (animal.clickActionTimer > 0) return; // 이미 진행 중
     animal.clickActionTimer = 0.75;
     animal.clickActionPhase = 0;
+    animal.clickActionType = CLICK_ACTION_MAP[animal.animGroup] || 'spin';
 }
 
 
@@ -349,8 +423,10 @@ export function spawnDog() {
         state.world.addBody(body);
     }
 
-    // Wandering speeds adjusted for larger size
-    const speed = 200 + Math.random() * 200;
+    // Wandering speeds (1.5x 기본): 배회 이동 속도
+    const speed = 300 + Math.random() * 300;
+
+    const animGroup = ANIM_TYPE[type] || 'quadruped';
 
     const animalData = {
         mesh: animalGroup,
@@ -363,12 +439,15 @@ export function spawnDog() {
         grabbed: false,
         // 애니메이션
         animalType: type,
-        animGroup: ANIM_TYPE[type] || 'quadruped',
+        animGroup,
         animTime: 0,
         _animYOffset: 0,
+        baseScale: animalGroup.scale.clone(),
         // 클릭 액션
         clickActionTimer: 0,
         clickActionPhase: 0,
+        clickActionType: CLICK_ACTION_MAP[animGroup] || 'spin',
+        clickBaseRotY: 0,
     };
 
     // 각 파트 mesh에 animalData 역참조 설정 (raycasting 식별용)
@@ -387,10 +466,71 @@ function removeOldestAnimal() {
     }
 }
 
+// 동물 전체 높이 (발바닥~머리, 월드 단위)
+function getAnimalFullHeight(animal) {
+    return animal.heightOffset * (voxelSize / 10); // halfHeight * 2
+}
+
+// 현재 서 있는 바닥 높이 (발 밑 기준으로 정확히 체크)
+function getCurrentStandingGroundY(animal) {
+    const body = animal.body;
+    if (!body) return GROUND_BASE_HEIGHT;
+    const halfHeight = animal.heightOffset * (voxelSize / 20);
+    return getGroundHeightBelow(
+        body.position.x,
+        body.position.y + 0.5,
+        body.position.z,
+        GROUND_BASE_HEIGHT
+    );
+}
+
+// 계단/복층/지붕을 고려해 배회 방향 선택. 경로가 유효하면 전진하도록 방향만 설정.
+function pickWanderDirection(animal) {
+    const body = animal.body;
+    if (!body) return;
+
+    const halfHeight = animal.heightOffset * (voxelSize / 20);
+    const fullHeight = getAnimalFullHeight(animal);
+    const currentGroundY = getCurrentStandingGroundY(animal);
+    const maxStep = voxelSize * 1.5;
+    const sampleDist = voxelSize * 3;
+    const maxAttempts = 16;
+
+    for (let i = 0; i < maxAttempts; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dirX = Math.sin(angle);
+        const dirZ = Math.cos(angle);
+
+        const sampleX = body.position.x + dirX * sampleDist;
+        const sampleZ = body.position.z + dirZ * sampleDist;
+        const sampleYStart = currentGroundY + fullHeight + 1;
+        const newGroundY = getGroundHeightBelow(sampleX, sampleYStart, sampleZ, GROUND_BASE_HEIGHT);
+
+        if (Math.abs(newGroundY - currentGroundY) > maxStep) continue;
+
+        const ceilingY = getCeilingHeightAbove(sampleX, newGroundY + 0.1, sampleZ);
+        const headroom = ceilingY - newGroundY;
+        if (headroom < fullHeight * 0.95) continue;
+
+        animal.targetDir.set(dirX, 0, dirZ).normalize();
+        animal.state = 'walking';
+        animal.timer = 2 + Math.random() * 5;
+        return;
+    }
+
+    const angleFallback = Math.random() * Math.PI * 2;
+    animal.targetDir.set(Math.sin(angleFallback), 0, Math.cos(angleFallback)).normalize();
+    animal.state = 'walking';
+    animal.timer = 1.0 + Math.random() * 2.0;
+}
+
 export function updateDogs(dt) {
     const boardLimit = 1000 - voxelSize * 2;
 
     animals.forEach(animal => {
+        // 공통 애니메이션 시간 누적
+        animal.animTime += dt;
+
         // ── 잡힌 상태: AI·물리 모두 정지 ──
         if (animal.grabbed) {
             if (animal.body) {
@@ -400,12 +540,24 @@ export function updateDogs(dt) {
             return;
         }
 
-        // ── 착지 감지 ──
+        // ── 착지 감지: 현재 위치에서 아래로 레이 쏴 첫 블록 윗면에 안착 ──
         if (animal.state === 'falling') {
-            if (animal.body && Math.abs(animal.body.velocity.y) < 2.0
-                && animal.body.position.y < (animal.heightOffset * (voxelSize / 20) + 80)) {
-                animal.state = 'idle';
-                animal.timer = 0.3 + Math.random() * 0.7; // 착지 직후 짧은 휴식
+            if (animal.body) {
+                const halfHeight = animal.heightOffset * (voxelSize / 20);
+                const groundY = getGroundHeightBelow(
+                    animal.body.position.x,
+                    animal.body.position.y + 0.5,
+                    animal.body.position.z,
+                    GROUND_BASE_HEIGHT
+                );
+                const targetY = groundY + halfHeight;
+                const distY = Math.abs(animal.body.position.y - targetY);
+
+                if (Math.abs(animal.body.velocity.y) < 2.0 && distY < halfHeight * 0.4) {
+                    animal.body.position.y = targetY;
+                    animal.state = 'idle';
+                    animal.timer = 0.3 + Math.random() * 0.7;
+                }
             }
         } else {
             // ── 타이머 카운트다운 ──
@@ -413,11 +565,8 @@ export function updateDogs(dt) {
 
             if (animal.timer <= 0) {
                 if (animal.state === 'idle') {
-                    // 휴식 끝 → 새 목적지로 이동 시작
-                    const angle = Math.random() * Math.PI * 2;
-                    animal.targetDir.set(Math.sin(angle), 0, Math.cos(angle)).normalize();
-                    animal.state = 'walking';
-                    animal.timer = 2 + Math.random() * 5;
+                    // 휴식 끝 → 새 목적지로 이동 시작 (현재 층 기준으로 유효한 방향 선택)
+                    pickWanderDirection(animal);
                 } else {
                     // 이동 끝 → 짧은 휴식 후 다시 이동
                     animal.state = 'idle';
@@ -426,22 +575,33 @@ export function updateDogs(dt) {
             }
         }
 
-        // ── 경계 반사 & 속도 적용 ──
+        // ── 경계 반사 & 속도 적용. 경로가 유효하면 전진, 막히면 idle로 전환해 새 방향 선택 (제자리 회전 방지) ──
         if (animal.state === 'walking' && animal.body) {
             const predictX = animal.body.position.x + animal.targetDir.x * animal.speed * 0.5;
             const predictZ = animal.body.position.z + animal.targetDir.z * animal.speed * 0.5;
+            const halfHeight = animal.heightOffset * (voxelSize / 20);
+            const fullHeight = getAnimalFullHeight(animal);
+            const currentGroundY = getCurrentStandingGroundY(animal);
+            const nextGroundY = getGroundHeightBelow(predictX, currentGroundY + fullHeight, predictZ, GROUND_BASE_HEIGHT);
+            const maxStep = voxelSize * 1.5;
 
-            if (predictX > boardLimit || predictX < -boardLimit) {
-                animal.targetDir.x *= -1;
+            let blockForward = false;
+            if (predictX > boardLimit || predictX < -boardLimit) blockForward = true;
+            if (predictZ > boardLimit || predictZ < -boardLimit) blockForward = true;
+            if (Math.abs(nextGroundY - currentGroundY) > maxStep) blockForward = true;
+            const nextCeilingY = getCeilingHeightAbove(predictX, nextGroundY + 0.1, predictZ);
+            if (nextCeilingY - nextGroundY < fullHeight * 0.95) blockForward = true;
+
+            if (blockForward) {
+                animal.state = 'idle';
+                animal.timer = 0.2 + Math.random() * 0.3;
+                animal.body.velocity.x = 0;
+                animal.body.velocity.z = 0;
+            } else {
+                animal.body.velocity.x = animal.targetDir.x * animal.speed;
+                animal.body.velocity.z = animal.targetDir.z * animal.speed;
+                animal.mesh.rotation.y = Math.atan2(animal.targetDir.x, animal.targetDir.z);
             }
-            if (predictZ > boardLimit || predictZ < -boardLimit) {
-                animal.targetDir.z *= -1;
-            }
-
-            animal.body.velocity.x = animal.targetDir.x * animal.speed;
-            animal.body.velocity.z = animal.targetDir.z * animal.speed;
-            animal.mesh.rotation.y = Math.atan2(animal.targetDir.x, animal.targetDir.z);
-
         } else if (animal.state === 'idle' && animal.body) {
             animal.body.velocity.x = 0;
             animal.body.velocity.z = 0;
@@ -451,6 +611,117 @@ export function updateDogs(dt) {
         if (animal.body) {
             animal.mesh.position.copy(animal.body.position);
             animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));
+        }
+
+        // ── 이동 타입별 루프 애니메이션 (Math.sin 기반) ──
+        const baseY = animal.mesh.position.y;
+        const t = animal.animTime;
+        const baseScale = animal.baseScale;
+
+        let yOffset = 0;
+        let sideTilt = 0;
+
+        switch (animal.animGroup) {
+            case 'quadruped':
+                // 살짝 상하 바운스 + 좌우 기울기
+                yOffset = Math.sin(t * 8) * 4;
+                sideTilt = Math.sin(t * 6) * 0.08;
+                break;
+            case 'waddling':
+                // 뒤뚱거림: 좌우 롤 중심
+                sideTilt = Math.sin(t * 4) * 0.25;
+                break;
+            case 'hopping':
+                // 토끼: 걷는 동안만 통통 튀는 점프
+                if (animal.state === 'walking') {
+                    const hop = Math.abs(Math.sin(t * 6));
+                    yOffset = hop * 18;
+                }
+                break;
+            case 'sliding':
+                // 슬라이딩: 거의 붙어서 살짝 흔들림만
+                yOffset = Math.sin(t * 3) * 2;
+                break;
+            case 'special':
+                // 특수: 살짝 떠오르며 회전
+                yOffset = Math.sin(t * 2) * 6;
+                animal.mesh.rotation.y += dt * 0.6;
+                break;
+        }
+
+        animal.mesh.position.y = baseY + yOffset;
+        if (sideTilt !== 0) {
+            animal.mesh.rotation.z = sideTilt;
+        }
+
+        // ── 클릭 액션 오버레이 ──
+        if (animal.clickActionTimer > 0) {
+            animal.clickActionTimer -= dt;
+            const duration = 0.75;
+            const remaining = Math.max(animal.clickActionTimer, 0);
+            const progress = 1 - remaining / duration; // 0 → 1
+
+            switch (animal.clickActionType) {
+                case 'spin': {
+                    // 제자리 회전 (한 바퀴)
+                    if (animal.clickActionPhase === 0) {
+                        animal.clickBaseRotY = animal.mesh.rotation.y;
+                        animal.clickActionPhase = 1;
+                    }
+                    animal.mesh.rotation.y = animal.clickBaseRotY + progress * Math.PI * 2;
+                    break;
+                }
+                case 'scale': {
+                    // 통통 튀는 확대/축소
+                    const s = 1 + Math.sin(progress * Math.PI) * 0.4;
+                    animal.mesh.scale.set(
+                        baseScale.x * s,
+                        baseScale.y * s,
+                        baseScale.z * s,
+                    );
+                    break;
+                }
+                case 'jump': {
+                    // 위로 한 번 점프
+                    if (animal.clickActionPhase === 0) {
+                        animal.clickActionPhase = 1;
+                        if (animal.body) {
+                            animal.body.velocity.y = 350;
+                        }
+                    }
+                    break;
+                }
+                case 'squash': {
+                    // 아래로 눌렸다가 복원
+                    const squash = 1 + Math.sin(progress * Math.PI) * 0.3;
+                    animal.mesh.scale.set(
+                        baseScale.x * squash,
+                        baseScale.y / squash,
+                        baseScale.z * squash,
+                    );
+                    break;
+                }
+                case 'pulse': {
+                    // 작게 펄스
+                    const p = 1 + Math.sin(progress * Math.PI * 2) * 0.25;
+                    animal.mesh.scale.set(
+                        baseScale.x * p,
+                        baseScale.y * p,
+                        baseScale.z * p,
+                    );
+                    break;
+                }
+            }
+
+            if (animal.clickActionTimer <= 0) {
+                animal.clickActionTimer = 0;
+                animal.clickActionPhase = 0;
+                // 스케일/회전 원복
+                animal.mesh.scale.copy(baseScale);
+            }
+        } else {
+            // 클릭 액션이 없을 때는 기본 스케일 유지
+            animal.mesh.scale.copy(baseScale);
         }
     });
 }
