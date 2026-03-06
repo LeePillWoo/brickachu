@@ -2,6 +2,17 @@ import * as THREE from 'three';
 import { state, objects, voxelSize, materials } from './state.js';
 import { applyActionState, placeVoxel, removeVoxel } from './scene.js';
 import { frameCamera } from './camera.js';
+import { animals, setGrabbedAnimal } from './entities.js';
+
+// 동물 잡기 상태
+let _grabbedAnimal = null;
+let _grabHoldTimer = null;       // 꺼 누름 직전 예약 타이머
+const GRAB_HOLD_MS = 350;        // 구 누르는 시간 (ms)
+
+// 마우스 위치 평면 투영 (y=const 평면으로 커서 방향 변환)
+const _grabPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const _grabIntersect = new THREE.Vector3();
+const GRAB_HOVER_HEIGHT = 120; // 공중 부양 높이 (units)
 
 
 export function onKeyDown(event) {
@@ -41,6 +52,19 @@ export function onWindowResize() {
 export function onPointerMove(event) {
     state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
     state.raycaster.setFromCamera(state.pointer, state.camera);
+
+    // 잡힌 동물 이동 시 코드 (grab 중에는 블록 조작 안 됨)
+    if (_grabbedAnimal) {
+        _grabPlane.constant = -GRAB_HOVER_HEIGHT;
+        state.raycaster.ray.intersectPlane(_grabPlane, _grabIntersect);
+        _grabbedAnimal.mesh.position.set(_grabIntersect.x, GRAB_HOVER_HEIGHT, _grabIntersect.z);
+        if (_grabbedAnimal.body) {
+            _grabbedAnimal.body.position.set(_grabIntersect.x, GRAB_HOVER_HEIGHT, _grabIntersect.z);
+            _grabbedAnimal.body.velocity.set(0, 0, 0);
+        }
+        return;
+    }
+
     const intersects = state.raycaster.intersectObjects(objects, false);
 
     if (intersects.length > 0) {
@@ -92,6 +116,25 @@ export function onPointerDown(event) {
     if (event.button === 0 && !event.target.closest('#ui-layer')) {
         state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
         state.raycaster.setFromCamera(state.pointer, state.camera);
+
+        // 동물 잡기: 동물 파트에 레이쾐스팅, GRAB_HOLD_MS 후 잡기 시작
+        const allAnimalMeshes = animals.flatMap(a => [...a.mesh.children]);
+        const animalHits = state.raycaster.intersectObjects(allAnimalMeshes, false);
+        if (animalHits.length > 0) {
+            const hitAnimal = animalHits[0].object.userData.animalRef;
+            if (hitAnimal) {
+                _grabHoldTimer = setTimeout(() => {
+                    _grabbedAnimal = hitAnimal;
+                    _grabbedAnimal.grabbed = true;
+                    setGrabbedAnimal(_grabbedAnimal);
+                    // 블록 드래그 취소
+                    state.isDraggingBuild = false;
+                    state.isDraggingRemove = false;
+                }, GRAB_HOLD_MS);
+                return; // 동물 누름 중에는 블록 조작 안 시작
+            }
+        }
+
         const intersects = state.raycaster.intersectObjects(objects, false);
 
         if (state.isAddMode) {
@@ -116,6 +159,24 @@ export function onPointerDown(event) {
 }
 
 export function onPointerUp(event) {
+    // 잡기 예약 타이머 취소 (꺼 누르지 않고 떼면 그냥 클릭으로 처리)
+    if (_grabHoldTimer) {
+        clearTimeout(_grabHoldTimer);
+        _grabHoldTimer = null;
+    }
+
+    // 잡힘 동물 놓기: 다시 물리 적용
+    if (_grabbedAnimal) {
+        _grabbedAnimal.grabbed = false;
+        _grabbedAnimal.state = 'falling';
+        if (_grabbedAnimal.body) {
+            _grabbedAnimal.body.wakeUp();
+        }
+        setGrabbedAnimal(null);
+        _grabbedAnimal = null;
+        return; // 놓을 때는 블록 조작 불필요
+    }
+
     if (event.button === 0) {
         if (state.previewGroup.children.length > 0) {
             state.previewGroup.children.forEach(child => {

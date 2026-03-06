@@ -6,6 +6,20 @@ export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
 const MAX_ANIMALS = 10;
 
+// 현재 잡고 있는 동물 참조
+export let grabbedAnimal = null;
+export function setGrabbedAnimal(a) { grabbedAnimal = a; }
+
+// 모든 동물 제거
+export function clearAllAnimals() {
+    while (animals.length > 0) {
+        const animal = animals.pop();
+        if (animal.mesh) state.scene.remove(animal.mesh);
+        if (animal.body && state.world) state.world.removeBody(animal.body);
+    }
+    grabbedAnimal = null;
+}
+
 function getRandomColor() {
     const r = Math.floor(Math.random() * 200 + 55);
     const g = Math.floor(Math.random() * 200 + 55);
@@ -44,6 +58,8 @@ export function spawnDog() {
         mesh.position.set(x * u, y * u, z * u);
         mesh.castShadow = true;
         mesh.receiveShadow = true;
+        // raycasting으로 동물을 식별하기 위한 태깅 (나중에 animalData 연결)
+        mesh.userData.isAnimalPart = true;
         animalGroup.add(mesh);
         return mesh;
     }
@@ -321,8 +337,14 @@ export function spawnDog() {
         timer: 1.0,
         targetDir: new THREE.Vector3(),
         speed: speed,
-        heightOffset: heightOffset
+        heightOffset: heightOffset,
+        grabbed: false
     };
+
+    // 각 파트 mesh에 animalData 역참조 설정 (raycasting 식별용)
+    animalGroup.children.forEach(child => {
+        child.userData.animalRef = animalData;
+    });
 
     animals.push(animalData);
 }
@@ -336,9 +358,18 @@ function removeOldestAnimal() {
 }
 
 export function updateDogs(dt) {
-    const boardLimit = 1000 - voxelSize * 2; // more generous margin
+    const boardLimit = 1000 - voxelSize * 2;
 
     animals.forEach(animal => {
+        // 잡힌 상태: AI 및 물리 정지, mesh 위치는 input.js에서 직접 제어
+        if (animal.grabbed) {
+            if (animal.body) {
+                animal.body.velocity.set(0, 0, 0);
+                animal.body.angularVelocity.set(0, 0, 0);
+            }
+            return;
+        }
+
         if (animal.state === 'falling') {
             if (animal.body && Math.abs(animal.body.velocity.y) < 1.0 && animal.body.position.y < 80) {
                 animal.state = 'idle';
@@ -350,33 +381,25 @@ export function updateDogs(dt) {
             if (animal.timer <= 0) {
                 if (animal.state === 'idle') {
                     animal.state = 'walking';
-                    animal.timer = 2 + Math.random() * 6; // Walk 2-8 seconds
+                    animal.timer = 2 + Math.random() * 6;
                     const angle = Math.random() * Math.PI * 2;
                     animal.targetDir.set(Math.sin(angle), 0, Math.cos(angle)).normalize();
                 } else {
                     animal.state = 'idle';
-                    animal.timer = 0.5 + Math.random() * 2; // Short idle 0.5-2.5 secs
+                    animal.timer = 0.5 + Math.random() * 2;
                 }
             }
         }
 
         if (animal.state === 'walking' && animal.body) {
-            let hitBoundary = false;
             const predictX = animal.body.position.x + animal.targetDir.x * animal.speed * 0.5;
             const predictZ = animal.body.position.z + animal.targetDir.z * animal.speed * 0.5;
 
-            if (predictX > boardLimit || predictX < -boardLimit) {
-                animal.targetDir.x *= -1;
-                hitBoundary = true;
-            }
-            if (predictZ > boardLimit || predictZ < -boardLimit) {
-                animal.targetDir.z *= -1;
-                hitBoundary = true;
-            }
+            if (predictX > boardLimit || predictX < -boardLimit) animal.targetDir.x *= -1;
+            if (predictZ > boardLimit || predictZ < -boardLimit) animal.targetDir.z *= -1;
 
             animal.body.velocity.x = animal.targetDir.x * animal.speed;
             animal.body.velocity.z = animal.targetDir.z * animal.speed;
-
             animal.mesh.rotation.y = Math.atan2(animal.targetDir.x, animal.targetDir.z);
 
         } else if (animal.state === 'idle' && animal.body) {
@@ -386,7 +409,7 @@ export function updateDogs(dt) {
 
         if (animal.body) {
             animal.mesh.position.copy(animal.body.position);
-            animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20)); // Anchor to feet
+            animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));
         }
     });
 }

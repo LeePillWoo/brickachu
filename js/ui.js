@@ -2,7 +2,7 @@ import GUI from 'three/addons/libs/lil-gui.module.min.js';
 import { state, guiParams, defaultParams, materials, presetColors, numCustomSlots } from './state.js';
 import { explodeBricks, pushHistory, applyActionState } from './scene.js';
 import { snapPreviewCamera } from './camera.js';
-import { spawnDog } from './entities.js';
+import { spawnDog, clearAllAnimals } from './entities.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -157,6 +157,14 @@ export function setupModeButtons() {
         btnDog.addEventListener('click', (e) => {
             e.stopPropagation();
             spawnDog();
+        });
+    }
+
+    const btnClearAnimals = document.getElementById('btn-clear-animals');
+    if (btnClearAnimals) {
+        btnClearAnimals.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearAllAnimals();
         });
     }
 
