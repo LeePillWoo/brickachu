@@ -20,6 +20,24 @@ export function clearAllAnimals() {
     grabbedAnimal = null;
 }
 
+// ── 타입별 애니메이션 그룹 매핑 ──
+const ANIM_TYPE = {};
+[
+    ['quadruped', ['dog', 'cat', 'horse', 'lion', 'elephant', 'giraffe', 'pig', 'sheep']],
+    ['waddling', ['penguin', 'snorlax', 'jigglypuff', 'meowth', 'squirtle', 'charmander']],
+    ['hopping', ['rabbit', 'pikachu']],
+    ['crawling', ['snake', 'crocodile', 'turtle']],
+    ['special', ['porygon', 'ditto', 'diglett']],
+].forEach(([grp, list]) => list.forEach(name => { ANIM_TYPE[name] = grp; }));
+
+// 클릭 액션 트리거 (input.js에서 호출)
+export function triggerClickAction(animal) {
+    if (animal.clickActionTimer > 0) return; // 이미 진행 중
+    animal.clickActionTimer = 0.75;
+    animal.clickActionPhase = 0;
+}
+
+
 function getRandomColor() {
     const r = Math.floor(Math.random() * 200 + 55);
     const g = Math.floor(Math.random() * 200 + 55);
@@ -342,7 +360,15 @@ export function spawnDog() {
         targetDir: new THREE.Vector3(),
         speed: speed,
         heightOffset: heightOffset,
-        grabbed: false
+        grabbed: false,
+        // 애니메이션
+        animalType: type,
+        animGroup: ANIM_TYPE[type] || 'quadruped',
+        animTime: 0,
+        _animYOffset: 0,
+        // 클릭 액션
+        clickActionTimer: 0,
+        clickActionPhase: 0,
     };
 
     // 각 파트 mesh에 animalData 역참조 설정 (raycasting 식별용)
