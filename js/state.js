@@ -48,6 +48,8 @@ export const state = {
     previewRenderer: null,
     previewScene: null,
     previewObjects: [],
+    groundMaterial: null,   // CANNON 물리 재질: 바닥 & 블록 공용
+    animalMaterial: null,   // CANNON 물리 재질: 동물 전용
     actionHistory: [],
     actionRedoStack: [],
     isRestoringHistory: false,

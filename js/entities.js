@@ -307,20 +307,24 @@ export function spawnDog() {
 
     state.scene.add(animalGroup);
 
-    // Physics Bounding Box updated for bigger size
-    const boxShape = new CANNON.Box(new CANNON.Vec3((24 * u) / 2, (heightOffset * 2 * u) / 2, (40 * u) / 2));
+    // 모델 크기(u = voxelSize/25)에 맞춘 물리 바운딩 박스
+    // 너비: 모델 최대폭 ≈ 24u, 높이: heightOffset*u*2, 깊이: ≈ 40u
+    const hw = (24 * u) / 2;                   // x 반폭
+    const hh = (heightOffset * u);             // y 반높이 (= heightOffset * u)
+    const hd = (40 * u) / 2;                   // z 반깊이
+    const boxShape = new CANNON.Box(new CANNON.Vec3(hw, hh, hd));
 
     const spawnX = (Math.random() - 0.5) * 1600;
     const spawnZ = (Math.random() - 0.5) * 1600;
     const spawnY = 400 + Math.random() * 200;
 
-    // Adjusting weight to keep it stable
     const body = new CANNON.Body({
         mass: 10,
         shape: boxShape,
         position: new CANNON.Vec3(spawnX, spawnY, spawnZ),
-        material: new CANNON.Material(),
-        fixedRotation: true // Keep upright
+        material: state.animalMaterial || new CANNON.Material(),
+        fixedRotation: true,        // 기울어지지 않게
+        linearDamping: 0.95         // 미끄러짐 방지 (이동할 때만 속도 유지)
     });
 
     if (state.world) {
@@ -361,7 +365,7 @@ export function updateDogs(dt) {
     const boardLimit = 1000 - voxelSize * 2;
 
     animals.forEach(animal => {
-        // 잡힌 상태: AI 및 물리 정지, mesh 위치는 input.js에서 직접 제어
+        // ── 잡힌 상태: AI·물리 모두 정지 ──
         if (animal.grabbed) {
             if (animal.body) {
                 animal.body.velocity.set(0, 0, 0);
@@ -370,33 +374,43 @@ export function updateDogs(dt) {
             return;
         }
 
+        // ── 착지 감지 ──
         if (animal.state === 'falling') {
-            if (animal.body && Math.abs(animal.body.velocity.y) < 1.0 && animal.body.position.y < 80) {
+            if (animal.body && Math.abs(animal.body.velocity.y) < 2.0
+                && animal.body.position.y < (animal.heightOffset * (voxelSize / 20) + 80)) {
                 animal.state = 'idle';
-                animal.timer = 0.5;
+                animal.timer = 0.3 + Math.random() * 0.7; // 착지 직후 짧은 휴식
             }
         } else {
+            // ── 타이머 카운트다운 ──
             animal.timer -= dt;
 
             if (animal.timer <= 0) {
                 if (animal.state === 'idle') {
-                    animal.state = 'walking';
-                    animal.timer = 2 + Math.random() * 6;
+                    // 휴식 끝 → 새 목적지로 이동 시작
                     const angle = Math.random() * Math.PI * 2;
                     animal.targetDir.set(Math.sin(angle), 0, Math.cos(angle)).normalize();
+                    animal.state = 'walking';
+                    animal.timer = 2 + Math.random() * 5;
                 } else {
+                    // 이동 끝 → 짧은 휴식 후 다시 이동
                     animal.state = 'idle';
-                    animal.timer = 0.5 + Math.random() * 2;
+                    animal.timer = 0.5 + Math.random() * 1.5;
                 }
             }
         }
 
+        // ── 경계 반사 & 속도 적용 ──
         if (animal.state === 'walking' && animal.body) {
             const predictX = animal.body.position.x + animal.targetDir.x * animal.speed * 0.5;
             const predictZ = animal.body.position.z + animal.targetDir.z * animal.speed * 0.5;
 
-            if (predictX > boardLimit || predictX < -boardLimit) animal.targetDir.x *= -1;
-            if (predictZ > boardLimit || predictZ < -boardLimit) animal.targetDir.z *= -1;
+            if (predictX > boardLimit || predictX < -boardLimit) {
+                animal.targetDir.x *= -1;
+            }
+            if (predictZ > boardLimit || predictZ < -boardLimit) {
+                animal.targetDir.z *= -1;
+            }
 
             animal.body.velocity.x = animal.targetDir.x * animal.speed;
             animal.body.velocity.z = animal.targetDir.z * animal.speed;
@@ -407,6 +421,7 @@ export function updateDogs(dt) {
             animal.body.velocity.z = 0;
         }
 
+        // ── mesh 위치를 body에 동기화 ──
         if (animal.body) {
             animal.mesh.position.copy(animal.body.position);
             animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));

@@ -61,6 +61,19 @@ export function placeVoxel(position, slotOverride = null, skipHistory = false) {
     state.scene.add(voxel);
     objects.push(voxel);
 
+    // 블록에 정적 물리 바디 추가 → 동물이 블록 위에 서거나 부딪힘
+    if (state.world) {
+        const half = voxelSize / 2;
+        const blockBody = new CANNON.Body({
+            type: CANNON.Body.STATIC,
+            shape: new CANNON.Box(new CANNON.Vec3(half, half, half)),
+            material: state.groundMaterial || undefined
+        });
+        blockBody.position.set(position.x, position.y, position.z);
+        state.world.addBody(blockBody);
+        voxel.userData.physicsBody = blockBody;
+    }
+
     // 프리뷰 씬 동기화: MeshBasicMaterial로 동일 위치에 복사본 추가
     if (state.previewScene) {
         const previewMesh = new THREE.Mesh(state.cubeGeo, makePreviewMaterial(targetSlot));
@@ -77,6 +90,12 @@ export function removeVoxel(object) {
     if (object === state.plane) return;
     state.scene.remove(object);
     objects.splice(objects.indexOf(object), 1);
+
+    // 블록 물리 바디 제거
+    if (object.userData.physicsBody && state.world) {
+        state.world.removeBody(object.userData.physicsBody);
+        object.userData.physicsBody = null;
+    }
 
     // 프리뷰 씬 동기화: 대응하는 프리뷰 메시 제거
     if (state.previewScene && object.userData.previewMesh) {
@@ -102,6 +121,11 @@ export function applyActionState(stateStr) {
     const placed = objects.filter(o => o !== state.plane);
     placed.forEach(o => {
         state.scene.remove(o);
+        // undo/redo 시 블록 물리 바디도 제거
+        if (o.userData.physicsBody && state.world) {
+            state.world.removeBody(o.userData.physicsBody);
+            o.userData.physicsBody = null;
+        }
         objects.splice(objects.indexOf(o), 1);
     });
 
@@ -144,6 +168,12 @@ export function explodeBricks() {
     const brickMaterial = new CANNON.Material();
 
     bricks.forEach(brick => {
+        // 폭발 전 정적 물리 바디 먼저 제거
+        if (brick.userData.physicsBody && state.world) {
+            state.world.removeBody(brick.userData.physicsBody);
+            brick.userData.physicsBody = null;
+        }
+
         const body = new CANNON.Body({
             mass: 10, // Mass of individual block
             shape: boxShape,

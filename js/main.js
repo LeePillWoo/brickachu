@@ -34,14 +34,29 @@ function init() {
     objects.push(state.plane);
 
     state.world = new CANNON.World({
-        gravity: new CANNON.Vec3(0, -980, 0), // Realistic feeling gravity for blocks
-        allowSleep: true
+        gravity: new CANNON.Vec3(0, -980, 0),
+        allowSleep: false   // sleep으로 인한 AI velocity 무시 버그 방지
     });
-    const groundMaterial = new CANNON.Material();
+
+    // 공유 물리 재질 등록 (동물↔바닥/블록 충돌에 사용)
+    state.groundMaterial = new CANNON.Material('ground');
+    state.animalMaterial = new CANNON.Material('animal');
+
+    // 바닥-동물 ContactMaterial: 마찰 0.4, 반발 0.1
+    state.world.addContactMaterial(new CANNON.ContactMaterial(
+        state.groundMaterial, state.animalMaterial,
+        { friction: 0.4, restitution: 0.1 }
+    ));
+    // 동물-동물 ContactMaterial: 서로 밀려남
+    state.world.addContactMaterial(new CANNON.ContactMaterial(
+        state.animalMaterial, state.animalMaterial,
+        { friction: 0.3, restitution: 0.2 }
+    ));
+
     const groundBody = new CANNON.Body({
         type: CANNON.Body.STATIC,
         shape: new CANNON.Plane(),
-        material: groundMaterial
+        material: state.groundMaterial
     });
     groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     state.world.addBody(groundBody);
