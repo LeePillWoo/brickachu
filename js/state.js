@@ -46,6 +46,8 @@ export const state = {
     selectedSlotForPopup: null,
     previewCamera: null,
     previewRenderer: null,
+    previewScene: null,
+    previewObjects: [],
     actionHistory: [],
     actionRedoStack: [],
     isRestoringHistory: false,

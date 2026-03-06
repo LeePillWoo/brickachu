@@ -23,22 +23,19 @@ export function frameCamera() {
 }
 
 export function updatePreview() {
-    if (!state.previewRenderer) return;
-    state.rollOverMesh.visible = false;
-    state.plane.visible = false;
-    state.previewRenderer.render(state.scene, state.previewCamera);
-    state.rollOverMesh.visible = true;
-    state.plane.visible = true;
+    if (!state.previewRenderer || !state.previewScene) return;
+    // 프리뷰 전용 씬을 렌더링 (동물/조명/보조 오브젝트 없이 블록만 표시)
+    state.previewRenderer.render(state.previewScene, state.previewCamera);
 }
 
 export function snapPreviewCamera(dir) {
-    const structureObjects = objects.filter(obj => obj !== state.plane);
     const box = new THREE.Box3();
 
-    if (structureObjects.length > 0) {
-        structureObjects.forEach(obj => box.expandByObject(obj));
+    if (state.previewObjects && state.previewObjects.length > 0) {
+        state.previewObjects.forEach(obj => box.expandByObject(obj));
     } else {
-        box.setFromObject(state.plane);
+        // 블록이 없으면 원점 기준 기본 영역 설정
+        box.set(new THREE.Vector3(-100, -100, -100), new THREE.Vector3(100, 100, 100));
     }
 
     const center = new THREE.Vector3();
@@ -74,3 +71,4 @@ export function snapPreviewCamera(dir) {
     state.previewCamera.lookAt(center);
     updatePreview();
 }
+

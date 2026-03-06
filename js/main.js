@@ -153,7 +153,11 @@ function initPreview() {
     state.previewCamera.position.set(500, 500, 500);
     state.previewCamera.lookAt(0, 0, 0);
 
-    state.previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // 프리뷰 전용 씬: 조명 없음 → MeshBasicMaterial로 원색 그대로 표현
+    state.previewScene = new THREE.Scene();
+    state.previewScene.background = new THREE.Color(0x2d2d2d);
+
+    state.previewRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     state.previewRenderer.setPixelRatio(window.devicePixelRatio);
     state.previewRenderer.setSize(width, height);
     state.previewRenderer.domElement.style.width = '100%';
