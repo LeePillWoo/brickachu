@@ -101,31 +101,92 @@ function updatePaletteIcon(slot, hex) {
 }
 
 export function setupModeButtons() {
-    const btnAdd = document.getElementById('btn-add');
-    const btnRemove = document.getElementById('btn-remove');
+    const btnBlock = document.getElementById('btn-add');   // 블록 그룹 루프 버튼
     const btnExplode = document.getElementById('btn-explode');
     const btnRestore = document.getElementById('btn-restore');
     const countdownEl = document.getElementById('countdown-overlay');
+    const btnAnimal = document.getElementById('add-dog-btn'); // 동물 그룹 루프 버튼
+    const btnFood = document.getElementById('btn-food');       // 먹이 그룹 루프 버튼
 
-    const btnFood = document.getElementById('btn-food');
+    // ── 블록 그룹 (add ↔ remove 루프 토글) ──
+    let blockState = 'add'; // 'add' | 'remove'
+    let foodActive = false; // applyBlockState가 foodActive를 참조하므로 먼저 선언
 
-    const setMode = (mode) => {
-        state.currentMode = mode;
-        btnAdd.classList.toggle('active', mode === 'add');
-        btnRemove.classList.toggle('active', mode === 'remove');
-        if (btnFood) btnFood.classList.toggle('active', mode === 'food');
-    };
+    function applyBlockState(s) {
+        blockState = s;
+        state.currentMode = s;
+        if (s === 'add') {
+            btnBlock.textContent = '✏️';
+            btnBlock.title = '블록 추가 (클릭 → 제거 모드)';
+            btnBlock.classList.remove('remove-mode');
+            btnBlock.classList.add('active');
+        } else {
+            btnBlock.textContent = '⬜';
+            btnBlock.title = '블록 제거 (클릭 → 추가 모드)';
+            btnBlock.classList.remove('active');
+            btnBlock.classList.add('remove-mode');
+        }
+        // 먹이 모드 비활성화
+        if (btnFood) {
+            btnFood.classList.remove('active');
+            btnFood.textContent = '🍎';
+            btnFood.title = '먹이 설치 모드';
+            foodActive = false;
+        }
+    }
 
-    btnAdd.addEventListener('pointerdown', (e) => {
+    btnBlock.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
-        setMode('add');
+        if (state.currentMode === 'add' || state.currentMode === 'remove') {
+            applyBlockState(blockState === 'add' ? 'remove' : 'add');
+        } else {
+            applyBlockState('add');
+        }
     });
 
-    btnRemove.addEventListener('pointerdown', (e) => {
-        e.stopPropagation();
-        setMode('remove');
-    });
+    applyBlockState('add'); // 초기값
 
+    // ── 동물 버튼 (단일 클릭 → 스폰) ──
+    if (btnAnimal) {
+        btnAnimal.addEventListener('click', (e) => {
+            e.stopPropagation();
+            spawnDog();
+        });
+    }
+
+    // ── 먹이 버튼 (단일 클릭 → food 모드 토글) ──
+    if (btnFood) {
+        btnFood.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            if (state.currentMode !== 'food') {
+                foodActive = true;
+                state.currentMode = 'food';
+                btnFood.classList.add('active');
+                btnBlock.classList.remove('active', 'remove-mode');
+            } else {
+                foodActive = false;
+                state.currentMode = blockState;
+                btnFood.classList.remove('active');
+                if (blockState === 'add') {
+                    btnBlock.classList.add('active');
+                } else {
+                    btnBlock.classList.add('remove-mode');
+                }
+            }
+        });
+    }
+
+    // ── 통합 지우기 버튼 (동물 + 먹이 모두 제거) ──
+    const btnClearAll = document.getElementById('btn-clear-all');
+    if (btnClearAll) {
+        btnClearAll.addEventListener('click', (e) => {
+            e.stopPropagation();
+            clearAllAnimals();
+            clearAllFood();
+        });
+    }
+
+    // ── 폭발 ──
     let explosionInProgress = false;
     btnExplode.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -153,42 +214,13 @@ export function setupModeButtons() {
         });
     });
 
+    // ── 복원 ──
     btnRestore.addEventListener('click', (e) => {
         e.stopPropagation();
         import('./scene.js').then(m => m.undo());
     });
 
-    const btnDog = document.getElementById('add-dog-btn');
-    if (btnDog) {
-        btnDog.addEventListener('click', (e) => {
-            e.stopPropagation();
-            spawnDog();
-        });
-    }
-
-    const btnClearAnimals = document.getElementById('btn-clear-animals');
-    if (btnClearAnimals) {
-        btnClearAnimals.addEventListener('click', (e) => {
-            e.stopPropagation();
-            clearAllAnimals();
-        });
-    }
-
-    if (btnFood) {
-        btnFood.addEventListener('pointerdown', (e) => {
-            e.stopPropagation();
-            setMode(state.currentMode === 'food' ? 'add' : 'food');
-        });
-    }
-
-    const btnClearFood = document.getElementById('btn-clear-food');
-    if (btnClearFood) {
-        btnClearFood.addEventListener('click', (e) => {
-            e.stopPropagation();
-            clearAllFood();
-        });
-    }
-
+    // ── 게임 속도 ──
     const btnGameSpeed = document.getElementById('btn-game-speed');
     if (btnGameSpeed) {
         const cycle = [1, 2, 3];
@@ -206,7 +238,7 @@ export function setupModeButtons() {
         });
     }
 
-    // Mobile UI Toggles
+    // ── 모바일 팔레트 ──
     const paletteToggle = document.getElementById('mobile-palette-toggle');
     const palettePanel = document.getElementById('palette-panel');
     if (paletteToggle) {
@@ -215,6 +247,7 @@ export function setupModeButtons() {
         });
     }
 
+    // ── 도움말 ──
     const helpBtn = document.getElementById('btn-help');
     const closeHelpBtn = document.getElementById('btn-close-help');
     const instructionsPanel = document.getElementById('instructions');

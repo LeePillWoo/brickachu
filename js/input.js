@@ -183,7 +183,7 @@ export function onPointerDown(event) {
                     addPreviewBlock(state.dragStartPos);
                 }
             }
-        } else {
+        } else if (state.currentMode === 'remove') {
             if (intersects.length > 0 && intersects[0].object !== state.plane) {
                 if (!isSmallScreen) {
                     state.isDraggingRemove = true;

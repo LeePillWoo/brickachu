@@ -82,7 +82,7 @@ export function snapAnimalToGround(animal) {
 function probeAhead(animalPos, direction, groundY, halfHeight) {
     const blockObjects = getBlockObjects();
     if (blockObjects.length === 0) return null;
-    const PROBE_DIST = voxelSize * 2.2;
+    const PROBE_DIST = voxelSize * 3.5;
     // 발 높이 레이 (블록 하단부 감지)
     _aimOrigin.set(animalPos.x, groundY + 2, animalPos.z);
     _aimRay.set(_aimOrigin, direction);
@@ -94,6 +94,33 @@ function probeAhead(animalPos, direction, groundY, halfHeight) {
     const hitsMid = _aimRay.intersectObjects(blockObjects, false);
     if (hitsMid.length > 0 && hitsMid[0].distance < PROBE_DIST) return hitsMid[0];
     return null;
+}
+
+// ── 벽 스택 최상단 Y 반환 (SNEAK 등반 목표 계산) ──
+function getWallTopY(hitPoint, direction) {
+    const blockObjects = getBlockObjects();
+    const checkX = hitPoint.x + direction.x * voxelSize * 0.4;
+    const checkZ = hitPoint.z + direction.z * voxelSize * 0.4;
+    let topY = hitPoint.y;
+    for (const obj of blockObjects) {
+        const dx = Math.abs(obj.position.x - checkX);
+        const dz = Math.abs(obj.position.z - checkZ);
+        if (dx < voxelSize * 0.65 && dz < voxelSize * 0.65) {
+            const top = obj.position.y + voxelSize * 0.5;
+            if (top > topY) topY = top;
+        }
+    }
+    return topY;
+}
+
+// ── 특정 XYZ 근처 블록 반환 (HEAVY 다단 파괴용) ──
+function findBlockAtPos(x, y, z) {
+    const blockObjects = getBlockObjects();
+    return blockObjects.find(obj =>
+        Math.abs(obj.position.x - x) < voxelSize * 0.6 &&
+        Math.abs(obj.position.y - y) < voxelSize * 0.6 &&
+        Math.abs(obj.position.z - z) < voxelSize * 0.6
+    ) || null;
 }
 
 // ── 벽 두께 측정 (히트 포인트에서 direction 방향으로 연속 블록 수 카운트) ──
@@ -135,13 +162,33 @@ function steerAround(animalPos, desiredDir, groundY, halfHeight) {
     return null;
 }
 
-// ── 가장 가까운 먹이 찾기 ──
+// ── 가장 가까운 먹이 찾기 (도달 가능 높이 필터 포함) ──
 function findNearestFood(animal) {
     if (foods.length === 0 || !animal.body) return null;
     let nearest = null;
     let minDist = Infinity;
+
+    const animalGroundY = getGroundHeightBelow(
+        animal.body.position.x, animal.body.position.y + 0.5, animal.body.position.z, GROUND_BASE_HEIGHT
+    );
+
+    // 타입별 도달 가능 최대 높이 (지면 기준)
+    let maxReach;
+    if (animal.animGroup === 'SNEAK') {
+        maxReach = voxelSize * 20;    // 벽 타기 가능 — 매우 높이까지
+    } else if (animal.animGroup === 'HOP') {
+        maxReach = voxelSize * 5;     // 점프 — 약 5블록
+    } else {
+        maxReach = voxelSize * 2;     // 나머지 — 약 2블록 단차
+    }
+
     for (const food of foods) {
         if (food.eaten || food.consumeTimer > 0) continue;
+        if (food.falling) continue; // 낙하 중인 사과는 타겟 불가 (착지 후 재인식)
+        const heightAboveGround = food.position.y - animalGroundY;
+        // 너무 높아서 도달 불가능한 사과 제외
+        if (heightAboveGround > maxReach) continue;
+
         const dx = food.position.x - animal.body.position.x;
         const dz = food.position.z - animal.body.position.z;
         const dist = Math.sqrt(dx * dx + dz * dz);
@@ -639,6 +686,11 @@ export function spawnDog() {
         isEating: false,
         eatTimer: 0,
         jumpCooldown: 0,
+        // SNEAK 벽 타기 필드
+        isClimbing: false,
+        climbTargetY: 0,
+        climbDir: new THREE.Vector3(),
+        climbMeshRotX: 0,
     };
 
     animalGroup.children.forEach(child => { child.userData.animalRef = animalData; });
@@ -677,7 +729,7 @@ function pickWanderDirection(animal) {
         const sampleX = body.position.x + dirX * sampleDist;
         const sampleZ = body.position.z + dirZ * sampleDist;
         const newGroundY = getGroundHeightBelow(sampleX, currentGroundY + fullHeight + 1, sampleZ, GROUND_BASE_HEIGHT);
-        if (Math.abs(newGroundY - currentGroundY) > maxStep) continue;
+        if (newGroundY - currentGroundY > maxStep) continue; // 위로는 제한, 아래로는 허용
         const ceilingY = getCeilingHeightAbove(sampleX, newGroundY + 0.1, sampleZ);
         if (ceilingY - newGroundY < fullHeight * 0.95) continue;
         animal.targetDir.set(dirX, 0, dirZ).normalize();
@@ -721,8 +773,37 @@ export function updateDogs(dt) {
             const groundY = getCurrentStandingGroundY(animal);
             const targetFood = findNearestFood(animal);
 
+            // ── SNEAK 벽 타기 처리 ──
+            if (animal.animGroup === 'SNEAK' && animal.isClimbing && animal.body) {
+                const CLIMB_SPEED = Math.max(animal.speed * 3.0, 1800);
+                // 등반 중에도 더 높은 블록이 있으면 목표 Y 갱신
+                const midY = animal.body.position.y;
+                _aimOrigin.set(animal.body.position.x, midY, animal.body.position.z);
+                _aimRay.set(_aimOrigin, animal.climbDir);
+                const climbCheckHits = _aimRay.intersectObjects(getBlockObjects(), false);
+                if (climbCheckHits.length > 0 && climbCheckHits[0].distance < voxelSize * 3.5) {
+                    const newTarget = getWallTopY(climbCheckHits[0].point, animal.climbDir) + halfHeight + voxelSize * 0.6;
+                    if (newTarget > animal.climbTargetY) animal.climbTargetY = newTarget;
+                }
+
+                if (animal.body.position.y >= animal.climbTargetY) {
+                    // 꼭대기 도달: 계속 전진
+                    animal.isClimbing = false;
+                    animal.body.velocity.x = animal.climbDir.x * animal.speed;
+                    animal.body.velocity.z = animal.climbDir.z * animal.speed;
+                    animal.body.velocity.y = 0;
+                    animal.state = 'walking';
+                } else {
+                    // 벽 타고 올라가는 중 — 충분한 속도로 중력 극복
+                    animal.body.velocity.y = CLIMB_SPEED;
+                    animal.body.velocity.x = animal.climbDir.x * CLIMB_SPEED * 0.35;
+                    animal.body.velocity.z = animal.climbDir.z * CLIMB_SPEED * 0.35;
+                    animal.mesh.rotation.y = Math.atan2(animal.climbDir.x, animal.climbDir.z); // 벽 방향 고정
+                    animal.state = 'walking';
+                }
+            }
             // ── 먹는 중 ──
-            if (animal.isEating) {
+            else if (animal.isEating) {
                 animal.eatTimer -= dt;
                 if (animal.body) { animal.body.velocity.x = 0; animal.body.velocity.z = 0; }
                 if (animal.eatTimer <= 0) {
@@ -736,8 +817,9 @@ export function updateDogs(dt) {
                 const dx = targetFood.position.x - animal.body.position.x;
                 const dz = targetFood.position.z - animal.body.position.z;
                 const dist = Math.sqrt(dx * dx + dz * dz);
+                const heightDiff = Math.abs(targetFood.position.y - animal.body.position.y);
 
-                if (dist < EAT_RADIUS) {
+                if (dist < EAT_RADIUS && heightDiff < voxelSize * 1.5) {
                     // 먹기 시작!
                     if (!targetFood.eaten) {
                         targetFood.eaten = true;
@@ -777,13 +859,26 @@ export function updateDogs(dt) {
 
                             } else if (animal.animGroup === 'HEAVY' &&
                                 animal.jumpCooldown <= 0) {
-                                // HEAVY: 1칸 블록 폭발 파괴 후 관통
+                                // HEAVY: 2단 블록 폭발 파괴 후 관통
                                 explodeBlockHeavy(wallHit.object, desiredDir);
+                                // 바로 위 블록도 파괴
+                                const upper = findBlockAtPos(
+                                    wallHit.object.position.x,
+                                    wallHit.object.position.y + voxelSize,
+                                    wallHit.object.position.z
+                                );
+                                if (upper) explodeBlockHeavy(upper, desiredDir);
                                 state.screenShakeTimer = 0.6;
                                 state.screenShakeIntensity = 36;
                                 animal.jumpCooldown = 1.0;
                                 animal.body.velocity.x = desiredDir.x * animal.speed * 1.2;
                                 animal.body.velocity.z = desiredDir.z * animal.speed * 1.2;
+
+                            } else if (animal.animGroup === 'SNEAK' && !animal.isClimbing) {
+                                // SNEAK: 벽 타기 시작 — 스택 전체 꼭대기까지 목표 설정
+                                animal.climbTargetY = getWallTopY(wallHit.point, desiredDir) + halfHeight + voxelSize * 0.6;
+                                animal.climbDir.copy(desiredDir);
+                                animal.isClimbing = true;
 
                             } else {
                                 // 우회 탐색
@@ -850,23 +945,34 @@ export function updateDogs(dt) {
                                 animal.body.velocity.x = animal.targetDir.x * animal.speed;
                                 animal.body.velocity.z = animal.targetDir.z * animal.speed;
                             } else if (animal.animGroup === 'HEAVY') {
-                                // HEAVY: 블록 폭발 파괴
+                                // HEAVY: 2단 블록 폭발 파괴
                                 explodeBlockHeavy(wHit.object, animal.targetDir);
+                                const wUpper = findBlockAtPos(
+                                    wHit.object.position.x,
+                                    wHit.object.position.y + voxelSize,
+                                    wHit.object.position.z
+                                );
+                                if (wUpper) explodeBlockHeavy(wUpper, animal.targetDir);
                                 state.screenShakeTimer = 0.6;
                                 state.screenShakeIntensity = 36;
                                 animal.jumpCooldown = 1.0;
+                            } else if (animal.animGroup === 'SNEAK' && !animal.isClimbing) {
+                                // SNEAK: 벽 타기 시작 — 스택 전체 꼭대기까지 목표 설정
+                                animal.climbTargetY = getWallTopY(wHit.point, animal.targetDir) + halfHeight + voxelSize * 0.6;
+                                animal.climbDir.copy(animal.targetDir);
+                                animal.isClimbing = true;
                             } else {
                                 blockForward = true; // 넘을 수 없으면 방향 전환
                             }
                         }
                     }
 
-                    if (blockForward) {
+                    if (blockForward && !animal.isClimbing) {
                         animal.state = 'idle';
                         animal.timer = 0.2 + Math.random() * 0.3;
                         animal.body.velocity.x = 0;
                         animal.body.velocity.z = 0;
-                    } else if (animal.body.velocity.y <= 80) {
+                    } else if (animal.body.velocity.y <= 80 && !animal.isClimbing) {
                         // 점프 중이 아닐 때만 수평 속도 덮어씀
                         animal.body.velocity.x = animal.targetDir.x * animal.speed;
                         animal.body.velocity.z = animal.targetDir.z * animal.speed;
@@ -883,6 +989,13 @@ export function updateDogs(dt) {
         if (animal.body) {
             animal.mesh.position.copy(animal.body.position);
             animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));
+        }
+
+        // ── SNEAK 벽 타기 mesh X축 기울기 ──
+        if (animal.animGroup === 'SNEAK' && animal.clickActionTimer <= 0) {
+            const targetRotX = animal.isClimbing ? -Math.PI / 2 : 0;
+            animal.climbMeshRotX += (targetRotX - animal.climbMeshRotX) * Math.min(dt * 12, 1);
+            animal.mesh.rotation.x = animal.climbMeshRotX;
         }
 
         // ── 타입별 루프 애니메이션 ──
@@ -1014,7 +1127,9 @@ export function updateDogs(dt) {
                 animal.clickActionTimer = 0;
                 animal.clickActionPhase = 0;
                 animal.mesh.scale.copy(baseScale);
-                animal.mesh.rotation.x = 0;
+                if (!(animal.animGroup === 'SNEAK' && animal.isClimbing)) {
+                    animal.mesh.rotation.x = 0;
+                }
                 animal.mesh.rotation.z = 0;
             }
         } else {

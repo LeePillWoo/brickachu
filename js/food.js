@@ -1,5 +1,26 @@
 import * as THREE from 'three';
-import { state, voxelSize } from './state.js';
+import { state, voxelSize, objects } from './state.js';
+
+// ── 낙하 물리 상수 ──
+const FOOD_GRAVITY = -980;
+const FOOD_GROUND_BASE = 80;
+const _foodRaycaster = new THREE.Raycaster();
+const _foodRayDown = new THREE.Vector3(0, -1, 0);
+
+function getFoodGroundY(x, fromY, z) {
+    _foodRaycaster.set(new THREE.Vector3(x, fromY, z), _foodRayDown);
+    const meshes = objects.filter(o => o && o.isMesh);
+    if (state.plane) meshes.push(state.plane);
+    const hits = _foodRaycaster.intersectObjects(meshes, false);
+    return hits.length > 0 ? hits[0].point.y : FOOD_GROUND_BASE;
+}
+
+// 외부에서 호출: HEAVY 블록 파괴 시 사과 낙하 트리거
+export function triggerFoodFall(food, bounceVy = 160) {
+    if (!food || food.eaten || food.consumeTimer > 0 || food.falling) return;
+    food.falling = true;
+    food.fallVelocity = bounceVy;
+}
 
 export const foods = [];
 
@@ -63,6 +84,8 @@ export function spawnFood(worldPosition) {
         eaten: false,
         consumeTimer: -1,       // -1 = 멀쩡함, >0 = 사라지는 중
         floatTime: Math.random() * Math.PI * 2,
+        falling: false,         // 낙하 중 여부
+        fallVelocity: 0,        // 수직 속도 (양수=위, 음수=아래)
     };
 
     foods.push(foodData);
@@ -92,9 +115,39 @@ export function updateFoods(dt) {
                 foods.splice(i, 1);
             }
         } else if (!food.eaten) {
-            // 공중에서 살짝 떠다니는 애니메이션
-            food.mesh.position.y = food.position.y + Math.sin(food.floatTime * 2.2) * voxelSize * 0.18;
-            food.mesh.rotation.y += dt * 0.9;
+            if (food.falling) {
+                // ── 낙하 물리 ──
+                food.fallVelocity += FOOD_GRAVITY * dt;
+                food.position.y += food.fallVelocity * dt;
+                food.mesh.position.y = food.position.y;
+                food.mesh.rotation.y += dt * 5;
+                food.mesh.rotation.z += dt * 2.5;
+
+                // 착지 체크
+                const groundY = getFoodGroundY(
+                    food.position.x,
+                    food.position.y + voxelSize,
+                    food.position.z
+                );
+                if (food.position.y <= groundY) {
+                    food.position.y = groundY;
+                    food.mesh.position.y = groundY;
+                    food.mesh.rotation.z = 0;
+                    if (food.fallVelocity < -250) {
+                        // 바운스
+                        food.fallVelocity = Math.abs(food.fallVelocity) * 0.28;
+                    } else {
+                        // 완전 착지
+                        food.falling = false;
+                        food.fallVelocity = 0;
+                        food.floatTime = Math.random() * Math.PI * 2;
+                    }
+                }
+            } else {
+                // 공중에서 살짝 떠다니는 애니메이션
+                food.mesh.position.y = food.position.y + Math.sin(food.floatTime * 2.2) * voxelSize * 0.18;
+                food.mesh.rotation.y += dt * 0.9;
+            }
         }
     }
 }

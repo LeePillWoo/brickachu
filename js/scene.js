@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, guiParams, objects, voxelSize, materials, explodingBricks } from './state.js';
+import { foods, triggerFoodFall } from './food.js';
 
 // 블록 색상으로 MeshBasicMaterial을 만드는 헬퍼
 function makePreviewMaterial(slot) {
@@ -174,6 +175,18 @@ export function explodeBlockHeavy(block, hitDirection) {
         if (idx > -1) state.previewObjects.splice(idx, 1);
     }
     pushHistory();
+
+    // ── 파괴된 블록 위 사과 낙하 트리거 ──
+    const blockTopY = blockPos.y + voxelSize * 0.5;
+    for (const food of foods) {
+        if (food.eaten || food.consumeTimer > 0 || food.falling) continue;
+        const dx = Math.abs(food.position.x - blockPos.x);
+        const dz = Math.abs(food.position.z - blockPos.z);
+        const dy = Math.abs(food.position.y - blockTopY);
+        if (dx <= voxelSize * 0.65 && dz <= voxelSize * 0.65 && dy <= voxelSize * 0.3) {
+            triggerFoodFall(food, 100 + Math.random() * 160);
+        }
+    }
 
     // 파편 8조각 (2×2×2 분할)
     const fragSize = voxelSize * 0.46;

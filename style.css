@@ -257,8 +257,13 @@ body {
     transform: scale(1.05);
 }
 
-.mode-btn#btn-remove.active {
+.mode-btn.remove-mode {
     background-color: #f44336;
+    color: white;
+}
+
+.mode-btn#btn-food.active {
+    background-color: #ff9800;
 }
 
 /* Palette Popup */
