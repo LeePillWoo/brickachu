@@ -1,15 +1,42 @@
 /**
  * sound.js — Web Audio API 기반 절차적 효과음
  * 외부 CDN / 파일 의존성 없음, CORS 이슈 없음
+ * 모바일(iOS Safari 포함) 오디오 언락 지원
  */
 
 let _ctx = null;
+let _unlocked = false;
 
 function getCtx() {
-    if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!_ctx) {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (!Ctor) return null;
+        _ctx = new Ctor();
+    }
     if (_ctx.state === 'suspended') _ctx.resume();
     return _ctx;
 }
+
+/** iOS/Android 브라우저 오디오 언락: 최초 터치 시 무음 버퍼 재생 */
+function _unlockAudio() {
+    if (_unlocked) return;
+    const ac = getCtx();
+    if (!ac) return;
+
+    // 무음 1샘플 버퍼 재생 → 브라우저 오디오 잠금 해제
+    const buf = ac.createBuffer(1, 1, ac.sampleRate);
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.connect(ac.destination);
+    src.start(0);
+
+    ac.resume().then(() => { _unlocked = true; });
+}
+
+// 모든 사용자 제스처 이벤트에 언락 훅 등록
+['touchstart', 'touchend', 'pointerdown', 'click'].forEach(evt => {
+    document.addEventListener(evt, _unlockAudio, { passive: true });
+});
 
 let masterVolume = 0.45;
 
@@ -191,6 +218,8 @@ const SOUNDS = {
  */
 export function playSound(id) {
     if (!SOUNDS[id]) return;
+    // 아직 언락 안 됐으면 재생 시도 자체가 무의미 → 조용히 건너뜀
+    if (_ctx && _ctx.state === 'suspended') return;
     try {
         SOUNDS[id]();
     } catch (_) {
