@@ -6,7 +6,18 @@ import { foods } from './food.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
-const MAX_ANIMALS = 10;
+const MAX_ANIMALS = 20;
+
+export const GROUP_ANIMALS = {
+    all:     ['dog','cat','rabbit','sheep','snake','horse','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','lion','elephant','giraffe','penguin','crocodile','pig','turtle','eevee','vulpix','gengar','psyduck','bulbasaur','slowpoke','marill','togepi','clefairy','wobbuffet'],
+    quad:    ['dog','sheep','horse','lion','giraffe','pig','bulbasaur','squirtle','charmander'],
+    hop:     ['rabbit','pikachu','marill'],
+    sneak:   ['cat','eevee','vulpix','meowth'],
+    heavy:   ['snorlax','elephant','slowpoke','wobbuffet'],
+    waddle:  ['penguin','psyduck','togepi','clefairy','jigglypuff'],
+    sliding: ['snake','crocodile','turtle'],
+    special: ['porygon','ditto','diglett','gengar'],
+};
 
 const GROUND_BASE_HEIGHT = 80;
 const EAT_RADIUS = voxelSize * 1.8;
@@ -348,20 +359,14 @@ function getRandomColor() {
     return (r << 16) | (g << 8) | b;
 }
 
-export function spawnDog() {
+export function spawnDog(group = 'all') {
     if (animals.length >= MAX_ANIMALS) removeOldestAnimal();
 
     const animalGroup = new THREE.Group();
     const u = voxelSize / 25;
 
-    const types = [
-        'dog', 'cat', 'rabbit', 'sheep', 'snake', 'horse', 'pikachu', 'squirtle', 'charmander',
-        'meowth', 'snorlax', 'jigglypuff', 'diglett', 'porygon', 'ditto',
-        'lion', 'elephant', 'giraffe', 'penguin', 'crocodile', 'pig', 'turtle',
-        'eevee', 'vulpix', 'gengar', 'psyduck', 'bulbasaur',
-        'slowpoke', 'marill', 'togepi', 'clefairy', 'wobbuffet',
-    ];
-    const type = types[Math.floor(Math.random() * types.length)];
+    const pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
+    const type = pool[Math.floor(Math.random() * pool.length)];
 
     const baseColor = getRandomColor();
     const secondaryColor = getRandomColor();
@@ -735,7 +740,7 @@ export function spawnDog() {
     state.scene.add(animalGroup);
 
     const hw = (24 * u) / 2;
-    const hh = (heightOffset * u);
+    const hh = heightOffset * (voxelSize / 20); // 메시 오프셋과 동일한 halfHeight로 맞춤
     const hd = (40 * u) / 2;
     const boxShape = new CANNON.Box(new CANNON.Vec3(hw, hh, hd));
 
@@ -856,8 +861,10 @@ export function updateDogs(dt) {
                 const halfHeight = animal.heightOffset * (voxelSize / 20);
                 const groundY = getGroundHeightBelow(animal.body.position.x, animal.body.position.y + 0.5, animal.body.position.z, GROUND_BASE_HEIGHT);
                 const targetY = groundY + halfHeight;
-                if (Math.abs(animal.body.velocity.y) < 2.0 && Math.abs(animal.body.position.y - targetY) < halfHeight * 0.4) {
+                // 고속 배속에서도 안정적으로 착지 감지: 하강 중이고 목표 위치에 충분히 가까우면 스냅
+                if (animal.body.velocity.y <= 0 && Math.abs(animal.body.position.y - targetY) < halfHeight * 0.6) {
                     animal.body.position.y = targetY;
+                    animal.body.velocity.y = 0;
                     animal.state = 'idle';
                     animal.timer = 0.3 + Math.random() * 0.7;
                 }
@@ -1114,25 +1121,25 @@ export function updateDogs(dt) {
                     else { yOffset = Math.abs(Math.sin(t * 3)) * 5; }
                     break;
                 case 'SNEAK':
-                    if (isWalking) { yOffset = Math.sin(t * 7) * 2.5; sideTilt = Math.sin(t * 7) * 0.05; }
+                    if (isWalking) { yOffset = Math.abs(Math.sin(t * 7)) * 2.5; sideTilt = Math.sin(t * 7) * 0.05; }
                     else { sideTilt = Math.sin(t * 1.8) * 0.07; }
                     break;
                 case 'HEAVY':
-                    yOffset = Math.sin(t * 1.8) * 5;
+                    yOffset = Math.abs(Math.sin(t * 1.8)) * 5;
                     sideTilt = Math.sin(t * 1.2) * 0.04;
                     break;
                 case 'quadruped':
-                    yOffset = Math.sin(t * 8) * 4;
+                    yOffset = Math.abs(Math.sin(t * 8)) * 4;
                     sideTilt = Math.sin(t * 6) * 0.08;
                     break;
                 case 'hopping':
                     if (isWalking) yOffset = Math.abs(Math.sin(t * 6)) * 18;
                     break;
                 case 'sliding':
-                    yOffset = Math.sin(t * 3) * 2;
+                    yOffset = Math.abs(Math.sin(t * 3)) * 2;
                     break;
                 case 'special':
-                    yOffset = Math.sin(t * 2) * 6;
+                    yOffset = Math.abs(Math.sin(t * 2)) * 6;
                     animal.mesh.rotation.y += dt * 0.6;
                     break;
             }

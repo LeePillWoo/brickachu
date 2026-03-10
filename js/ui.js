@@ -147,12 +147,115 @@ export function setupModeButtons() {
 
     applyBlockState('add'); // 초기값
 
-    // ── 동물 버튼 (단일 클릭 → 스폰, 기존 동작 유지) ──
-    if (btnAnimal) {
-        btnAnimal.addEventListener('click', (e) => {
+    // ── 동물 버튼: 단일 탭 → 스폰, 0.5초 꾹 → 타입 선택 슬라이드 메뉴 ──
+    const ANIMAL_GROUPS = [
+        { id: 'all',     icon: '🐾', label: '전체' },
+        { id: 'quad',    icon: '🐶', label: '네발' },
+        { id: 'hop',     icon: '🐰', label: '깡충' },
+        { id: 'sneak',   icon: '🐌', label: '벽타기' },
+        { id: 'heavy',   icon: '🐘', label: '육중' },
+        { id: 'waddle',  icon: '🐧', label: '뒤뚱' },
+        { id: 'sliding', icon: '🐍', label: '슬라이딩' },
+        { id: 'special', icon: '✨', label: '특수' },
+    ];
+
+    let selectedAnimalGroup = 'all';
+    let _animalLongPressTimer = null;
+    let _animalLongPressFired = false;
+    let _animalMenuOpen = false;
+
+    // 메뉴 DOM 생성
+    const animalTypeMenu = document.createElement('div');
+    animalTypeMenu.id = 'animal-type-menu';
+    ANIMAL_GROUPS.forEach(g => {
+        const item = document.createElement('div');
+        item.className = 'atm-item' + (g.id === 'all' ? ' atm-selected' : '');
+        item.dataset.group = g.id;
+        item.innerHTML = `<span class="atm-icon">${g.icon}</span><span class="atm-label">${g.label}</span>`;
+        item.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
-            spawnDog();
+            selectAnimalGroup(g.id);
+            closeAnimalMenu();
         });
+        animalTypeMenu.appendChild(item);
+    });
+    document.getElementById('ui-layer').appendChild(animalTypeMenu);
+
+    function selectAnimalGroup(groupId) {
+        selectedAnimalGroup = groupId;
+        const g = ANIMAL_GROUPS.find(x => x.id === groupId);
+        if (g && btnAnimal) {
+            btnAnimal.textContent = g.icon;
+            btnAnimal.title = `동물 소환 [${g.label}] (꾹 누르면 타입 선택)`;
+        }
+        animalTypeMenu.querySelectorAll('.atm-item').forEach(el => {
+            el.classList.toggle('atm-selected', el.dataset.group === groupId);
+        });
+    }
+
+    function openAnimalMenu() {
+        _animalMenuOpen = true;
+        const rect = btnAnimal.getBoundingClientRect();
+        animalTypeMenu.style.display = 'flex';
+        // 버튼 왼쪽에 메뉴 표시 (버튼 그룹이 우측에 있으므로)
+        animalTypeMenu.style.top = `${rect.top}px`;
+        animalTypeMenu.style.left = `${rect.left - 148}px`;
+        requestAnimationFrame(() => animalTypeMenu.classList.add('atm-visible'));
+    }
+
+    function closeAnimalMenu() {
+        _animalMenuOpen = false;
+        animalTypeMenu.classList.remove('atm-visible');
+        setTimeout(() => { if (!_animalMenuOpen) animalTypeMenu.style.display = 'none'; }, 200);
+    }
+
+    if (btnAnimal) {
+        btnAnimal.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            if (e.button !== 0) return;
+            _animalLongPressFired = false;
+            btnAnimal.setPointerCapture(e.pointerId);
+            _animalLongPressTimer = setTimeout(() => {
+                _animalLongPressFired = true;
+                openAnimalMenu();
+            }, 500);
+        });
+
+        btnAnimal.addEventListener('pointermove', (e) => {
+            if (!_animalMenuOpen) return;
+            animalTypeMenu.querySelectorAll('.atm-item').forEach(item => {
+                const r = item.getBoundingClientRect();
+                const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+                item.classList.toggle('atm-hover', over);
+            });
+        });
+
+        btnAnimal.addEventListener('pointerup', (e) => {
+            if (_animalLongPressTimer) { clearTimeout(_animalLongPressTimer); _animalLongPressTimer = null; }
+            if (_animalMenuOpen) {
+                // 드래그 후 메뉴 아이템 위에서 놓으면 해당 타입 선택
+                animalTypeMenu.querySelectorAll('.atm-item').forEach(item => {
+                    const r = item.getBoundingClientRect();
+                    if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+                        selectAnimalGroup(item.dataset.group);
+                    }
+                    item.classList.remove('atm-hover');
+                });
+                closeAnimalMenu();
+                return;
+            }
+            if (_animalLongPressFired) return;
+            if (e.button === 0) spawnDog(selectedAnimalGroup);
+        });
+
+        // 메뉴 외부 클릭 시 닫기
+        document.addEventListener('pointerdown', (e) => {
+            if (_animalMenuOpen && !e.target.closest('#animal-type-menu') && e.target !== btnAnimal) {
+                closeAnimalMenu();
+            }
+        }, true);
+
+        selectAnimalGroup('all'); // 초기 아이콘 및 타이틀 설정
     }
 
     // ── 먹이 버튼 (단일 클릭 → food 모드 토글) ──
@@ -308,7 +411,7 @@ export function setupModeButtons() {
     // ── 게임 속도 ──
     const btnGameSpeed = document.getElementById('btn-game-speed');
     if (btnGameSpeed) {
-        const cycle = [1, 2, 3];
+        const cycle = [1, 2, 3, 4, 5];
         const updateLabel = () => {
             const s = state.gameSpeed || 1;
             btnGameSpeed.textContent = `×${s}`;

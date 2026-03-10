@@ -571,6 +571,68 @@ body {
     100% { outline-color: #f44336; box-shadow: 0 0 8px #f44336; }
 }
 
+/* ── 동물 타입 선택 슬라이드 메뉴 ── */
+#animal-type-menu {
+    position: fixed;
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    background: rgba(18, 18, 28, 0.93);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 6px;
+    z-index: 3500;
+    transform-origin: right center;
+    transform: scale(0.82) translateX(8px);
+    opacity: 0;
+    transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.15s ease;
+    backdrop-filter: blur(10px);
+    min-width: 138px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    pointer-events: auto;
+}
+
+#animal-type-menu.atm-visible {
+    transform: scale(1) translateX(0);
+    opacity: 1;
+}
+
+.atm-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.atm-item:hover,
+.atm-item.atm-hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.atm-item.atm-selected {
+    background: rgba(80, 180, 255, 0.18);
+}
+
+.atm-item.atm-selected .atm-label {
+    color: #88ccff;
+}
+
+.atm-icon {
+    font-size: 17px;
+    line-height: 1;
+}
+
+.atm-label {
+    font-size: 12px;
+    color: #ccc;
+    font-weight: 500;
+}
+
 /* Countdown Overlay */
 #countdown-overlay {
     position: absolute;
