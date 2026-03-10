@@ -88,8 +88,58 @@ export function spawnFood(worldPosition) {
         fallVelocity: 0,        // 수직 속도 (양수=위, 음수=아래)
     };
 
+    foodGroup.children.forEach(child => { child.userData.foodRef = foodData; });
+
     foods.push(foodData);
     return foodData;
+}
+
+// ── 개별 먹이 제거: "뿅" 효과 ──
+export function removeFoodWithEffect(food) {
+    const idx = foods.indexOf(food);
+    if (idx === -1) return;
+    foods.splice(idx, 1);
+
+    const mesh = food.mesh;
+    if (!mesh) return;
+
+    let t = 0;
+    function poof() {
+        t += 0.13;
+        if (t < 0.25) {
+            const s = 1 + t * 1.8;
+            mesh.scale.set(s, s, s);
+            requestAnimationFrame(poof);
+        } else {
+            const s = Math.max(0, 1.45 - (t - 0.25) * 4.8);
+            mesh.scale.set(s, s, s);
+            if (s > 0.01) {
+                requestAnimationFrame(poof);
+            } else {
+                state.scene.remove(mesh);
+            }
+        }
+    }
+    poof();
+}
+
+// ── 전체 먹이 제거: 연기 효과 ──
+export function clearAllFoodWithEffect() {
+    const toRemove = [...foods];
+    foods.length = 0;
+    toRemove.forEach(food => {
+        const mesh = food.mesh;
+        if (!mesh) return;
+        let t = 0;
+        function shrink() {
+            t += 0.14;
+            const s = Math.max(0, 1 - t);
+            mesh.scale.set(s, s, s);
+            if (s > 0.01) { requestAnimationFrame(shrink); }
+            else { state.scene.remove(mesh); }
+        }
+        shrink();
+    });
 }
 
 export function clearAllFood() {

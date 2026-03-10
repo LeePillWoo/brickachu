@@ -73,5 +73,7 @@ export const state = {
     gameSpeed: 1,
     /** HEAVY 동물 클릭 시 화면 흔들림 (초 단위 카운트다운) */
     screenShakeTimer: 0,
-    screenShakeIntensity: 0
+    screenShakeIntensity: 0,
+    /** 동물 버튼 모드: 'spawn' | 'remove' */
+    animalMode: 'spawn'
 };

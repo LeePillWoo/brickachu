@@ -2,8 +2,8 @@ import GUI from 'three/addons/libs/lil-gui.module.min.js';
 import { state, guiParams, defaultParams, materials, presetColors, numCustomSlots } from './state.js';
 import { explodeBricks, pushHistory, applyActionState } from './scene.js';
 import { snapPreviewCamera } from './camera.js';
-import { spawnDog, clearAllAnimals } from './entities.js';
-import { clearAllFood } from './food.js';
+import { spawnDog, clearAllAnimals, removeAllAnimalsWithEffect } from './entities.js';
+import { clearAllFood, clearAllFoodWithEffect } from './food.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -137,6 +137,7 @@ export function setupModeButtons() {
 
     btnBlock.addEventListener('pointerdown', (e) => {
         e.stopPropagation();
+        deactivateClearMode();
         if (state.currentMode === 'add' || state.currentMode === 'remove') {
             applyBlockState(blockState === 'add' ? 'remove' : 'add');
         } else {
@@ -146,7 +147,7 @@ export function setupModeButtons() {
 
     applyBlockState('add'); // 초기값
 
-    // ── 동물 버튼 (단일 클릭 → 스폰) ──
+    // ── 동물 버튼 (단일 클릭 → 스폰, 기존 동작 유지) ──
     if (btnAnimal) {
         btnAnimal.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -158,6 +159,7 @@ export function setupModeButtons() {
     if (btnFood) {
         btnFood.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
+            deactivateClearMode();
             if (state.currentMode !== 'food') {
                 foodActive = true;
                 state.currentMode = 'food';
@@ -176,14 +178,97 @@ export function setupModeButtons() {
         });
     }
 
-    // ── 통합 지우기 버튼 (동물 + 먹이 모두 제거) ──
+    // ── 통합 제거 버튼 (클릭 → 제거 모드 토글 / 2초 누름 → 전체 삭제) ──
     const btnClearAll = document.getElementById('btn-clear-all');
+    let _clearLongPressTimer = null;
+    let _clearLongPressFired = false;
+
+    // 제거 모드 해제 (다른 버튼 활성화 시 호출)
+    function deactivateClearMode() {
+        if (state.animalMode !== 'remove') return;
+        state.animalMode = 'spawn';
+        if (_clearLongPressTimer) { clearTimeout(_clearLongPressTimer); _clearLongPressTimer = null; }
+        if (btnClearAll) {
+            btnClearAll.classList.remove('remove-mode', 'longpress-active');
+            btnClearAll.title = '동물/먹이 개별 제거 (2초 누름: 전체 삭제)';
+        }
+    }
+
+    function applyClearMode(active) {
+        state.animalMode = active ? 'remove' : 'spawn';
+        if (active) {
+            btnClearAll.classList.add('remove-mode');
+            btnClearAll.title = '제거 모드 활성 | 동물/먹이 클릭으로 개별 제거 | 2초 누름 → 전체 삭제';
+            // 먹이 모드 비활성화
+            if (btnFood) {
+                btnFood.classList.remove('active');
+                btnFood.textContent = '🍎';
+                btnFood.title = '먹이 설치 모드';
+                foodActive = false;
+            }
+            // 블록 버튼 시각적 비활성화 (blockState는 유지, currentMode는 복원)
+            state.currentMode = blockState;
+            btnBlock.classList.remove('active', 'remove-mode');
+        } else {
+            btnClearAll.classList.remove('remove-mode', 'longpress-active');
+            btnClearAll.title = '동물/먹이 개별 제거 (2초 누름: 전체 삭제)';
+            // 블록 버튼 상태 복원
+            if (blockState === 'add') {
+                btnBlock.classList.add('active');
+                btnBlock.classList.remove('remove-mode');
+            } else {
+                btnBlock.classList.add('remove-mode');
+                btnBlock.classList.remove('active');
+            }
+        }
+    }
+
+    function showClearFlash() {
+        const prev = document.getElementById('animal-clear-toast');
+        if (prev) prev.remove();
+        const toast = document.createElement('div');
+        toast.id = 'animal-clear-toast';
+        toast.innerHTML = '<span>🧹 전체 삭제 완료!</span>';
+        document.getElementById('ui-layer').appendChild(toast);
+        setTimeout(() => { if (toast.parentNode) toast.remove(); }, 1500);
+    }
+
     if (btnClearAll) {
-        btnClearAll.addEventListener('click', (e) => {
+        btnClearAll.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
-            clearAllAnimals();
-            clearAllFood();
+            _clearLongPressFired = false;
+            if (e.button !== 0) return;
+
+            btnClearAll.setPointerCapture(e.pointerId); // 버튼 밖으로 나가도 pointerup 수신
+            btnClearAll.classList.add('longpress-active');
+            _clearLongPressTimer = setTimeout(() => {
+                _clearLongPressFired = true;
+                btnClearAll.classList.remove('longpress-active');
+                removeAllAnimalsWithEffect();
+                clearAllFoodWithEffect();
+                applyClearMode(false);
+                showClearFlash();
+            }, 2000);
         });
+
+        btnClearAll.addEventListener('pointerup', (e) => {
+            if (_clearLongPressTimer) { clearTimeout(_clearLongPressTimer); _clearLongPressTimer = null; }
+            btnClearAll.classList.remove('longpress-active');
+            if (_clearLongPressFired) return;
+
+            if (e.button === 0) {
+                applyClearMode(state.animalMode !== 'remove');
+            }
+        });
+
+        btnClearAll.addEventListener('pointerleave', () => {
+            // 타이머는 취소하지 않음 — 2초 홀드 중 버튼 밖으로 나가도 자동 실행됨
+            btnClearAll.classList.remove('longpress-active');
+        });
+
+        btnClearAll.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
+
+        applyClearMode(false);
     }
 
     // ── 폭발 ──

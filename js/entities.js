@@ -23,6 +23,100 @@ export function clearAllAnimals() {
     grabbedAnimal = null;
 }
 
+// ── 개별 제거: "뿅" 스케일 팝 → 축소 → 삭제 ──
+export function removeAnimalWithEffect(animal) {
+    const idx = animals.indexOf(animal);
+    if (idx === -1) return;
+    animals.splice(idx, 1);
+    if (animal.body && state.world) state.world.removeBody(animal.body);
+
+    let t = 0;
+    const mesh = animal.mesh;
+    if (!mesh) return;
+
+    function poof() {
+        t += 0.13;
+        if (t < 0.25) {
+            const s = 1 + t * 1.8;
+            mesh.scale.set(s, s, s);
+            requestAnimationFrame(poof);
+        } else {
+            const s = Math.max(0, 1.45 - (t - 0.25) * 4.8);
+            mesh.scale.set(s, s, s);
+            if (s > 0.01) {
+                requestAnimationFrame(poof);
+            } else {
+                state.scene.remove(mesh);
+            }
+        }
+    }
+    poof();
+}
+
+// ── 연기 파티클 헬퍼 ──
+function _createSmokePoof(position) {
+    const geo = new THREE.SphereGeometry(voxelSize * 0.28, 5, 5);
+    const particles = [];
+    for (let i = 0; i < 10; i++) {
+        const mat = new THREE.MeshBasicMaterial({ color: 0xbbbbbb, transparent: true, opacity: 0.85 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.copy(position);
+        state.scene.add(mesh);
+        particles.push({
+            mesh,
+            vel: new THREE.Vector3(
+                (Math.random() - 0.5) * 200,
+                Math.random() * 200 + 60,
+                (Math.random() - 0.5) * 200
+            ),
+            life: 1.0
+        });
+    }
+    function animateSmoke() {
+        let alive = false;
+        for (const p of particles) {
+            p.life -= 0.034;
+            if (p.life <= 0) { state.scene.remove(p.mesh); continue; }
+            alive = true;
+            p.mesh.position.addScaledVector(p.vel, 0.016);
+            p.vel.y -= 55 * 0.016;
+            const s = p.life * 2.6;
+            p.mesh.scale.set(s, s, s);
+            p.mesh.material.opacity = p.life * 0.8;
+        }
+        if (alive) requestAnimationFrame(animateSmoke);
+    }
+    animateSmoke();
+}
+
+// ── 전체 제거: 연기 파티클 + 축소 애니메이션 ──
+export function removeAllAnimalsWithEffect() {
+    const toRemove = [...animals];
+    animals.length = 0;
+    grabbedAnimal = null;
+
+    toRemove.forEach(animal => {
+        if (animal.body && state.world) state.world.removeBody(animal.body);
+        const mesh = animal.mesh;
+        if (!mesh) return;
+
+        _createSmokePoof(mesh.position.clone());
+
+        let t = 0;
+        function shrink() {
+            t += 0.14;
+            const s = Math.max(0, 1 - t);
+            mesh.scale.set(s, s, s);
+            if (s > 0.01) {
+                requestAnimationFrame(shrink);
+            } else {
+                state.scene.remove(mesh);
+            }
+        }
+        shrink();
+    });
+}
+
 // ── 지형/천장 계산용 Raycaster ──
 const _groundRaycaster = new THREE.Raycaster();
 const _groundRayDown = new THREE.Vector3(0, -1, 0);

@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { state, objects, voxelSize, materials } from './state.js';
 import { applyActionState, placeVoxel, removeVoxel } from './scene.js';
 import { frameCamera } from './camera.js';
-import { animals, setGrabbedAnimal, triggerClickAction, getGroundHeightAt, getGroundHeightBelow, snapAnimalToGround } from './entities.js';
-import { spawnFood, showFoodGhost, hideFoodGhost } from './food.js';
+import { animals, setGrabbedAnimal, triggerClickAction, getGroundHeightAt, getGroundHeightBelow, snapAnimalToGround, removeAnimalWithEffect } from './entities.js';
+import { foods, spawnFood, showFoodGhost, hideFoodGhost, removeFoodWithEffect } from './food.js';
 
 // 동물 잡기 상태
 let _grabbedAnimal = null;
@@ -85,6 +85,13 @@ export function onPointerMove(event) {
             _grabbedAnimal.body.position.set(posX, hoverY, posZ);
             _grabbedAnimal.body.velocity.set(0, 0, 0);
         }
+        return;
+    }
+
+    // 제거 모드: 위치 표시 프리뷰 숨김
+    if (state.animalMode === 'remove') {
+        hideFoodGhost();
+        state.targetGuideOpacity = 0;
         return;
     }
 
@@ -240,19 +247,35 @@ export function onPointerUp(event) {
         state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
         state.raycaster.setFromCamera(state.pointer, state.camera);
 
-        // ── 1) 동물 우선 클릭 처리 ──
+        // ── 1) 제거 모드: 동물 / 먹이 개별 제거 우선 처리 ──
+        if (state.animalMode === 'remove') {
+            const allAnimalMeshes = animals.flatMap(a => [...a.mesh.children]);
+            const animalHits = state.raycaster.intersectObjects(allAnimalMeshes, false);
+            if (animalHits.length > 0) {
+                const hitAnimal = animalHits[0].object.userData.animalRef;
+                if (hitAnimal) { removeAnimalWithEffect(hitAnimal); return; }
+            }
+            const allFoodMeshes = foods.flatMap(f => [...f.mesh.children]);
+            const foodHits = state.raycaster.intersectObjects(allFoodMeshes, false);
+            if (foodHits.length > 0) {
+                const hitFood = foodHits[0].object.userData.foodRef;
+                if (hitFood) { removeFoodWithEffect(hitFood); return; }
+            }
+            return; // 제거 모드에서는 블록 조작 생략
+        }
+
+        // ── 2) 일반 모드: 동물 클릭 액션 ──
         const allAnimalMeshes = animals.flatMap(a => [...a.mesh.children]);
         const animalHits = state.raycaster.intersectObjects(allAnimalMeshes, false);
         if (animalHits.length > 0) {
             const hitAnimal = animalHits[0].object.userData.animalRef;
             if (hitAnimal) {
                 triggerClickAction(hitAnimal);
-                // 동물 인터랙션이 발생하면 이 클릭으로는 블록 설치/제거를 하지 않음
                 return;
             }
         }
 
-        // ── 2) 동물이 아니면 모드별 처리 ──
+        // ── 3) 동물이 아니면 모드별 처리 ──
         const intersects = state.raycaster.intersectObjects(objects, false);
 
         if (intersects.length > 0) {
