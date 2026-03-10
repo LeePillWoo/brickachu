@@ -155,8 +155,8 @@ export function setupModeButtons() {
         { id: 'sneak',   icon: '🐌', label: '벽타기' },
         { id: 'heavy',   icon: '🐘', label: '육중' },
         { id: 'waddle',  icon: '🐧', label: '뒤뚱' },
-        { id: 'sliding', icon: '🐍', label: '슬라이딩' },
-        { id: 'special', icon: '✨', label: '특수' },
+        { id: 'carnivore', icon: '🦁', label: '육식' },
+        { id: 'special',   icon: '✨', label: '특수' },
     ];
 
     let selectedAnimalGroup = 'all';
@@ -411,7 +411,7 @@ export function setupModeButtons() {
     // ── 게임 속도 ──
     const btnGameSpeed = document.getElementById('btn-game-speed');
     if (btnGameSpeed) {
-        const cycle = [1, 2, 3, 4, 5];
+        const cycle = [1, 2, 3];
         const updateLabel = () => {
             const s = state.gameSpeed || 1;
             btnGameSpeed.textContent = `×${s}`;

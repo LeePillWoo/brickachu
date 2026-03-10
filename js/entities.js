@@ -9,14 +9,14 @@ export const dogs = animals; // Aliased for backwards compatibility in main.js
 const MAX_ANIMALS = 20;
 
 export const GROUP_ANIMALS = {
-    all:     ['dog','cat','rabbit','sheep','snake','horse','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','lion','elephant','giraffe','penguin','crocodile','pig','turtle','eevee','vulpix','gengar','psyduck','bulbasaur','slowpoke','marill','togepi','clefairy','wobbuffet'],
-    quad:    ['dog','sheep','horse','lion','giraffe','pig','bulbasaur','squirtle','charmander'],
-    hop:     ['rabbit','pikachu','marill'],
-    sneak:   ['cat','eevee','vulpix','meowth'],
-    heavy:   ['snorlax','elephant','slowpoke','wobbuffet'],
-    waddle:  ['penguin','psyduck','togepi','clefairy','jigglypuff'],
-    sliding: ['snake','crocodile','turtle'],
-    special: ['porygon','ditto','diglett','gengar'],
+    all:        ['dog','cat','rabbit','sheep','snake','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','elephant','penguin','pig','turtle','eevee','gengar','psyduck','bulbasaur','slowpoke','togepi','clefairy','wobbuffet','grasshopper','frog','snail','lizard','lion','crocodile','bear'],
+    quad:       ['dog','cat','sheep','pig','bulbasaur','squirtle','charmander'],
+    hop:        ['rabbit','pikachu','eevee','grasshopper','frog'],
+    sneak:      ['snake','turtle','snail','lizard'],
+    heavy:      ['snorlax','elephant','slowpoke','wobbuffet'],
+    waddle:     ['penguin','psyduck','togepi','clefairy','jigglypuff','meowth'],
+    special:    ['porygon','ditto','diglett','gengar'],
+    carnivore:  ['lion','crocodile','bear'],
 };
 
 const GROUND_BASE_HEIGHT = 80;
@@ -305,12 +305,12 @@ function findNearestFood(animal) {
 // ── 애니메이션 그룹 매핑 ──
 const ANIM_TYPE = {};
 [
-    ['WADDLE',    ['penguin', 'psyduck', 'togepi', 'clefairy', 'jigglypuff']],
-    ['HOP',       ['rabbit', 'pikachu', 'marill']],
-    ['SNEAK',     ['cat', 'eevee', 'vulpix', 'meowth']],
+    ['WADDLE',    ['penguin', 'psyduck', 'togepi', 'clefairy', 'jigglypuff', 'meowth']],
+    ['HOP',       ['rabbit', 'pikachu', 'eevee', 'grasshopper', 'frog']],
+    ['SNEAK',     ['snake', 'turtle', 'snail', 'lizard', 'crocodile']],
     ['HEAVY',     ['snorlax', 'elephant', 'slowpoke', 'wobbuffet']],
-    ['quadruped', ['dog', 'sheep', 'horse', 'lion', 'giraffe', 'pig', 'bulbasaur', 'squirtle', 'charmander']],
-    ['sliding',   ['snake', 'crocodile', 'turtle']],
+    ['quadruped', ['dog', 'cat', 'sheep', 'pig', 'bulbasaur', 'squirtle', 'charmander']],
+    ['CARNIVORE', ['lion', 'bear']],
     ['special',   ['porygon', 'ditto', 'diglett', 'gengar']],
 ].forEach(([grp, list]) => list.forEach(name => { ANIM_TYPE[name] = grp; }));
 
@@ -320,7 +320,7 @@ const CLICK_ACTION_MAP = {
     SNEAK:     'dash',
     HEAVY:     'groundShake',
     quadruped: 'spin',
-    sliding:   'squash',
+    CARNIVORE: 'spin',
     special:   'pulse',
 };
 
@@ -340,9 +340,12 @@ const SPEED_MULT = {
     SNEAK:     1.1,
     HOP:       1.25,
     quadruped: 1.0,
-    sliding:   0.8,
+    CARNIVORE: 1.3,
     special:   0.9,
 };
+
+const FLEE_RADIUS = voxelSize * 6;
+const MAX_CARNIVORES = 4;
 
 export function triggerClickAction(animal) {
     if (animal.clickActionTimer > 0) return;
@@ -365,7 +368,13 @@ export function spawnDog(group = 'all') {
     const animalGroup = new THREE.Group();
     const u = voxelSize / 25;
 
-    const pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
+    let pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
+    // 육식동물이 이미 최대치면 풀에서 제외
+    const carnivoreCount = animals.filter(a => a.isCarnivore).length;
+    if (carnivoreCount >= MAX_CARNIVORES) {
+        pool = pool.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
+        if (pool.length === 0) pool = GROUP_ANIMALS.all.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
+    }
     const type = pool[Math.floor(Math.random() * pool.length)];
 
     const baseColor = getRandomColor();
@@ -735,6 +744,101 @@ export function spawnDog(group = 'all') {
         addPart(8, 8, 12, 0, 8, -12, dblue); addPart(8, 8, 8, 0, 8, -20, dblue);
         addPart(4, 2, 1, -2, 10, -24, blackMat); addPart(4, 2, 1, 2, 10, -24, blackMat);
         addPart(5, 2, 1, 0, 8, -24, blackMat);
+
+    // ── 신규: 점프 그룹 ──
+    } else if (type === 'kangaroo') {
+        heightOffset = 28;
+        const tan = new THREE.MeshPhysicalMaterial({ color: 0xc8933c, roughness: 0.8 });
+        const light = new THREE.MeshPhysicalMaterial({ color: 0xe8c080, roughness: 0.7 });
+        addPart(16, 20, 16, 0, 18, 0, tan);          // 몸통
+        addPart(14, 16, 12, 0, 36, 4, tan);          // 상체
+        addPart(12, 12, 12, 0, 50, 6, tan);          // 머리
+        addPart(2, 2, 2, -4, 54, 12, blackMat); addPart(2, 2, 2, 4, 54, 12, blackMat); // 눈
+        addPart(4, 12, 4, -4, 62, 6, tan); addPart(4, 12, 4, 4, 62, 6, tan); // 귀
+        addPart(6, 14, 4, -10, 38, 2, tan); addPart(6, 14, 4, 10, 38, 2, tan); // 팔
+        addPart(6, 16, 6, -7, 3, 4, tan); addPart(6, 16, 6, 7, 3, 4, tan);   // 뒷다리
+        addPart(4, 6, 12, -6, 1, -10, tan); addPart(4, 6, 12, 6, 1, -10, tan); // 발
+        addPart(6, 4, 24, 0, 16, -18, light);        // 꼬리 (육아낭 느낌)
+
+    } else if (type === 'grasshopper') {
+        heightOffset = 12;
+        const green = new THREE.MeshPhysicalMaterial({ color: 0x4caf50, roughness: 0.7 });
+        const dgreen = new THREE.MeshPhysicalMaterial({ color: 0x2e7d32, roughness: 0.8 });
+        addPart(10, 8, 28, 0, 8, 0, green);          // 몸통
+        addPart(8, 8, 10, 0, 14, 18, green);         // 머리
+        addPart(2, 2, 2, -3, 18, 22, blackMat); addPart(2, 2, 2, 3, 18, 22, blackMat); // 눈
+        addPart(1, 1, 16, -4, 20, 14, dgreen); addPart(1, 1, 16, 4, 20, 14, dgreen);   // 더듬이
+        addPart(4, 14, 4, -6, 3, 4, dgreen); addPart(4, 14, 4, 6, 3, 4, dgreen);       // 도약 뒷다리
+        addPart(4, 8, 4, -5, 3, -4, green); addPart(4, 8, 4, 5, 3, -4, green);         // 앞다리
+
+    } else if (type === 'frog') {
+        heightOffset = 10;
+        const fgreen = new THREE.MeshPhysicalMaterial({ color: 0x66bb6a, roughness: 0.6 });
+        const belly = new THREE.MeshPhysicalMaterial({ color: 0xc8e6c9, roughness: 0.5 });
+        addPart(20, 12, 20, 0, 8, 0, fgreen);        // 몸통
+        addPart(14, 6, 8, 0, 12, -2, belly);         // 배
+        addPart(18, 12, 16, 0, 18, 8, fgreen);       // 머리
+        addPart(6, 6, 4, -8, 24, 10, fgreen); addPart(6, 6, 4, 8, 24, 10, fgreen); // 눈 볼록
+        addPart(2, 2, 2, -8, 26, 13, blackMat); addPart(2, 2, 2, 8, 26, 13, blackMat); // 눈
+        addPart(6, 4, 14, -12, 4, -4, fgreen); addPart(6, 4, 14, 12, 4, -4, fgreen);   // 뒷다리
+        addPart(8, 3, 6, -14, 3, -14, fgreen); addPart(8, 3, 6, 14, 3, -14, fgreen);   // 발
+
+    // ── 신규: 벽타기 그룹 ──
+    } else if (type === 'snail') {
+        heightOffset = 10;
+        const shellMat = new THREE.MeshPhysicalMaterial({ color: 0xa0522d, roughness: 0.6 });
+        const bodyMat  = new THREE.MeshPhysicalMaterial({ color: 0xd4a843, roughness: 0.5 });
+        addPart(12, 6, 24, 0, 4, 0, bodyMat);        // 몸통
+        addPart(10, 8, 10, 0, 10, 4, bodyMat);       // 머리
+        addPart(2, 8, 2, -3, 18, 8, bodyMat); addPart(2, 8, 2, 3, 18, 8, bodyMat); // 더듬이
+        addPart(2, 2, 2, -3, 26, 8, blackMat); addPart(2, 2, 2, 3, 26, 8, blackMat); // 눈
+        addPart(16, 14, 18, 0, 12, -6, shellMat);    // 껍데기 하단
+        addPart(12, 10, 14, 0, 20, -8, shellMat);    // 껍데기 중단
+        addPart(8, 6, 10, 0, 28, -8, matAcc);        // 껍데기 상단 강조
+
+    } else if (type === 'lizard') {
+        heightOffset = 8;
+        const liz = new THREE.MeshPhysicalMaterial({ color: 0x8bc34a, roughness: 0.7 });
+        const dliz = new THREE.MeshPhysicalMaterial({ color: 0x558b2f, roughness: 0.8 });
+        addPart(10, 6, 36, 0, 4, 0, liz);            // 몸통
+        addPart(12, 8, 12, 0, 8, 20, liz);           // 머리
+        addPart(2, 2, 2, -4, 12, 25, blackMat); addPart(2, 2, 2, 4, 12, 25, blackMat); // 눈
+        addPart(2, 2, 16, 0, 4, -26, dliz);          // 꼬리
+        addPart(4, 4, 4, -7, 4, 12, liz); addPart(4, 4, 4, 7, 4, 12, liz);   // 앞다리
+        addPart(4, 4, 4, -7, 4, -8, liz); addPart(4, 4, 4, 7, 4, -8, liz);   // 뒷다리
+
+    // ── 신규: 육식동물 그룹 ──
+    } else if (type === 'lion') {
+        heightOffset = 24;
+        const gold = new THREE.MeshPhysicalMaterial({ color: 0xe8a820, roughness: 0.7 });
+        const mane = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
+        const tan  = new THREE.MeshPhysicalMaterial({ color: 0xf5c842, roughness: 0.6 });
+        addPart(22, 18, 38, 0, 20, 0, gold);         // 몸통
+        addPart(20, 20, 20, 0, 28, 26, mane);        // 갈기
+        addPart(14, 14, 14, 0, 34, 34, gold);        // 머리
+        addPart(2, 2, 2, -4, 36, 40, blackMat); addPart(2, 2, 2, 4, 36, 40, blackMat); // 눈
+        addPart(4, 4, 2, 0, 32, 42, tan);            // 코
+        const tail = addPart(4, 24, 4, 0, 22, -20, gold); tail.rotation.x = -Math.PI / 5;
+        addPart(6, 6, 6, 0, 18, -38, mane);         // 꼬리 끝 솜
+        addPart(6, 16, 6, -8, 6, 12, gold); addPart(6, 16, 6, 8, 6, 12, gold);   // 앞다리
+        addPart(6, 16, 6, -8, 6, -12, gold); addPart(6, 16, 6, 8, 6, -12, gold); // 뒷다리
+
+    } else if (type === 'bear') {
+        heightOffset = 30;
+        const brn  = new THREE.MeshPhysicalMaterial({ color: 0x6b3a1f, roughness: 0.9 });
+        const lbrn = new THREE.MeshPhysicalMaterial({ color: 0xa0602a, roughness: 0.8 });
+        // 2족 보행: 몸통 직립
+        addPart(22, 28, 18, 0, 26, 0, brn);          // 몸통 (직립)
+        addPart(16, 8, 12, 0, 22, 0, lbrn);          // 배
+        addPart(20, 18, 18, 0, 52, 2, brn);          // 머리
+        addPart(10, 6, 6, 0, 46, 10, lbrn);         // 주둥이
+        addPart(2, 2, 2, -5, 54, 11, blackMat); addPart(2, 2, 2, 5, 54, 11, blackMat); // 눈
+        addPart(6, 6, 4, -8, 62, 2, brn); addPart(6, 6, 4, 8, 62, 2, brn); // 귀
+        // 팔 (옆으로 뻗음)
+        const lArm = addPart(8, 22, 8, -18, 36, 0, brn); lArm.rotation.z =  Math.PI / 6;
+        const rArm = addPart(8, 22, 8,  18, 36, 0, brn); rArm.rotation.z = -Math.PI / 6;
+        // 뒷다리 (직립)
+        addPart(8, 22, 8, -7, 6, 0, brn); addPart(8, 22, 8, 7, 6, 0, brn);
     }
 
     state.scene.add(animalGroup);
@@ -785,6 +889,8 @@ export function spawnDog(group = 'all') {
         isEating: false,
         eatTimer: 0,
         jumpCooldown: 0,
+        // 육식동물 여부
+        isCarnivore: (animGroup === 'CARNIVORE' || type === 'crocodile'),
         // SNEAK 벽 타기 필드
         isClimbing: false,
         climbTargetY: 0,
@@ -874,8 +980,24 @@ export function updateDogs(dt) {
             const groundY = getCurrentStandingGroundY(animal);
             const targetFood = findNearestFood(animal);
 
-            // ── SNEAK 벽 타기 처리 ──
-            if (animal.animGroup === 'SNEAK' && animal.isClimbing && animal.body) {
+            // ── 육식동물 도주 방향 계산 ──
+            let fleeDir = null;
+            if (!animal.isCarnivore && animal.body) {
+                for (const pred of animals) {
+                    if (!pred.isCarnivore || pred.grabbed || !pred.body) continue;
+                    const fdx = animal.body.position.x - pred.body.position.x;
+                    const fdz = animal.body.position.z - pred.body.position.z;
+                    const dist2 = fdx * fdx + fdz * fdz;
+                    if (dist2 < FLEE_RADIUS * FLEE_RADIUS && dist2 > 1) {
+                        const d = Math.sqrt(dist2);
+                        fleeDir = new THREE.Vector3(fdx / d, 0, fdz / d);
+                        break;
+                    }
+                }
+            }
+
+            // ── SNEAK / sliding 벽 타기 처리 ──
+            if ((animal.animGroup === 'SNEAK' || animal.animGroup === 'sliding') && animal.isClimbing && animal.body) {
                 const CLIMB_SPEED = Math.max(animal.speed * 3.0, 1800);
                 // 등반 중에도 더 높은 블록이 있으면 목표 Y 갱신
                 const midY = animal.body.position.y;
@@ -890,6 +1012,7 @@ export function updateDogs(dt) {
                 if (animal.body.position.y >= animal.climbTargetY) {
                     // 꼭대기 도달: 계속 전진
                     animal.isClimbing = false;
+                    animal.jumpCooldown = 0.8; // 즉시 재등반 방지
                     animal.body.velocity.x = animal.climbDir.x * animal.speed;
                     animal.body.velocity.z = animal.climbDir.z * animal.speed;
                     animal.body.velocity.y = 0;
@@ -912,6 +1035,14 @@ export function updateDogs(dt) {
                     animal.state = 'idle';
                     animal.timer = 1.0 + Math.random() * 1.0;
                 }
+            }
+            // ── 육식동물 도주 AI ──
+            else if (fleeDir && animal.clickActionTimer <= 0) {
+                animal.body.velocity.x = fleeDir.x * animal.speed * 1.8;
+                animal.body.velocity.z = fleeDir.z * animal.speed * 1.8;
+                animal.mesh.rotation.y = Math.atan2(fleeDir.x, fleeDir.z);
+                animal.state = 'walking';
+                animal.timer = 1.2;
             }
             // ── 먹이 추적 AI ──
             else if (targetFood && animal.clickActionTimer <= 0) {
@@ -975,8 +1106,8 @@ export function updateDogs(dt) {
                                 animal.body.velocity.x = desiredDir.x * animal.speed * 1.2;
                                 animal.body.velocity.z = desiredDir.z * animal.speed * 1.2;
 
-                            } else if (animal.animGroup === 'SNEAK' && !animal.isClimbing) {
-                                // SNEAK: 벽 타기 시작 — 스택 전체 꼭대기까지 목표 설정
+                            } else if ((animal.animGroup === 'SNEAK' || animal.animGroup === 'sliding') && !animal.isClimbing && animal.jumpCooldown <= 0) {
+                                // SNEAK / sliding: 벽 타기 시작 — 스택 전체 꼭대기까지 목표 설정
                                 animal.climbTargetY = getWallTopY(wallHit.point, desiredDir) + halfHeight + voxelSize * 0.6;
                                 animal.climbDir.copy(desiredDir);
                                 animal.isClimbing = true;
@@ -1057,8 +1188,8 @@ export function updateDogs(dt) {
                                 state.screenShakeTimer = 0.6;
                                 state.screenShakeIntensity = 36;
                                 animal.jumpCooldown = 1.0;
-                            } else if (animal.animGroup === 'SNEAK' && !animal.isClimbing) {
-                                // SNEAK: 벽 타기 시작 — 스택 전체 꼭대기까지 목표 설정
+                            } else if ((animal.animGroup === 'SNEAK' || animal.animGroup === 'sliding') && !animal.isClimbing) {
+                                // SNEAK / sliding: 벽 타기 시작 — 스택 전체 꼭대기까지 목표 설정
                                 animal.climbTargetY = getWallTopY(wHit.point, animal.targetDir) + halfHeight + voxelSize * 0.6;
                                 animal.climbDir.copy(animal.targetDir);
                                 animal.isClimbing = true;
@@ -1132,11 +1263,12 @@ export function updateDogs(dt) {
                     yOffset = Math.abs(Math.sin(t * 8)) * 4;
                     sideTilt = Math.sin(t * 6) * 0.08;
                     break;
+                case 'CARNIVORE':
+                    yOffset = Math.abs(Math.sin(t * 7)) * 5;
+                    sideTilt = Math.sin(t * 5) * 0.1;
+                    break;
                 case 'hopping':
                     if (isWalking) yOffset = Math.abs(Math.sin(t * 6)) * 18;
-                    break;
-                case 'sliding':
-                    yOffset = Math.abs(Math.sin(t * 3)) * 2;
                     break;
                 case 'special':
                     yOffset = Math.abs(Math.sin(t * 2)) * 6;
