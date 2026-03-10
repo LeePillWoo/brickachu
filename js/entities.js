@@ -3,13 +3,14 @@ import * as CANNON from 'cannon-es';
 import { state, voxelSize, objects } from './state.js';
 import { removeVoxel, explodeBlockHeavy } from './scene.js';
 import { foods } from './food.js';
+import { playSound } from './sound.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
 const MAX_ANIMALS = 20;
 
 export const GROUP_ANIMALS = {
-    all:        ['dog','cat','rabbit','sheep','snake','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','elephant','penguin','pig','turtle','eevee','gengar','psyduck','bulbasaur','slowpoke','togepi','clefairy','wobbuffet','grasshopper','frog','snail','lizard','lion','crocodile','bear'],
+    all:        ['dog','cat','rabbit','sheep','snake','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','elephant','penguin','pig','turtle','eevee','gengar','psyduck','bulbasaur','slowpoke','togepi','clefairy','wobbuffet','grasshopper','frog','snail','lizard','lion','crocodile','bear','lion','crocodile','bear'],
     quad:       ['dog','cat','sheep','pig','bulbasaur','squirtle','charmander'],
     hop:        ['rabbit','pikachu','eevee','grasshopper','frog'],
     sneak:      ['snake','turtle','snail','lizard'],
@@ -40,6 +41,7 @@ export function removeAnimalWithEffect(animal) {
     if (idx === -1) return;
     animals.splice(idx, 1);
     if (animal.body && state.world) state.world.removeBody(animal.body);
+    playSound('animal-remove');
 
     let t = 0;
     const mesh = animal.mesh;
@@ -351,6 +353,7 @@ export function triggerClickAction(animal) {
     if (animal.clickActionTimer > 0) return;
     const actionType = CLICK_ACTION_MAP[animal.animGroup] || 'spin';
     animal.clickActionTimer = ACTION_DURATION[actionType] || 0.75;
+    playSound('animal-click-' + animal.animGroup);
     animal.clickActionPhase = 0;
     animal.clickActionType = actionType;
 }
@@ -369,9 +372,11 @@ export function spawnDog(group = 'all') {
     const u = voxelSize / 25;
 
     let pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
-    // 육식동물이 이미 최대치면 풀에서 제외
     const carnivoreCount = animals.filter(a => a.isCarnivore).length;
     if (carnivoreCount >= MAX_CARNIVORES) {
+        // 육식동물 전용 버튼으로 호출 시 → 상한선 도달이면 생성 자체 중단
+        if (group === 'carnivore') return;
+        // 랜덤/다른 그룹 → 풀에서 육식동물만 제외하고 계속 진행
         pool = pool.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
         if (pool.length === 0) pool = GROUP_ANIMALS.all.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
     }
@@ -900,6 +905,7 @@ export function spawnDog(group = 'all') {
 
     animalGroup.children.forEach(child => { child.userData.animalRef = animalData; });
     animals.push(animalData);
+    playSound('animal-spawn');
 }
 
 function removeOldestAnimal() {
@@ -1038,11 +1044,15 @@ export function updateDogs(dt) {
             }
             // ── 육식동물 도주 AI ──
             else if (fleeDir && animal.clickActionTimer <= 0) {
-                animal.body.velocity.x = fleeDir.x * animal.speed * 1.8;
-                animal.body.velocity.z = fleeDir.z * animal.speed * 1.8;
+                // targetDir 갱신 → 도주 종료 후에도 자연스럽게 같은 방향 유지
+                animal.targetDir.copy(fleeDir);
+                // 속도 스무딩: 급격한 방향 전환 억제 → 떨림 방지
+                const fleeSpeed = animal.speed * 1.8;
+                animal.body.velocity.x += (fleeDir.x * fleeSpeed - animal.body.velocity.x) * Math.min(dt * 10, 1);
+                animal.body.velocity.z += (fleeDir.z * fleeSpeed - animal.body.velocity.z) * Math.min(dt * 10, 1);
                 animal.mesh.rotation.y = Math.atan2(fleeDir.x, fleeDir.z);
                 animal.state = 'walking';
-                animal.timer = 1.2;
+                animal.timer = 0.8; // 도주 종료 후 0.8초간 같은 방향으로 계속 이동
             }
             // ── 먹이 추적 AI ──
             else if (targetFood && animal.clickActionTimer <= 0) {
@@ -1060,6 +1070,7 @@ export function updateDogs(dt) {
                     animal.isEating = true;
                     animal.eatTimer = 1.2;
                     animal.state = 'idle';
+                    playSound('food-eat');
                     if (animal.body) { animal.body.velocity.x = 0; animal.body.velocity.z = 0; }
                 } else {
                     // 먹이 방향으로 이동

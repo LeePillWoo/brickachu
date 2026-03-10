@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { state, voxelSize, objects } from './state.js';
+import { playSound } from './sound.js';
 
 // ── 낙하 물리 상수 ──
 const FOOD_GRAVITY = -980;
@@ -91,6 +92,7 @@ export function spawnFood(worldPosition) {
     foodGroup.children.forEach(child => { child.userData.foodRef = foodData; });
 
     foods.push(foodData);
+    playSound('food-place');
     return foodData;
 }
 
@@ -99,6 +101,7 @@ export function removeFoodWithEffect(food) {
     const idx = foods.indexOf(food);
     if (idx === -1) return;
     foods.splice(idx, 1);
+    playSound('food-remove');
 
     const mesh = food.mesh;
     if (!mesh) return;

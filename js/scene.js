@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, guiParams, objects, voxelSize, materials, explodingBricks } from './state.js';
 import { foods, triggerFoodFall } from './food.js';
+import { playSound } from './sound.js';
 
 // 블록 색상으로 MeshBasicMaterial을 만드는 헬퍼
 function makePreviewMaterial(slot) {
@@ -85,6 +86,7 @@ export function placeVoxel(position, slotOverride = null, skipHistory = false) {
     }
 
     if (!skipHistory) pushHistory();
+    playSound('block-place');
 }
 
 export function removeVoxel(object) {
@@ -106,6 +108,7 @@ export function removeVoxel(object) {
     }
 
     if (!state.isDraggingRemove) pushHistory();
+    playSound('block-remove');
 }
 
 export function applyActionState(stateStr) {
@@ -249,6 +252,7 @@ export function explodeBricks() {
     if (bricks.length === 0) return;
 
     pushHistory();
+    playSound('explode');
 
     const center = new THREE.Vector3();
     bricks.forEach(b => center.add(b.position));
