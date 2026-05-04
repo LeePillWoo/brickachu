@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(powershell -ExecutionPolicy Bypass -File \"f:\\\\Project_Test_Nano-Craft_01\\\\notify.ps1\")"
-    ]
-  }
-}
