@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ko">
 
 <head>
 
@@ -16,8 +16,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="google-site-verification" content="AAY_Ed7C67JS_OyycN1wxyuyhCtgRy6GQ-HVwro6nd4" />
-    <title>3D Nanoblock Game (Pikachu Edition)</title>
-    <link rel="stylesheet" href="style.css?v=4">
+    <title>브릭카츄 · 말랑한 블록 놀이터</title>
+    <link rel="stylesheet" href="style.css?v=6">
     <!-- Import map for Three.js -->
     <script type="importmap">
         {
@@ -40,7 +40,7 @@
     <div id="ui-layer">
         <button id="mobile-palette-toggle" class="mobile-only">🎨</button>
         <div id="preview-panel">
-            <h3>3D Preview</h3>
+            <h3>내 블록 미리보기</h3>
             <div id="preview-container"></div>
             <div id="snap-controls">
                 <div class="snap-row">
@@ -60,30 +60,72 @@
             </div>
         </div>
         <div id="palette-panel">
-            <h3>Colors (Right-click to edit)</h3>
+            <h3>블록 색깔 <small>우클릭으로 바꾸기</small></h3>
             <!-- Generated dynamically -->
         </div>
         <div id="edit-mode-panel">
             <button class="mode-btn active" id="btn-add" title="블록 추가 (클릭 → 제거 모드)">✏️</button>
-            <button class="mode-btn" id="btn-explode" title="Explode">💣</button>
+            <button class="mode-btn" id="btn-explode" title="블록과 친구들 모두 날리기">💣</button>
             <button class="mode-btn" id="btn-restore" title="Restore">↻</button>
             <button class="mode-btn" id="add-dog-btn" title="동물 스폰">🐾</button>
-            <button class="mode-btn" id="btn-food" title="먹이 설치 모드 (클릭으로 토글)">🍎</button>
+            <button class="mode-btn toy-tool" id="btn-eyes" title="눈 붙이기 · 블록을 살아나게 해요" aria-label="눈 붙이기" aria-pressed="false">👀</button>
+            <button class="mode-btn toy-tool" id="btn-food" title="간식 실험실" aria-label="간식 실험실" aria-pressed="false">🍎</button>
             <button class="mode-btn" id="btn-clear-all" title="동물+먹이 모두 제거">🧹</button>
             <button class="mode-btn" id="btn-game-speed" title="배속 (x1 → x2 → x3 → x1)">×1</button>
             <button id="btn-help">?</button>
         </div>
+        <aside id="toy-dock" aria-label="새로운 놀이">
+            <div class="toy-dock-heading">
+                <span class="toy-spark" aria-hidden="true">✦</span>
+                <div><span class="toy-eyebrow">상상대로, 말랑말랑</span><h2>오늘은 뭐 하고 놀까?</h2></div>
+            </div>
+            <div class="toy-choices">
+                <button class="toy-choice toy-choice-eyes" id="toy-choose-eyes">
+                    <span class="toy-choice-icon" aria-hidden="true">👀</span>
+                    <span><strong>눈 붙이기</strong><small>블록이 친구가 돼요</small></span>
+                </button>
+                <button class="toy-choice toy-choice-snack" id="toy-choose-snack">
+                    <span class="toy-choice-icon" aria-hidden="true">🍎</span>
+                    <span><strong>간식 실험실</strong><small>골라 먹이면 변신!</small></span>
+                </button>
+            </div>
+            <div class="toy-panel-header" hidden>
+                <strong id="toy-panel-label"></strong>
+                <button id="toy-panel-close" aria-label="놀이 패널 닫기" title="놀이 패널 닫기">×</button>
+            </div>
+            <section id="eyes-panel" class="toy-mode-panel" hidden aria-labelledby="eyes-panel-title">
+                <div class="eyes-recipe" aria-hidden="true"><span>🧱</span><b>＋</b><span>👀</span><b>＝</b><span>💛</span></div>
+                <h3 id="eyes-panel-title">블록 덩어리에 눈을 붙여봐!</h3>
+                <p>만든 블록을 콕 누르면<br>폴짝폴짝, 나만의 친구가 돼요.</p>
+                <button id="btn-toy-starter" class="toy-starter" hidden>🧱 작은 블록부터 만들기</button>
+                <small class="toy-hint">친구를 다시 누르면 반응해요.</small>
+            </section>
+            <section id="snack-panel" class="toy-mode-panel" hidden aria-labelledby="snack-panel-title">
+                <div class="snack-panel-heading"><h3 id="snack-panel-title">어떤 간식을 줄까?</h3><span id="snack-selection-count">하나 선택</span></div>
+                <p class="snack-intro">먹일 간식 하나를 골라봐요.</p>
+                <div id="snack-ingredients" aria-label="간식 재료"></div>
+                <div id="snack-recipe" aria-live="polite">
+                    <span id="snack-recipe-icon" aria-hidden="true">🍎</span>
+                    <div><strong id="snack-recipe-name">사과</strong><p id="snack-recipe-description">친구들이 좋아하는 달콤한 간식.</p></div>
+                </div>
+                <button id="snack-reset" class="snack-reset" title="평범한 사과를 먹으면 변신이 풀려요">🍎 원래대로</button>
+                <p class="snack-howto"><b>친구 콕: 먹이기</b> · 바닥 콕: 놓기</p>
+            </section>
+        </aside>
+        <div id="toy-notice" role="status" aria-live="polite"></div>
         <div id="countdown-overlay"></div>
         <div id="instructions" class="popup-style">
             <div id="instructions-header">
-                <strong>Controls & Shortcuts</strong>
+                <strong>놀이터 사용법</strong>
                 <button id="btn-close-help">×</button>
             </div>
-            <p><strong>Orbit:</strong> Right-drag / Alt + Left-drag</p>
-            <p><strong>Build Path:</strong> Left-drag (Desktop)</p>
-            <p><strong>Single Tap:</strong> Build on Grid/Block (Mobile)</p>
-            <p><strong>Palette:</strong> Right-click to edit colors</p>
-            <p><strong>Cancel:</strong> ESC key</p>
+            <p><strong>👀 눈 붙이기:</strong> 블록 덩어리를 눌러 친구로 만들어요.</p>
+            <p><strong>🍎 간식 실험실:</strong> 간식 하나를 골라 동물이나 블록 친구에게 먹여요.</p>
+            <p><strong>화면 돌리기:</strong> 우클릭 드래그 / Alt + 왼쪽 드래그</p>
+            <p><strong>블록 잇기:</strong> 왼쪽 드래그 (컴퓨터)</p>
+            <p><strong>블록 놓기:</strong> 바닥이나 블록을 톡 (모바일)</p>
+            <p><strong>색깔 바꾸기:</strong> 팔레트에서 우클릭</p>
+            <p><strong>취소:</strong> ESC 키</p>
         </div>
     </div>
 

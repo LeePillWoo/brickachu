@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, objects, materials, guiParams } from '../js/state.js';
-import { animals, grabbedAnimal } from '../js/entities.js';
+import { animals, grabbedAnimal, clearAllAnimals } from '../js/entities.js';
 import { foods, spawnFood, clearAllFood } from '../js/food.js';
-import { placeVoxel, pushHistory, applyActionState, undo } from '../js/scene.js';
+import { placeVoxel, pushHistory, applyActionState, undo, redo } from '../js/scene.js';
 import { onPointerDown, onPointerUp, onPointerMove, onPointerCancel, onKeyDown, onKeyUp, onWindowResize } from '../js/input.js';
 
 state.scene = new THREE.Scene();
@@ -35,11 +35,11 @@ const click = e => { onPointerDown(e); onPointerUp(e); };
 const count = () => objects.length - 1;
 function reset() {
     onPointerCancel();
-    animals.forEach(a => state.scene.remove(a.mesh));
-    animals.length = 0;
+    clearAllAnimals();
     clearAllFood();
     applyActionState(JSON.stringify({ settings: guiParams, blocks: [] }));
     state.currentMode = 'add';
+    state.snackIngredients = [];
     state.animalMode = 'spawn';
     state.actionHistory.length = 0;
     state.actionRedoStack.length = 0;
@@ -114,5 +114,67 @@ check('cancelled animal hold does not activate later; removed animals are not re
         animals.length = 0; state.scene.remove(mesh); onPointerUp(event());
         assert.equal(a.grabbed, false); assert.equal(grabbedAnimal, null); assert.equal(state.controls.enabled, true);
     } finally { globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout; }
+});
+check('eyes hover and click animate only the connected build with undo and redo', () => {
+    placeVoxel(new THREE.Vector3(25, 25, 25));
+    placeVoxel(new THREE.Vector3(25, 75, 25));
+    placeVoxel(new THREE.Vector3(225, 25, 25));
+    state.currentMode = 'eyes';
+    onPointerMove(event());
+    assert.equal(state.eyesPreview.visible, true);
+    assert.equal(state.eyesPreview.children.length, 2);
+    click(event());
+    assert.equal(count(), 1);
+    assert.equal(animals.length, 1);
+    assert.ok(animals[0].livingId);
+    assert.equal(state.eyesPreview.visible, false);
+    const friend = animals[0];
+    click(event());
+    assert.ok(friend.clickActionTimer > 0, 'a second eyes-mode tap makes the friend react');
+    assert.equal(animals.length, 1);
+    const realSetTimeout = globalThis.setTimeout, realClearTimeout = globalThis.clearTimeout;
+    let hold;
+    globalThis.setTimeout = fn => { hold = fn; return 1; };
+    globalThis.clearTimeout = () => { hold = null; };
+    try {
+        onPointerDown(event());
+        assert.equal(typeof hold, 'function');
+        hold();
+        assert.equal(friend.grabbed, true);
+        assert.equal(state.controls.enabled, false);
+        onPointerUp(event());
+        assert.equal(friend.grabbed, false);
+        assert.equal(state.controls.enabled, true);
+    } finally { globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout; }
+    undo(); assert.equal(count(), 3); assert.equal(animals.length, 0);
+    redo(); assert.equal(count(), 1); assert.equal(animals.length, 1);
+});
+check('eyes cancel and UI gestures leave block creations untouched', () => {
+    placeVoxel(new THREE.Vector3(25, 25, 25));
+    state.currentMode = 'eyes';
+    onPointerDown(event()); onPointerCancel(); onPointerUp(event());
+    click(event(25, 25, { target: input }));
+    click(event(225, 25));
+    assert.equal(count(), 1); assert.equal(animals.length, 0);
+});
+check('snack mode directly feeds a block friend and ordinary apple restores it', () => {
+    placeVoxel(new THREE.Vector3(25, 25, 25));
+    state.currentMode = 'eyes'; click(event());
+    const animal = animals[0];
+    state.currentMode = 'food'; state.snackIngredients = ['balloon', 'jelly'];
+    click(event());
+    assert.deepEqual(animal.magicEffect.ingredients, ['balloon', 'jelly']);
+    assert.equal(animal.grabbed, false); assert.equal(foods.length, 0);
+    state.snackIngredients = []; click(event());
+    assert.ok(!animal.magicEffect);
+    assert.equal(count(), 0);
+});
+check('placed magic snacks keep a copy of the chosen recipe', () => {
+    state.currentMode = 'food'; state.snackIngredients = ['rainbow'];
+    click(event());
+    assert.equal(foods.length, 1);
+    state.snackIngredients.push('jelly');
+    assert.deepEqual(foods[0].ingredients, ['rainbow']);
+    assert.equal(count(), 0);
 });
 console.log(`${passed} input regression cases passed`);

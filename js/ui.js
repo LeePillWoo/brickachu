@@ -5,6 +5,7 @@ import { snapPreviewCamera } from './camera.js';
 import { spawnDog, removeAllAnimalsWithEffect } from './entities.js';
 import { clearAllFoodWithEffect } from './food.js';
 import { onPointerCancel } from './input.js';
+import { setupToyUI } from './toy-ui.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -112,6 +113,8 @@ export function setupModeButtons() {
     const countdownEl = document.getElementById('countdown-overlay');
     const btnAnimal = document.getElementById('add-dog-btn'); // 동물 그룹 루프 버튼
     const btnFood = document.getElementById('btn-food');       // 먹이 그룹 루프 버튼
+    const btnEyes = document.getElementById('btn-eyes');
+    let toyUI = null;
 
     // ── 블록 그룹 (add ↔ remove 루프 토글) ──
     let blockState = 'add'; // 'add' | 'remove'
@@ -134,10 +137,28 @@ export function setupModeButtons() {
         // 먹이 모드 비활성화
         if (btnFood) {
             btnFood.classList.remove('active');
-            btnFood.textContent = '🍎';
-            btnFood.title = '먹이 설치 모드';
         }
+        btnEyes.classList.remove('active');
+        toyUI?.sync();
     }
+
+    function activateToyMode(mode) {
+        onPointerCancel();
+        deactivateClearMode();
+        state.currentMode = mode;
+        btnBlock.classList.remove('active', 'remove-mode');
+        btnFood.classList.toggle('active', mode === 'food');
+        btnEyes.classList.toggle('active', mode === 'eyes');
+        document.getElementById('palette-panel').classList.remove('mobile-open');
+        document.getElementById('toy-dock').classList.remove('palette-obscured');
+        toyUI?.sync();
+    }
+
+    btnEyes.addEventListener('click', e => {
+        e.stopPropagation();
+        if (state.currentMode === 'eyes' && state.animalMode !== 'remove') applyBlockState(blockState);
+        else activateToyMode('eyes');
+    });
 
     btnBlock.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -299,21 +320,8 @@ export function setupModeButtons() {
     if (btnFood) {
         btnFood.addEventListener('click', (e) => {
             e.stopPropagation();
-            onPointerCancel();
-            deactivateClearMode();
-            if (state.currentMode !== 'food') {
-                state.currentMode = 'food';
-                btnFood.classList.add('active');
-                btnBlock.classList.remove('active', 'remove-mode');
-            } else {
-                state.currentMode = blockState;
-                btnFood.classList.remove('active');
-                if (blockState === 'add') {
-                    btnBlock.classList.add('active');
-                } else {
-                    btnBlock.classList.add('remove-mode');
-                }
-            }
+            if (state.currentMode === 'food' && state.animalMode !== 'remove') applyBlockState(blockState);
+            else activateToyMode('food');
         });
     }
 
@@ -350,8 +358,6 @@ export function setupModeButtons() {
             // 먹이 모드 비활성화
             if (btnFood) {
                 btnFood.classList.remove('active');
-                btnFood.textContent = '🍎';
-                btnFood.title = '먹이 설치 모드';
             }
             // 블록 버튼 시각적 비활성화 (blockState는 유지, currentMode는 복원)
             state.currentMode = blockState;
@@ -370,6 +376,8 @@ export function setupModeButtons() {
                 btnBlock.classList.remove('active');
             }
         }
+        btnEyes.classList.remove('active');
+        toyUI?.sync();
     }
 
     function showClearFlash() {
@@ -428,6 +436,8 @@ export function setupModeButtons() {
 
         applyClearMode(false);
     }
+
+    toyUI = setupToyUI(activateToyMode, () => applyBlockState(blockState));
 
     // ── 폭발 ──
     let explosionInProgress = false;
@@ -495,7 +505,8 @@ export function setupModeButtons() {
     const palettePanel = document.getElementById('palette-panel');
     if (paletteToggle) {
         paletteToggle.addEventListener('click', () => {
-            palettePanel.classList.toggle('mobile-open');
+            const open = palettePanel.classList.toggle('mobile-open');
+            document.getElementById('toy-dock').classList.toggle('palette-obscured', open);
         });
     }
 

@@ -4,6 +4,8 @@ import { state, guiParams, objects, voxelSize, materials, explodingBricks } from
 import { foods, triggerFoodFall } from './food.js';
 import { playSound } from './sound.js';
 import { invalidatePreview } from './camera.js';
+import { snapshotLivingAnimals, reconcileLivingAnimals } from './living.js';
+import { animals, detachAnimalsForExplosion, disposeAnimalMesh } from './entities.js';
 
 // 블록 색상으로 MeshBasicMaterial을 만드는 헬퍼
 function makePreviewMaterial(slot) {
@@ -47,6 +49,12 @@ function detachVoxel(voxel) {
     return true;
 }
 
+// A whole connected build becomes one friend and one history action.
+export function detachVoxelsForLiving(voxels) {
+    voxels.forEach(detachVoxel);
+    triggerUnsupportedFoodFall();
+}
+
 // 일반 블록의 geometry/material은 팔레트와 공유하지만 HEAVY 파편은 소유 리소스다.
 export function disposeExplodingBrick(item) {
     if (!item || item.disposed) return;
@@ -57,9 +65,10 @@ export function disposeExplodingBrick(item) {
     if (item.body && state.world) state.world.removeBody(item.body);
     const resources = item.fragmentResources;
     if (resources && --resources.references === 0) {
-        resources.geometry.dispose();
-        resources.material.dispose();
+        (resources.geometries || [resources.geometry]).forEach(geometry => geometry.dispose());
+        (resources.materials || [resources.material]).forEach(material => material.dispose());
     }
+    if (item.ownsMeshResources) disposeAnimalMesh(mesh);
 }
 
 export function getFullSnapshot() {
@@ -73,7 +82,8 @@ export function getFullSnapshot() {
             color: material.color.getHex(),
             roughness: material.roughness
         }])),
-        blocks: blockData
+        blocks: blockData,
+        living: snapshotLivingAnimals()
     });
 }
 
@@ -186,6 +196,7 @@ export function applyActionState(stateStr) {
         }
 
         data.blocks.forEach(b => placeVoxel(new THREE.Vector3(...b.pos), b.slot, true));
+        reconcileLivingAnimals(data.living || []);
         triggerUnsupportedFoodFall();
     } finally {
         state.isRestoringHistory = false;
@@ -267,22 +278,25 @@ export function explodeBlockHeavy(block, hitDirection) {
 
 export function explodeBricks() {
     const bricks = objects.filter(obj => obj !== state.plane);
-    if (bricks.length === 0) return;
+    if (bricks.length === 0 && animals.length === 0) return;
 
     state.preExplosionSnapshot = getFullSnapshot();
     pushHistory();
     playSound('explode');
 
+    const parts = bricks.map(mesh => ({ mesh })).concat(detachAnimalsForExplosion());
+
     const center = new THREE.Vector3();
-    bricks.forEach(b => center.add(b.position));
-    center.divideScalar(bricks.length);
+    parts.forEach(part => center.add(part.mesh.position));
+    center.divideScalar(parts.length);
 
     // Common box shape for all bricks
     const halfExtents = new CANNON.Vec3(voxelSize / 2, voxelSize / 2, voxelSize / 2);
     const boxShape = new CANNON.Box(halfExtents);
     const brickMaterial = new CANNON.Material();
 
-    bricks.forEach(brick => {
+    parts.forEach(part => {
+        const brick = part.mesh;
         removePreviewMesh(brick);
         // 폭발 전 정적 물리 바디 먼저 제거
         if (brick.userData.physicsBody && state.world) {
@@ -290,9 +304,13 @@ export function explodeBricks() {
             brick.userData.physicsBody = null;
         }
 
+        const size = part.physicsSize || new THREE.Vector3(voxelSize, voxelSize, voxelSize).multiply(brick.scale);
+        const shape = part.physicsSize || !brick.scale.equals(new THREE.Vector3(1, 1, 1))
+            ? new CANNON.Box(new CANNON.Vec3(Math.max(0.5, Math.abs(size.x) / 2), Math.max(0.5, Math.abs(size.y) / 2), Math.max(0.5, Math.abs(size.z) / 2)))
+            : boxShape;
         const body = new CANNON.Body({
             mass: 10, // Mass of individual block
-            shape: boxShape,
+            shape,
             material: brickMaterial,
             position: new CANNON.Vec3(brick.position.x, brick.position.y, brick.position.z),
             quaternion: new CANNON.Quaternion(brick.quaternion.x, brick.quaternion.y, brick.quaternion.z, brick.quaternion.w)
@@ -322,7 +340,7 @@ export function explodeBricks() {
             state.world.addBody(body);
         }
 
-        explodingBricks.push({ mesh: brick, body: body, startTime: performance.now() });
+        explodingBricks.push({ ...part, body, baseScale: brick.scale.clone(), startTime: performance.now() });
 
         const index = objects.indexOf(brick);
         if (index > -1) objects.splice(index, 1);

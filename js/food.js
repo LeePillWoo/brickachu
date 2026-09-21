@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { state, voxelSize, objects } from './state.js';
 import { playSound } from './sound.js';
+import { normalizeIngredients } from './magic.js';
 
 // ── 낙하 물리 상수 ──
 const FOOD_GRAVITY = -980;
@@ -66,23 +67,95 @@ function animateFoodRemoval(food, pop = false) {
 
 // ── 먹이 고스트 (Ghost Preview) ──
 let _ghost = null;
+let _ghostRecipe = '';
+
+function disposeFoodMesh(mesh) {
+    if (!mesh) return;
+    mesh.removeFromParent();
+    const geometries = new Set(), materials = new Set();
+    mesh.traverse(child => {
+        if (child.geometry) geometries.add(child.geometry);
+        if (child.material) (Array.isArray(child.material) ? child.material : [child.material]).forEach(material => materials.add(material));
+    });
+    geometries.forEach(geometry => geometry.dispose());
+    materials.forEach(material => material.dispose());
+}
+
+function createFoodMesh(ingredients, ghost = false) {
+    const u = voxelSize / 25;
+    const group = new THREE.Group();
+    group.userData.ingredients = [...ingredients];
+    const balloon = ingredients.includes('balloon');
+    const jelly = ingredients.includes('jelly');
+    const rainbow = ingredients.includes('rainbow');
+    function mat(color, extra = {}) {
+        return ghost
+            ? new THREE.MeshBasicMaterial({ color, opacity: 0.48, transparent: true, depthWrite: false })
+            : new THREE.MeshPhysicalMaterial({ color, roughness: jelly ? 0.15 : 0.6, ...extra });
+    }
+    function add(geometry, x, y, z, material, ingredient) {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(x * u, y * u, z * u);
+        mesh.castShadow = !ghost;
+        if (ingredient) mesh.userData.snackIngredient = ingredient;
+        group.add(mesh);
+        return mesh;
+    }
+    function box(w, h, d, x, y, z, material, ingredient) {
+        return add(new THREE.BoxGeometry(w * u, h * u, d * u), x, y, z, material, ingredient);
+    }
+    const green = mat(ingredients.length ? 0x50c96b : 0x22aa22);
+    if (!ingredients.length) {
+        // Keep the original plain apple as the familiar food and undo snack.
+        box(12, 12, 12, 0, 6, 0, mat(0xff3030));
+        box(4, 4, 4, 0, 12, 0, mat(0xffaaaa));
+        box(2, 6, 2, 0, 16, 0, mat(0x6b3a2a));
+        box(7, 3, 3, 5, 14, 0, green);
+        box(5, 2, 2, -4, 13, 0, green);
+    } else if (jelly) {
+        // A translucent, tiered carrot reads clearly even from the game camera.
+        const orange = mat(0xffa147, { transparent: true, opacity: 0.86 });
+        box(5, 5, 5, 0, 2.5, 0, orange, 'jelly');
+        box(9, 6, 9, 0, 8, 0, orange, 'jelly');
+        box(13, 7, 13, 0, 14.5, 0, orange, 'jelly');
+        box(3, 8, 3, -3, 21, 0, green, 'jelly').rotation.z = 0.35;
+        box(3, 9, 3, 2, 22, 0, green, 'jelly').rotation.z = -0.25;
+        box(2, 3, 1, -4, 15, 6.6, mat(0xffead0), 'jelly');
+    } else if (rainbow) {
+        const colors = [0xff728f, 0xffb85a, 0xffe76a, 0x7ee299, 0x79d8ff, 0xb19bff];
+        colors.forEach((color, i) => box(12, 2.5, 12, 0, 1.25 + i * 2.5, 0, mat(color), 'rainbow'));
+        box(2, 5, 2, 0, 17, 0, mat(0x80532f));
+        box(6, 2.5, 3, 3, 19, 0, green);
+    } else {
+        add(new THREE.SphereGeometry(8 * u, 12, 10), 0, 8, 0, mat(0xff78ac), 'balloon');
+        box(2, 5, 2, 0, 17, 0, mat(0x81552e));
+        box(6, 3, 3, 4, 17, 0, green);
+    }
+    if (balloon) {
+        // A little tied balloon marks the ingredient in both single and mixed food.
+        box(0.7, 12, 0.7, -8, 17, 0, mat(0xfff5dc), 'balloon');
+        add(new THREE.SphereGeometry(5 * u, 10, 8), -8, 27, 0, mat(0xff88bd), 'balloon').scale.y = 1.15;
+        box(2, 2, 2, -8, 21.5, 0, mat(0xff88bd), 'balloon');
+    }
+    if (rainbow && jelly) {
+        const colors = [0xff729f, 0xffdd6c, 0x83db99, 0x83ccff, 0xb69aff];
+        colors.forEach((color, i) => box(2.1, 3.3, 1.3, -4.2 + i * 2.1, 15, 7, mat(color), 'rainbow'));
+    }
+    return group;
+}
 
 export function initFoodGhost() {
-    const u = voxelSize / 25;
-    const mat = new THREE.MeshBasicMaterial({ color: 0x88ffaa, opacity: 0.45, transparent: true, depthWrite: false });
-    const g = new THREE.Group();
-    [[12,12,12,0,6,0],[4,4,4,0,12,0],[2,6,2,0,16,0],[7,3,3,5,14,0],[5,2,2,-4,13,0]].forEach(([w,h,d,x,y,z]) => {
-        const m = new THREE.Mesh(new THREE.BoxGeometry(w*u, h*u, d*u), mat);
-        m.position.set(x*u, y*u, z*u);
-        g.add(m);
-    });
-    g.visible = false;
-    _ghost = g;
-    state.scene.add(g);
+    disposeFoodMesh(_ghost);
+    const recipe = normalizeIngredients(state.snackIngredients);
+    _ghostRecipe = recipe.join('+');
+    _ghost = createFoodMesh(recipe, true);
+    _ghost.visible = false;
+    state.scene.add(_ghost);
 }
 
 export function showFoodGhost(x, y, z) {
     if (!_ghost) return;
+    if (normalizeIngredients(state.snackIngredients).join('+') !== _ghostRecipe) initFoodGhost();
     _ghost.position.set(x, y, z);
     _ghost.visible = true;
 }
@@ -91,36 +164,16 @@ export function hideFoodGhost() {
     if (_ghost) _ghost.visible = false;
 }
 
-export function spawnFood(worldPosition) {
-    const u = voxelSize / 25;
-    const foodGroup = new THREE.Group();
-
-    const red   = new THREE.MeshPhysicalMaterial({ color: 0xff3030, roughness: 0.6 });
-    const green = new THREE.MeshPhysicalMaterial({ color: 0x22aa22, roughness: 0.7 });
-    const brown = new THREE.MeshPhysicalMaterial({ color: 0x6b3a2a, roughness: 0.9 });
-    const pink  = new THREE.MeshPhysicalMaterial({ color: 0xffaaaa, roughness: 0.6 }); // 사과 하이라이트
-
-    function addBox(w, h, d, x, y, z, mat) {
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w*u, h*u, d*u), mat);
-        mesh.position.set(x*u, y*u, z*u);
-        mesh.castShadow = true;
-        foodGroup.add(mesh);
-        return mesh;
-    }
-
-    // ── 사과 모델 ──
-    addBox(12, 12, 12, 0,  6, 0, red);       // 몸통
-    addBox(4,  4,  4,  0, 12, 0, pink);      // 윗면 하이라이트
-    addBox(2,  6,  2,  0, 16, 0, brown);     // 꼭지
-    addBox(7,  3,  3,  5, 14, 0, green);     // 잎 (오른쪽)
-    addBox(5,  2,  2, -4, 13, 0, green);     // 잎 (왼쪽)
-
+export function spawnFood(worldPosition, ingredients = state.snackIngredients) {
+    const recipe = normalizeIngredients(ingredients);
+    const foodGroup = createFoodMesh(recipe);
     foodGroup.position.copy(worldPosition);
     state.scene.add(foodGroup);
 
     const foodData = {
         mesh: foodGroup,
         position: worldPosition.clone(),
+        ingredients: recipe,
         eaten: false,
         consumeTimer: -1,       // -1 = 멀쩡함, >0 = 사라지는 중
         floatTime: Math.random() * Math.PI * 2,

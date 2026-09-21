@@ -4,6 +4,9 @@ import { placeVoxel, removeVoxel, pushHistory, undo, redo } from './scene.js';
 import { frameCamera } from './camera.js';
 import { animals, setGrabbedAnimal, triggerClickAction, getGroundHeightAt, getGroundHeightBelow, snapAnimalToGround, removeAnimalWithEffect } from './entities.js';
 import { foods, spawnFood, showFoodGhost, hideFoodGhost, removeFoodWithEffect } from './food.js';
+import { collectConnectedBlocks, awakenBlocks } from './living.js';
+import { applySnack } from './magic.js';
+import { playSound } from './sound.js';
 
 let activePointer = null;
 let _grabbedAnimal = null;
@@ -57,6 +60,41 @@ function clearPreview() {
     state.targetGuideOpacity = 0;
     if (state.rollOverMaterial) state.rollOverMaterial.opacity = 0;
     hideFoodGhost();
+    hideEyesPreview();
+}
+
+function hideEyesPreview() {
+    if (state.eyesPreview) state.eyesPreview.visible = false;
+}
+
+function showEyesPreview(hit) {
+    if (!hit || hit.animal || hit.food || hit.object === state.plane) { hideEyesPreview(); return; }
+    if (!state.eyesPreview) {
+        const group = new THREE.Group();
+        group.userData.material = new THREE.MeshBasicMaterial({ color: 0x58e8ca, transparent: true, opacity: 0.28, depthWrite: false });
+        group.userData.outlineGeometry = new THREE.EdgesGeometry(state.cubeGeo);
+        group.userData.outlineMaterial = new THREE.LineBasicMaterial({ color: 0x24bd9b, transparent: true, opacity: 0.9, depthTest: false });
+        state.eyesPreview = group;
+    }
+    const group = state.eyesPreview;
+    if (group.parent !== state.scene) state.scene.add(group);
+    const connected = collectConnectedBlocks(hit.object);
+    if (group.userData.seed !== hit.object || group.userData.blockCount !== objects.length) {
+        group.clear();
+        for (const block of connected.slice(0, 96)) {
+            const ghost = new THREE.Mesh(state.cubeGeo, group.userData.material);
+            ghost.position.copy(block.position);
+            ghost.scale.setScalar(1.015);
+            const outline = new THREE.LineSegments(group.userData.outlineGeometry, group.userData.outlineMaterial);
+            outline.renderOrder = 5;
+            ghost.add(outline);
+            group.add(ghost);
+        }
+        group.userData.seed = hit.object;
+        group.userData.blockCount = objects.length;
+    }
+    group.userData.material.color.setHex(connected.length > 96 ? 0xffa47a : 0x58e8ca);
+    group.visible = true;
 }
 
 function clearGrabTimer() {
@@ -148,6 +186,7 @@ export function onPointerMove(event) {
     if (isInterface(event.target) && !_grabbedAnimal) {
         state.targetGuideOpacity = 0;
         hideFoodGhost();
+        hideEyesPreview();
         return;
     }
     setPointerRay(event);
@@ -181,9 +220,17 @@ export function onPointerMove(event) {
     if (state.animalMode === 'remove' || event.altKey || event.ctrlKey || event.metaKey || (event.buttons & 6)) {
         state.targetGuideOpacity = 0;
         hideFoodGhost();
+        hideEyesPreview();
         return;
     }
     const hit = getHit();
+    if (state.currentMode === 'eyes') {
+        state.targetGuideOpacity = 0;
+        hideFoodGhost();
+        showEyesPreview(hit);
+        return;
+    }
+    hideEyesPreview();
     if (!hit || hit.animal || hit.food) {
         state.targetGuideOpacity = 0;
         hideFoodGhost();
@@ -225,6 +272,7 @@ export function onPointerDown(event) {
     if (state.animalMode === 'remove') return;
     if (hit?.animal) {
         activePointer.entity = true;
+        if (state.currentMode === 'food' || (state.currentMode === 'eyes' && !hit.animal.livingId)) return;
         const hitAnimal = hit.animal;
         _grabHoldTimer = setTimeout(() => {
             _grabHoldTimer = null;
@@ -281,10 +329,40 @@ export function onPointerUp(event) {
     if (dist >= TAP_DISTANCE || performance.now() - state.pointerDownTime >= 500) return;
     setPointerRay(event);
     const hit = getHit();
-    if (!hit) return;
+    if (!hit) {
+        if (state.currentMode === 'eyes') state.onToyNotice?.('눈을 붙일 블록을 먼저 골라줘! 👀');
+        return;
+    }
     if (state.animalMode === 'remove') {
         if (hit.animal) removeAnimalWithEffect(hit.animal);
         else if (hit.food) removeFoodWithEffect(hit.food);
+        return;
+    }
+    if (state.currentMode === 'eyes') {
+        if (hit.animal?.livingId) {
+            triggerClickAction(hit.animal);
+            state.onToyNotice?.(hit.animal.abilityDescription || '반가워! 나랑 놀자 ✨');
+        } else if (hit.animal) state.onToyNotice?.('이미 살아 있는 친구야! 간식을 먹여볼까? 🍎');
+        else if (!hit.food && hit.object !== state.plane) {
+            const normal = hit.face.normal.clone();
+            if (Math.abs(normal.y) > 0.5) {
+                // A top tap should still give the friend a face looking at us.
+                normal.copy(state.camera.position).sub(hit.object.position);
+                normal.y = 0;
+                if (normal.lengthSq() < 0.001) normal.set(0, 0, 1);
+                else normal.normalize();
+            }
+            const result = awakenBlocks(hit.object, normal);
+            if (!result.ok) state.onToyNotice?.(result.reason);
+            else state.onToyNotice?.(`반가워! ${result.animal.abilityName || '새 블록 친구'}가 태어났어 ✨`);
+        } else state.onToyNotice?.('블록에 눈을 붙여줘! 붙어 있는 블록들이 함께 살아나 👀');
+        return;
+    }
+    if (state.currentMode === 'food' && hit.animal) {
+        applySnack(hit.animal, state.snackIngredients);
+        hit.animal.isEating = true;
+        hit.animal.eatTimer = 0.6;
+        playSound('food-eat');
         return;
     }
     if (hit.animal) { triggerClickAction(hit.animal); return; }

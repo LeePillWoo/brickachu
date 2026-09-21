@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, voxelSize, objects } from './state.js';
-import { explodeBlockHeavy } from './scene.js';
+import { explodeBlockHeavy, pushHistory } from './scene.js';
 import { foods } from './food.js';
 import { playSound } from './sound.js';
+import { applySnack, clearMagicEffect } from './magic.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
-const MAX_ANIMALS = 20;
+export const MAX_ANIMALS = 20;
 
 export const GROUP_ANIMALS = {
     all:        ['dog','cat','rabbit','sheep','snake','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','elephant','penguin','pig','turtle','eevee','gengar','psyduck','bulbasaur','slowpoke','togepi','clefairy','wobbuffet','grasshopper','frog','snail','lizard','lion','crocodile','bear'],
@@ -26,7 +27,7 @@ const EAT_RADIUS = voxelSize * 1.8;
 export let grabbedAnimal = null;
 export function setGrabbedAnimal(a) { grabbedAnimal = a; }
 
-function disposeAnimalMesh(mesh) {
+export function disposeAnimalMesh(mesh) {
     if (!mesh) return;
     mesh.removeFromParent();
     const geometries = new Set();
@@ -44,6 +45,7 @@ function disposeAnimalMesh(mesh) {
 }
 
 function detachAnimalBody(animal) {
+    clearMagicEffect(animal);
     if (animal.body && state.world) state.world.removeBody(animal.body);
     animal.grabbed = false;
     if (grabbedAnimal === animal) grabbedAnimal = null;
@@ -64,6 +66,7 @@ export function removeAnimalWithEffect(animal) {
     if (idx === -1) return;
     animals.splice(idx, 1);
     detachAnimalBody(animal);
+    if (animal.livingId) pushHistory();
     playSound('animal-remove');
 
     let t = 0;
@@ -136,6 +139,7 @@ export function removeAllAnimalsWithEffect() {
     const toRemove = [...animals];
     animals.length = 0;
     grabbedAnimal = null;
+    if (toRemove.some(animal => animal.livingId)) pushHistory();
 
     toRemove.forEach(animal => {
         detachAnimalBody(animal);
@@ -420,7 +424,7 @@ export function spawnDog(group = 'all') {
         if (pool.length === 0) pool = GROUP_ANIMALS.all.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
     }
     const type = pool[Math.floor(Math.random() * pool.length)];
-    if (animals.length >= MAX_ANIMALS) removeOldestAnimal();
+    while (animals.length >= MAX_ANIMALS) removeOldestAnimal();
 
     const animalGroup = new THREE.Group();
     const u = voxelSize / 25;
@@ -959,11 +963,119 @@ export function spawnDog(group = 'all') {
     return animalData;
 }
 
+// Custom block friends use the same AI, picking, snack and cleanup paths as animals.
+export function registerCustomAnimal(mesh, { position, size, blocks, animGroup, yaw = 0, livingDescriptor, eyes }) {
+    const halfHeight = size.y / 2;
+    const body = new CANNON.Body({
+        mass: Math.max(10, blocks.length * 3),
+        position: new CANNON.Vec3(position.x, position.y + halfHeight, position.z),
+        material: state.animalMaterial || new CANNON.Material(),
+        fixedRotation: true,
+        linearDamping: 0.95
+    });
+    for (const block of blocks) {
+        body.addShape(new CANNON.Box(new CANNON.Vec3(voxelSize / 2, voxelSize / 2, voxelSize / 2)),
+            new CANNON.Vec3(block.pos[0], block.pos[1] - halfHeight, block.pos[2]));
+    }
+    body.quaternion.setFromEuler(0, yaw, 0);
+    body.updateMassProperties();
+    mesh.position.copy(position);
+    mesh.rotation.y = yaw;
+    const animal = {
+        mesh, body, state: 'falling', timer: 0.5,
+        targetDir: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)),
+        speed: 280 * (SPEED_MULT[animGroup] || 1),
+        heightOffset: size.y / (voxelSize / 10),
+        grabbed: false, animalType: 'living-block', animGroup,
+        animTime: 0, _animYOffset: 0, baseScale: mesh.scale.clone(),
+        clickActionTimer: 0, clickActionPhase: 0,
+        clickActionType: CLICK_ACTION_MAP[animGroup], clickBaseRotY: 0,
+        isEating: false, eatTimer: 0, jumpCooldown: 0, isCarnivore: false,
+        isClimbing: false, climbTargetY: 0,
+        climbDir: new THREE.Vector3(), climbMeshRotX: 0,
+        livingId: livingDescriptor.id, livingDescriptor,
+        livingEyes: eyes, livingBlinkIn: 1.5 + Math.random() * 2.5,
+        livingBlinkTimer: 0, livingSize: size.clone(),
+        abilityName: livingDescriptor.abilityName,
+        abilityDescription: livingDescriptor.abilityDescription
+    };
+    mesh.traverse(child => { child.userData.animalRef = animal; });
+    state.scene.add(mesh);
+    if (state.world) state.world.addBody(body);
+    mesh.updateMatrixWorld(true);
+    animals.push(animal);
+    return animal;
+}
+
+// Undo reconciliation removes only its missing custom entity, without a new action.
+export function removeAnimalImmediately(animal) {
+    const index = animals.indexOf(animal);
+    if (index === -1) return;
+    animals.splice(index, 1);
+    detachAnimalBody(animal);
+    disposeAnimalMesh(animal.mesh);
+}
+
+// Transfer a playground's animals into the same timed physics lifecycle as
+// exploding blocks. Living friends break at their current, animated positions.
+export function detachAnimalsForExplosion() {
+    const parts = [];
+    for (const animal of [...animals]) {
+        animal.mesh.updateWorldMatrix(true, true);
+        if (animal.livingId) {
+            const geometries = new Map(), materials = new Map();
+            const fragments = [];
+            animal.mesh.traverse(child => {
+                if (!child.isMesh || child.name !== 'living-voxel') return;
+                if (!geometries.has(child.geometry)) geometries.set(child.geometry, child.geometry.clone());
+                const cloneMaterial = material => {
+                    if (!materials.has(material)) materials.set(material, material.clone());
+                    return materials.get(material);
+                };
+                const material = Array.isArray(child.material) ? child.material.map(cloneMaterial) : cloneMaterial(child.material);
+                const mesh = new THREE.Mesh(geometries.get(child.geometry), material);
+                mesh.name = 'exploding-living-voxel';
+                child.matrixWorld.decompose(mesh.position, mesh.quaternion, mesh.scale);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                state.scene.add(mesh);
+                fragments.push({ mesh });
+            });
+            const fragmentResources = {
+                geometries: [...geometries.values()], materials: [...materials.values()],
+                references: fragments.length
+            };
+            fragments.forEach(part => { part.fragmentResources = fragmentResources; });
+            parts.push(...fragments);
+            removeAnimalImmediately(animal);
+        } else {
+            const mesh = animal.mesh;
+            const displayedScale = mesh.scale.clone();
+            animals.splice(animals.indexOf(animal), 1);
+            detachAnimalBody(animal);
+            mesh.scale.copy(displayedScale);
+            mesh.traverse(child => { delete child.userData.animalRef; });
+            const bounds = new THREE.Box3().setFromObject(mesh);
+            const center = bounds.getCenter(new THREE.Vector3());
+            const size = bounds.getSize(new THREE.Vector3());
+            const wrapper = new THREE.Group();
+            wrapper.name = 'exploding-animal';
+            wrapper.position.copy(center);
+            mesh.position.sub(center);
+            wrapper.add(mesh);
+            state.scene.add(wrapper);
+            parts.push({ mesh: wrapper, physicsSize: size, ownsMeshResources: true });
+        }
+    }
+    return parts;
+}
+
 function removeOldestAnimal() {
     const animal = animals.shift();
     if (animal) {
         detachAnimalBody(animal);
         disposeAnimalMesh(animal.mesh);
+        if (animal.livingId) pushHistory();
     }
 }
 
@@ -1009,6 +1121,17 @@ export function updateDogs(dt) {
 
     animals.forEach(animal => {
         animal.animTime += dt;
+        if (animal.livingEyes) {
+            animal.livingBlinkIn -= dt;
+            if (animal.livingBlinkIn <= 0) {
+                animal.livingBlinkTimer = 0.18;
+                animal.livingBlinkIn = 2.0 + Math.random() * 3.0;
+            }
+            animal.livingBlinkTimer = Math.max(0, animal.livingBlinkTimer - dt);
+            const openness = animal.livingBlinkTimer > 0
+                ? Math.max(0.08, Math.abs(animal.livingBlinkTimer / 0.09 - 1)) : 1;
+            animal.livingEyes.children.forEach(eye => { eye.scale.y = openness; });
+        }
         if (animal.jumpCooldown > 0) animal.jumpCooldown -= dt;
 
         // ── 잡힌 상태 ──
@@ -1125,6 +1248,7 @@ export function updateDogs(dt) {
                     if (!targetFood.eaten) {
                         targetFood.eaten = true;
                         targetFood.consumeTimer = 2.0;
+                        applySnack(animal, targetFood.ingredients);
                     }
                     animal.isEating = true;
                     animal.eatTimer = 1.2;
@@ -1291,12 +1415,22 @@ export function updateDogs(dt) {
 
         // ── mesh 위치를 body에 동기화 ──
         if (animal.body) {
+            if (animal.livingId) {
+                animal.body.quaternion.setFromEuler(0, animal.mesh.rotation.y, 0);
+                animal.body.aabbNeedsUpdate = true;
+                animal.body.updateAABB();
+            }
             // 먹이 추적, 도주, 클릭 대시에도 배회와 같은 보드 경계를 적용한다.
             for (const axis of ['x', 'z']) {
                 const position = animal.body.position[axis];
-                if (Math.abs(position) >= boardLimit) {
+                const extent = animal.livingId ? Math.max(
+                    position - animal.body.aabb.lowerBound[axis],
+                    animal.body.aabb.upperBound[axis] - position
+                ) : 0;
+                const limit = animal.livingId ? Math.min(boardLimit, Math.max(0, 1000 - extent - 12)) : boardLimit;
+                if (Math.abs(position) >= limit) {
                     const edge = Math.sign(position);
-                    animal.body.position[axis] = edge * boardLimit;
+                    animal.body.position[axis] = edge * limit;
                     animal.body.aabbNeedsUpdate = true;
                     if (animal.body.velocity[axis] * edge > 0) animal.body.velocity[axis] *= -1;
                     if (animal.targetDir[axis] * edge > 0) animal.targetDir[axis] *= -1;
@@ -1450,6 +1584,10 @@ export function updateDogs(dt) {
             }
         } else {
             animal.mesh.scale.copy(baseScale);
+        }
+        if (animal.livingId && animal.body) {
+            animal.body.quaternion.setFromEuler(0, animal.mesh.rotation.y, 0);
+            animal.body.aabbNeedsUpdate = true;
         }
     });
 }

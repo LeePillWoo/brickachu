@@ -153,7 +153,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         check('Mobile orbit drag does not build blocks', await mobile.evaluate(() => qa.objects.length === 2));
         await mobile.locator('#btn-food').tap();
-        await mobile.touchscreen.tap(140, 580);
+        await mobile.touchscreen.tap(195, 370);
         check('Mobile food mode places food without building', await mobile.evaluate(() => qa.foods.length === 1 && qa.objects.length === 2));
         await mobile.screenshot({ path: '.tmp/qa/mobile.png' });
         check('Mobile interaction has no runtime exceptions', mobileErrors.length === 0, mobileErrors);
