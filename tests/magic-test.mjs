@@ -70,7 +70,7 @@ test('recipes admit at most two unique known ingredients and preserve caller arr
     assert.deepEqual(normalizeIngredients('balloon'), []);
     assert.equal(SNACK_INGREDIENTS.length, 3);
     assert.equal(describeRecipe([]), '사과');
-    assert.match(describeRecipe(['jelly', 'balloon']), /젤리.*풍선/);
+    assert.match(describeRecipe(['jelly', 'balloon']), /푸딩.*풍선/);
 });
 
 test('every recipe displays its ingredients and stores its own immutable selection copy', () => {

@@ -19,7 +19,7 @@ const checks = [];
 const dependencyCache = new Map();
 const recipes = [
     { ids: [], icon: '🍎', label: '사과' }, { ids: ['balloon'], icon: '🎈', label: '풍선' },
-    { ids: ['jelly'], icon: '🍮', label: '젤리' }, { ids: ['rainbow'], icon: '🌈', label: '무지개' }
+    { ids: ['jelly'], icon: '🍮', label: '푸딩' }, { ids: ['rainbow'], icon: '🌈', label: '무지개' }
 ];
 async function preparePage(page) {
     page.setDefaultTimeout(45000);
@@ -122,7 +122,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
                 await page.locator('#btn-food').click(); assertRecipe(await readToolbar(page), step % 4);
                 assert.deepEqual(await sceneCounts(page), beforeCycle);
             }
-            check('Each snack click advances once through apple, balloon, jelly and rainbow', true);
+            check('Each snack click advances once through apple, balloon, pudding and rainbow', true);
             const beforeFeeding = await page.evaluate(() => qa.animals[0].body.position.y);
             const feed = await friendPoint(page); await page.mouse.click(feed.x, feed.y);
             check('Clicking a friend feeds the selected balloon without dropping food', await page.evaluate(() => JSON.stringify(qa.animals[0].magicEffect?.ingredients) === '["balloon"]' && qa.foods.length === 0));

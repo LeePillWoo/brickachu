@@ -86,12 +86,12 @@ function createFoodMesh(ingredients, ghost = false) {
     const group = new THREE.Group();
     group.userData.ingredients = [...ingredients];
     const balloon = ingredients.includes('balloon');
-    const jelly = ingredients.includes('jelly');
+    const pudding = ingredients.includes('jelly');
     const rainbow = ingredients.includes('rainbow');
     function mat(color, extra = {}) {
         return ghost
             ? new THREE.MeshBasicMaterial({ color, opacity: 0.48, transparent: true, depthWrite: false })
-            : new THREE.MeshPhysicalMaterial({ color, roughness: jelly ? 0.15 : 0.6, ...extra });
+            : new THREE.MeshPhysicalMaterial({ color, roughness: pudding ? 0.15 : 0.6, ...extra });
     }
     function add(geometry, x, y, z, material, ingredient) {
         const mesh = new THREE.Mesh(geometry, material);
@@ -104,7 +104,7 @@ function createFoodMesh(ingredients, ghost = false) {
     function box(w, h, d, x, y, z, material, ingredient) {
         return add(new THREE.BoxGeometry(w * u, h * u, d * u), x, y, z, material, ingredient);
     }
-    const green = mat(ingredients.length ? 0x50c96b : 0x22aa22);
+    const green = pudding ? null : mat(ingredients.length ? 0x50c96b : 0x22aa22);
     if (!ingredients.length) {
         // Keep the original plain apple as the familiar food and undo snack.
         box(12, 12, 12, 0, 6, 0, mat(0xff3030));
@@ -112,15 +112,16 @@ function createFoodMesh(ingredients, ghost = false) {
         box(2, 6, 2, 0, 16, 0, mat(0x6b3a2a));
         box(7, 3, 3, 5, 14, 0, green);
         box(5, 2, 2, -4, 13, 0, green);
-    } else if (jelly) {
-        // A translucent, tiered carrot reads clearly even from the game camera.
-        const orange = mat(0xffa147, { transparent: true, opacity: 0.86 });
-        box(5, 5, 5, 0, 2.5, 0, orange, 'jelly');
-        box(9, 6, 9, 0, 8, 0, orange, 'jelly');
-        box(13, 7, 13, 0, 14.5, 0, orange, 'jelly');
-        box(3, 8, 3, -3, 21, 0, green, 'jelly').rotation.z = 0.35;
-        box(3, 9, 3, 2, 22, 0, green, 'jelly').rotation.z = -0.25;
-        box(2, 3, 1, -4, 15, 6.6, mat(0xffead0), 'jelly');
+    } else if (pudding) {
+        // Custard with a caramel cap on a little plate, matching the 🍮 icon.
+        group.name = 'snack-pudding';
+        const custard = mat(0xffdf86, { flatShading: true });
+        const caramel = mat(0xa94f27, { flatShading: true, roughness: 0.25 });
+        add(new THREE.CylinderGeometry(10 * u, 10 * u, 1.5 * u, 12), 0, 0.75, 0, mat(0xfffaf0), 'jelly');
+        add(new THREE.CylinderGeometry(6 * u, 8 * u, 12 * u, 12), 0, 7.5, 0, custard, 'jelly');
+        add(new THREE.CylinderGeometry(6 * u, 6.35 * u, 2 * u, 12), 0, 14.5, 0, caramel, 'jelly');
+        box(2, 3, 1, -2.8, 12.8, 5.2, caramel, 'jelly');
+        box(1.5, 2, 1, 3.4, 13.2, 4.8, caramel, 'jelly');
     } else if (rainbow) {
         const colors = [0xff728f, 0xffb85a, 0xffe76a, 0x7ee299, 0x79d8ff, 0xb19bff];
         colors.forEach((color, i) => box(12, 2.5, 12, 0, 1.25 + i * 2.5, 0, mat(color), 'rainbow'));
@@ -137,9 +138,9 @@ function createFoodMesh(ingredients, ghost = false) {
         add(new THREE.SphereGeometry(5 * u, 10, 8), -8, 27, 0, mat(0xff88bd), 'balloon').scale.y = 1.15;
         box(2, 2, 2, -8, 21.5, 0, mat(0xff88bd), 'balloon');
     }
-    if (rainbow && jelly) {
+    if (rainbow && pudding) {
         const colors = [0xff729f, 0xffdd6c, 0x83db99, 0x83ccff, 0xb69aff];
-        colors.forEach((color, i) => box(2.1, 3.3, 1.3, -4.2 + i * 2.1, 15, 7, mat(color), 'rainbow'));
+        colors.forEach((color, i) => box(1.4, 0.6, 1.4, -3.2 + i * 1.6, 15.8, 1, mat(color), 'rainbow'));
     }
     return group;
 }

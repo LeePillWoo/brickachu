@@ -3,7 +3,7 @@ import { state, objects, voxelSize } from './state.js';
 
 export const SNACK_INGREDIENTS = Object.freeze([
     Object.freeze({ id: 'balloon', icon: '🎈', label: '풍선', color: '#ff83b5', description: '동글동글 부풀어서 둥실 떠올라요' }),
-    Object.freeze({ id: 'jelly', icon: '🍮', label: '젤리', color: '#ffc15c', description: '말랑말랑! 바닥과 벽에서 통통 튀어요' }),
+    Object.freeze({ id: 'jelly', icon: '🍮', label: '푸딩', color: '#ffc15c', description: '말랑말랑! 바닥과 벽에서 통통 튀어요' }),
     Object.freeze({ id: 'rainbow', icon: '🌈', label: '무지개', color: '#8d87ff', description: '움직이는 곳마다 무지개 발자국이 생겨요' }),
 ]);
 
@@ -59,7 +59,7 @@ export function normalizeIngredients(ids) {
 export function describeRecipe(ids) {
     const recipe = normalizeIngredients(ids);
     if (!recipe.length) return '사과';
-    if (recipe.length === 1) return { balloon: '풍선 사과', jelly: '젤리 당근', rainbow: '무지개 열매' }[recipe[0]];
+    if (recipe.length === 1) return { balloon: '풍선 사과', jelly: '푸딩', rainbow: '무지개 열매' }[recipe[0]];
     return recipe.map(id => SNACK_INGREDIENTS.find(item => item.id === id).label).join(' + ') + ' 간식';
 }
 
