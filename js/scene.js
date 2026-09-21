@@ -6,6 +6,7 @@ import { playSound } from './sound.js';
 import { invalidatePreview } from './camera.js';
 import { snapshotLivingAnimals, reconcileLivingAnimals } from './living.js';
 import { animals, detachAnimalsForExplosion, disposeAnimalMesh } from './entities.js';
+import { clearTrain } from './train.js';
 
 // 블록 색상으로 MeshBasicMaterial을 만드는 헬퍼
 function makePreviewMaterial(slot) {
@@ -278,7 +279,12 @@ export function explodeBlockHeavy(block, hitDirection) {
 
 export function explodeBricks() {
     const bricks = objects.filter(obj => obj !== state.plane);
-    if (bricks.length === 0 && animals.length === 0) return;
+    const hadTrain = Boolean(state.train);
+    clearTrain();
+    if (bricks.length === 0 && animals.length === 0) {
+        if (hadTrain) playSound('explode');
+        return;
+    }
 
     state.preExplosionSnapshot = getFullSnapshot();
     pushHistory();

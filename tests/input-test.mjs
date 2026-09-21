@@ -6,6 +6,7 @@ import { animals, grabbedAnimal, clearAllAnimals } from '../js/entities.js';
 import { foods, spawnFood, clearAllFood } from '../js/food.js';
 import { placeVoxel, pushHistory, applyActionState, undo, redo } from '../js/scene.js';
 import { onPointerDown, onPointerUp, onPointerMove, onPointerCancel, onKeyDown, onKeyUp, onWindowResize } from '../js/input.js';
+import { spawnTrain, clearTrain, beginTrainRoute, appendTrainRoutePoint, finishTrainRoute } from '../js/train.js';
 
 state.scene = new THREE.Scene();
 state.world = new CANNON.World();
@@ -35,12 +36,14 @@ const click = e => { onPointerDown(e); onPointerUp(e); };
 const count = () => objects.length - 1;
 function reset() {
     onPointerCancel();
+    clearTrain();
     clearAllAnimals();
     clearAllFood();
     applyActionState(JSON.stringify({ settings: guiParams, blocks: [] }));
     state.currentMode = 'add';
     state.snackIngredients = [];
     state.animalMode = 'spawn';
+    state.controls.enabled = true;
     state.actionHistory.length = 0;
     state.actionRedoStack.length = 0;
     pushHistory();
@@ -175,6 +178,151 @@ check('placed magic snacks keep a copy of the chosen recipe', () => {
     assert.equal(foods.length, 1);
     state.snackIngredients.push('jelly');
     assert.deepEqual(foods[0].ingredients, ['rainbow']);
+    assert.equal(count(), 0);
+});
+
+check('train mode places one train only on the floor and a new floor tap replaces it', () => {
+    state.currentMode = 'train';
+    click(event(25, 25, { target: input }));
+    click(event(25, 25, { button: 2 }));
+    assert.equal(state.train, null);
+    placeVoxel(new THREE.Vector3(225, 25, 25));
+    onPointerMove(event(225));
+    assert.equal(state.targetGuideOpacity, 0, 'train hover never becomes a remove-block guide');
+    click(event(225));
+    assert.equal(state.train, null, 'a block surface is not a train platform');
+    assert.equal(count(), 1);
+    click(event());
+    const first = state.train;
+    assert.ok(first);
+    assert.ok(first.position.distanceTo(new THREE.Vector3(25, 0, 25)) < 1e-8);
+    click(event(425));
+    assert.ok(state.train);
+    assert.notEqual(state.train, first);
+    assert.equal(first.mesh.parent, null);
+    assert.ok(state.train.position.distanceTo(new THREE.Vector3(425, 0, 25)) < 1e-8);
+    assert.equal(count(), 1);
+    assert.equal(foods.length, 0);
+});
+
+check('clicking a train in any editing mode never edits blocks, feeds it, or changes its route', () => {
+    const train = spawnTrain(new THREE.Vector3(25, 0, 25));
+    assert.ok(train);
+    const routeBefore = train.route.map(point => point.toArray());
+    for (const mode of ['add', 'remove', 'eyes', 'food', 'train']) {
+        state.currentMode = mode;
+        onPointerMove(event());
+        assert.equal(state.targetGuideOpacity, 0);
+        assert.ok(!state.eyesPreview?.visible);
+        onPointerDown(event());
+        assert.equal(state.controls.enabled, false, `${mode}: camera is locked before touch OrbitControls receives the down event`);
+        assert.equal(state.isDraggingBuild, false);
+        assert.equal(state.isDraggingRemove, false);
+        onPointerUp(event());
+        assert.equal(state.controls.enabled, true);
+        assert.deepEqual(train.route.map(point => point.toArray()), routeBefore);
+        assert.equal(train.drawing, false);
+        assert.equal(state.train, train);
+    }
+    assert.equal(count(), 0);
+    assert.equal(foods.length, 0);
+    assert.equal(animals.length, 0);
+});
+
+check('mouse and touch train drags seed the current position, project to floor, and never teleport', () => {
+    for (const pointerType of ['mouse', 'touch']) for (const mode of ['add', 'remove', 'eyes', 'food', 'train']) {
+        clearTrain();
+        const train = spawnTrain(new THREE.Vector3(25, 0, 25));
+        state.currentMode = mode;
+        const original = train.position.clone();
+        const start = event(25, 25, { pointerType });
+        onPointerDown(start);
+        assert.equal(state.controls.enabled, false);
+        onPointerMove({ ...start, clientX: start.clientX + 2 });
+        assert.equal(train.drawing, false, 'minor click jitter does not begin a route');
+        onPointerMove(event(225, 125, { pointerType }));
+        assert.equal(train.drawing, true);
+        assert.ok(train.route[0].distanceTo(original) < 1e-8, 'the seed is not the raised locomotive surface');
+        assert.ok(train.position.distanceTo(original) < 1e-8);
+        onPointerUp(event(325, 175, { pointerType }));
+        assert.equal(train.drawing, false);
+        assert.ok(train.route.length >= 2);
+        assert.ok(train.route.every(point => point.y === 0));
+        assert.ok(train.route.at(-1).distanceTo(new THREE.Vector3(325, 0, 175)) < 1e-8);
+        assert.ok(train.position.distanceTo(original) < 1e-8, 'movement is left to the train simulation');
+        assert.equal(state.controls.enabled, true);
+        assert.equal(count(), 0);
+        assert.equal(foods.length, 0);
+    }
+});
+
+function seedTrainRoute(train) {
+    assert.equal(beginTrainRoute(train), true);
+    appendTrainRoutePoint(new THREE.Vector3(25, 0, 225));
+    assert.equal(finishTrainRoute(), true);
+    return train.route.map(point => point.toArray());
+}
+
+check('captured pointer moves over UI add no route samples and UI release restores the old route', () => {
+    const train = spawnTrain(new THREE.Vector3(25, 0, 25));
+    const previous = seedTrainRoute(train);
+    const touch = event(25, 25, { pointerType: 'touch' });
+    onPointerDown(touch);
+    onPointerMove(event(225, 125, { pointerType: 'touch' }));
+    const drawn = train.route.map(point => point.toArray());
+    elementAtPointer = input;
+    onPointerMove(event(425, 175, { pointerType: 'touch' }));
+    assert.deepEqual(train.route.map(point => point.toArray()), drawn);
+    onPointerUp(event(425, 175, { pointerType: 'touch' }));
+    assert.deepEqual(train.route.map(point => point.toArray()), previous);
+    assert.equal(train.drawing, false);
+    assert.equal(state.controls.enabled, true);
+});
+
+check('Escape, pointercancel, blur, and a second touch cancel a train route and unlock the camera', () => {
+    const cancellations = [
+        () => onKeyDown({ code: 'Escape', key: 'Escape', target: canvas }),
+        () => onPointerCancel({ type: 'pointercancel', pointerId: 1 }),
+        () => onPointerCancel({ type: 'blur' }),
+        () => onPointerDown(event(400, 100, { pointerType: 'touch', pointerId: 2, isPrimary: false, target: input }))
+    ];
+    for (const cancel of cancellations) {
+        clearTrain();
+        const train = spawnTrain(new THREE.Vector3(25, 0, 25));
+        const previous = seedTrainRoute(train);
+        const touch = event(25, 25, { pointerType: 'touch' });
+        onPointerDown(touch);
+        onPointerMove(event(225, 125, { pointerType: 'touch' }));
+        cancel();
+        onPointerUp(touch);
+        assert.deepEqual(train.route.map(point => point.toArray()), previous);
+        assert.equal(train.drawing, false);
+        assert.equal(state.controls.enabled, true);
+    }
+});
+
+check('train deletion during a drag cannot revive it or leave the camera locked', () => {
+    spawnTrain(new THREE.Vector3(25, 0, 25));
+    onPointerDown(event()); onPointerMove(event(225));
+    assert.equal(state.controls.enabled, false);
+    clearTrain();
+    onPointerMove(event(325)); onPointerUp(event(325));
+    assert.equal(state.train, null);
+    assert.equal(state.controls.enabled, true);
+    assert.equal(count(), 0);
+});
+
+check('train gestures restore an already disabled camera and removal mode only deletes the train', () => {
+    spawnTrain(new THREE.Vector3(25, 0, 25));
+    state.controls.enabled = false;
+    onPointerDown(event()); onPointerMove(event(225)); onPointerCancel();
+    assert.equal(state.controls.enabled, false);
+    state.controls.enabled = true;
+    state.animalMode = 'remove';
+    onPointerDown(event());
+    assert.equal(state.controls.enabled, true, 'removal never enters route drawing');
+    onPointerUp(event());
+    assert.equal(state.train, null);
     assert.equal(count(), 0);
 });
 console.log(`${passed} input regression cases passed`);

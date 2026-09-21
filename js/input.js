@@ -7,18 +7,22 @@ import { foods, spawnFood, showFoodGhost, hideFoodGhost, removeFoodWithEffect } 
 import { collectConnectedBlocks, awakenBlocks } from './living.js';
 import { applySnack } from './magic.js';
 import { playSound } from './sound.js';
+import { spawnTrain, clearTrain, beginTrainRoute, appendTrainRoutePoint, finishTrainRoute, cancelTrainRoute } from './train.js';
 
 let activePointer = null;
 let _grabbedAnimal = null;
 let _grabHoldTimer = null;
 let _grabGroundY = null;
 let _controlsWereEnabled = true;
+let _trainDrag = null;
 const GRAB_HOLD_MS = 350;
 const TAP_DISTANCE = 10;
 const GRAB_HOVER_HEIGHT = 120;
 const MAX_PATH_BLOCKS = 1000;
 const _grabPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const _grabIntersect = new THREE.Vector3();
+const _trainPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const _trainIntersect = new THREE.Vector3();
 
 function isInterface(target) {
     return !!target?.closest?.('#ui-layer, #palette-popup, .lil-gui, input, textarea, select, button, [contenteditable="true"]');
@@ -40,12 +44,14 @@ function setPointerRay(event) {
 function getHit() {
     const hits = state.raycaster.intersectObjects([
         ...objects,
+        ...(state.train?.mesh ? [state.train.mesh] : []),
         ...animals.map(a => a.mesh),
         ...foods.filter(f => !f.eaten && f.consumeTimer < 0).map(f => f.mesh)
     ], true);
     for (const hit of hits) {
         let object = hit.object;
         while (object) {
+            if (object.userData.trainRef) return { ...hit, train: object.userData.trainRef };
             if (object.userData.animalRef) return { ...hit, animal: object.userData.animalRef };
             if (object.userData.foodRef) return { ...hit, food: object.userData.foodRef };
             object = object.parent;
@@ -68,7 +74,7 @@ function hideEyesPreview() {
 }
 
 function showEyesPreview(hit) {
-    if (!hit || hit.animal || hit.food || hit.object === state.plane) { hideEyesPreview(); return; }
+    if (!hit || hit.animal || hit.food || hit.train || hit.object === state.plane) { hideEyesPreview(); return; }
     if (!state.eyesPreview) {
         const group = new THREE.Group();
         group.userData.material = new THREE.MeshBasicMaterial({ color: 0x58e8ca, transparent: true, opacity: 0.28, depthWrite: false });
@@ -120,10 +126,40 @@ function releaseAnimal() {
     if (state.controls) state.controls.enabled = _controlsWereEnabled;
 }
 
+function finishTrainGesture(commit = false) {
+    if (!_trainDrag) return;
+    const drag = _trainDrag;
+    _trainDrag = null;
+    try {
+        if (drag.started && state.train === drag.train) {
+            if (!commit || !finishTrainRoute()) cancelTrainRoute();
+        }
+    } finally {
+        if (state.controls) state.controls.enabled = drag.controlsWereEnabled;
+    }
+}
+
+function pointerOverInterface(event) {
+    return isInterface(event.target) || isInterface(document.elementFromPoint?.(event.clientX, event.clientY));
+}
+
+function sampleTrainRoute(event) {
+    setPointerRay(event);
+    if (!state.raycaster.ray.intersectPlane(_trainPlane, _trainIntersect)) return;
+    if (!Number.isFinite(_trainIntersect.x + _trainIntersect.z)) return;
+    if (!_trainDrag.started) {
+        // 기관차 표면의 클릭 위치가 아니라 엔진의 현재 위치에서 길을 시작한다.
+        if (!beginTrainRoute(_trainDrag.train)) { onPointerCancel(event); return; }
+        _trainDrag.started = true;
+    }
+    appendTrainRoutePoint(_trainIntersect.clone());
+}
+
 export function onPointerCancel(event) {
     if (event?.type === 'pointercancel' && activePointer && event.pointerId !== activePointer.id) return;
     clearGrabTimer();
     releaseAnimal();
+    finishTrainGesture();
     if (state.isDraggingRemove) pushHistory();
     state.isDraggingBuild = false;
     state.isDraggingRemove = false;
@@ -179,6 +215,12 @@ export function onPointerMove(event) {
         activePointer.moved = true;
         clearGrabTimer();
     }
+    if (_trainDrag) {
+        if (state.train !== _trainDrag.train) { onPointerCancel(event); return; }
+        if (pointerOverInterface(event)) return;
+        if (activePointer?.moved) sampleTrainRoute(event);
+        return;
+    }
     if (_grabbedAnimal && !animals.includes(_grabbedAnimal)) {
         onPointerCancel();
         return;
@@ -224,6 +266,12 @@ export function onPointerMove(event) {
         return;
     }
     const hit = getHit();
+    if (state.currentMode === 'train') {
+        state.targetGuideOpacity = 0;
+        hideFoodGhost();
+        hideEyesPreview();
+        return;
+    }
     if (state.currentMode === 'eyes') {
         state.targetGuideOpacity = 0;
         hideFoodGhost();
@@ -231,7 +279,7 @@ export function onPointerMove(event) {
         return;
     }
     hideEyesPreview();
-    if (!hit || hit.animal || hit.food) {
+    if (!hit || hit.animal || hit.food || hit.train) {
         state.targetGuideOpacity = 0;
         hideFoodGhost();
         return;
@@ -270,6 +318,15 @@ export function onPointerDown(event) {
     setPointerRay(event);
     const hit = getHit();
     if (state.animalMode === 'remove') return;
+    if (hit?.train) {
+        activePointer.entity = true;
+        _trainDrag = { train: hit.train, started: false, controlsWereEnabled: state.controls?.enabled ?? true };
+        // main.js가 이 핸들러를 캡처 단계에 연결하여 터치 오빗보다 먼저 잠근다.
+        if (state.controls) state.controls.enabled = false;
+        clearPreview();
+        return;
+    }
+    if (state.currentMode === 'train') return;
     if (hit?.animal) {
         activePointer.entity = true;
         if (state.currentMode === 'food' || (state.currentMode === 'eyes' && !hit.animal.livingId)) return;
@@ -305,6 +362,15 @@ export function onPointerDown(event) {
 
 export function onPointerUp(event) {
     if (!activePointer || event.pointerId !== activePointer.id || event.button !== 0) return;
+    if (_trainDrag) {
+        const canCommit = state.train === _trainDrag.train && !pointerOverInterface(event);
+        if (canCommit && _trainDrag.started) sampleTrainRoute(event);
+        finishTrainGesture(canCommit);
+        activePointer = null;
+        clearGrabTimer();
+        clearPreview();
+        return;
+    }
     const interaction = activePointer;
     activePointer = null;
     clearGrabTimer();
@@ -334,8 +400,18 @@ export function onPointerUp(event) {
         return;
     }
     if (state.animalMode === 'remove') {
-        if (hit.animal) removeAnimalWithEffect(hit.animal);
+        if (hit.train) clearTrain();
+        else if (hit.animal) removeAnimalWithEffect(hit.animal);
         else if (hit.food) removeFoodWithEffect(hit.food);
+        return;
+    }
+    if (hit.train) return;
+    if (state.currentMode === 'train') {
+        if (hit.object !== state.plane) {
+            state.onToyNotice?.('기차는 블록 위가 아닌 빈 바닥에 놓아줘! 🚂');
+        } else {
+            spawnTrain(new THREE.Vector3(hit.point.x, 0, hit.point.z));
+        }
         return;
     }
     if (state.currentMode === 'eyes') {

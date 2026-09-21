@@ -6,6 +6,7 @@ import { spawnDog, removeAllAnimalsWithEffect } from './entities.js';
 import { clearAllFoodWithEffect } from './food.js';
 import { onPointerCancel } from './input.js';
 import { setupToyUI } from './toy-ui.js';
+import { clearTrain } from './train.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -114,6 +115,7 @@ export function setupModeButtons() {
     const btnAnimal = document.getElementById('add-dog-btn'); // 동물 그룹 루프 버튼
     const btnFood = document.getElementById('btn-food');       // 먹이 그룹 루프 버튼
     const btnEyes = document.getElementById('btn-eyes');
+    const btnTrain = document.getElementById('btn-train');
     let toyUI = null;
 
     // ── 블록 그룹 (add ↔ remove 루프 토글) ──
@@ -157,6 +159,12 @@ export function setupModeButtons() {
         e.stopPropagation();
         activateToyMode('eyes');
         state.onToyNotice?.('눈 붙일 블록을 콕 눌러줘! 👀');
+    });
+
+    btnTrain.addEventListener('click', e => {
+        e.stopPropagation();
+        activateToyMode('train');
+        state.onToyNotice?.('바닥에 기차를 놓아줘! 기차를 끌면 마법 길이 생겨 🚂');
     });
 
     btnBlock.addEventListener('click', (e) => {
@@ -345,7 +353,7 @@ export function setupModeButtons() {
         state.animalMode = 'spawn';
         if (btnClearAll) {
             btnClearAll.classList.remove('remove-mode', 'longpress-active');
-            btnClearAll.title = '동물/먹이 개별 제거 (2초 누름: 전체 삭제)';
+            btnClearAll.title = '친구/먹이/기차 개별 제거 (2초 누름: 전체 삭제)';
         }
     }
 
@@ -354,7 +362,7 @@ export function setupModeButtons() {
         state.animalMode = active ? 'remove' : 'spawn';
         if (active) {
             btnClearAll.classList.add('remove-mode');
-            btnClearAll.title = '제거 모드 활성 | 동물/먹이 클릭으로 개별 제거 | 2초 누름 → 전체 삭제';
+            btnClearAll.title = '친구/먹이/기차를 눌러 제거 | 2초 누름 → 전체 삭제';
             // 먹이 모드 비활성화
             if (btnFood) {
                 btnFood.classList.remove('active');
@@ -366,7 +374,7 @@ export function setupModeButtons() {
             state.currentMode = blockState;
             if (btnFood) btnFood.classList.remove('active');
             btnClearAll.classList.remove('remove-mode', 'longpress-active');
-            btnClearAll.title = '동물/먹이 개별 제거 (2초 누름: 전체 삭제)';
+            btnClearAll.title = '친구/먹이/기차 개별 제거 (2초 누름: 전체 삭제)';
             // 블록 버튼 상태 복원
             if (blockState === 'add') {
                 btnBlock.classList.add('active');
@@ -405,6 +413,7 @@ export function setupModeButtons() {
                 _clearLongPressFired = true;
                 btnClearAll.classList.remove('longpress-active');
                 onPointerCancel();
+                clearTrain();
                 removeAllAnimalsWithEffect();
                 clearAllFoodWithEffect();
                 applyClearMode(false);

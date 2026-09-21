@@ -11,6 +11,7 @@ import { getFullSnapshot, disposeExplodingBrick } from './scene.js';
 import { updatePreview } from './camera.js';
 import { onPointerMove, onPointerDown, onPointerUp, onPointerCancel, onWindowResize, onKeyDown, onKeyUp } from './input.js';
 import { setupPalette, setupModeButtons, setupGUI, setupSnapControls } from './ui.js';
+import { updateTrain } from './train.js';
 import { animals, updateDogs } from './entities.js';
 import { updateFoods, initFoodGhost } from './food.js';
 import { updateMagicEffects } from './magic.js';
@@ -136,7 +137,7 @@ function init() {
     state.actionHistory.push(getFullSnapshot());
 
     document.addEventListener('pointermove', onPointerMove);
-    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('pointerup', onPointerUp);
     document.addEventListener('pointercancel', onPointerCancel);
     window.addEventListener('blur', onPointerCancel);
@@ -211,6 +212,7 @@ function animate(now) {
     simulationAccumulator += scaledDt;
     while (simulationAccumulator + 1e-10 >= fixedDt) {
         if (state.world) state.world.step(fixedDt);
+        updateTrain(fixedDt);
         updateDogs(fixedDt);
         updateFoods(fixedDt);
         updateMagicEffects(animals, fixedDt);

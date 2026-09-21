@@ -27,6 +27,7 @@ js/
   entities.js       — 동물 스폰/AI/애니메이션/클릭 액션 (animals 배열)
   living.js         — 연결된 블록 수집, 형태별 능력, 눈 부착, 블록 친구 스냅샷 복원
   magic.js          — 간식 재료/레시피, 변신 적용·만료, 무지개 흔적/자원 정리
+  train.js          — 기차 배치, 가까운 친구 순차 합류, 운행/그린 경로와 자원 정리
   food.js           — 간식 스폰/낙하 물리/고스트 프리뷰
   sound.js          — Web Audio API 절차적 효과음
   camera.js         — 3D 프리뷰 카메라 업데이트, 스냅 방향
@@ -40,6 +41,7 @@ tests/
   *-test.mjs        — 동물/씬/입력/효과음/먹이/블록 친구/변신 단위 회귀
   browser.cjs       — 기존 게임의 실제 데스크톱/모바일 브라우저 검증
   toys-browser.cjs  — 눈 붙이기/간식 툴바 순환/모바일 조작의 실제 브라우저 검증
+  train-browser.cjs — 기차 배치/합류/경로 드래그/취소/정리와 모바일 툴바 검증
 pikachu_reference.png
 ```
 
@@ -61,7 +63,8 @@ pikachu_reference.png
 모든 모듈이 `state` 객체를 공유한다. 주요 필드:
 
 ```js
-state.currentMode   // 'add' | 'remove' | 'food' | 'eyes'
+state.currentMode   // 'add' | 'remove' | 'food' | 'eyes' | 'train'
+state.train         // null 또는 { mesh, position, followers, route, routeIndex, drawing, pathVisual, ... }
 state.snackIngredients // UI에서는 [] 또는 balloon/jelly/rainbow 중 한 종류
 state.onToyNotice   // toy-ui.js가 등록하는 클릭을 막지 않는 알림 함수
 state.gameSpeed     // 1 | 2 | 3 (배속)
@@ -144,6 +147,15 @@ HEAVY 동물 클릭 시 화면 흔들림 + 블록 파괴 (`explodeBlockHeavy`)
 
 풍선은 원본 `animal.speed`를 변경하지 않고 AI 이후에 수평 속도를 제한하며 가감속을 부드럽게 처리함. `toy-ui.js`가 현재 간식에 맞춰 오른쪽 `btn-food`의 아이콘·툴팁·접근성 이름을 동기화하고, 다른 모드에서도 현재 아이콘을 유지함.
 
+## 동물 기차 (train.js)
+
+- 🚂(`btn-train`)는 매번 `train` 모드를 활성화하며 다시 눌러도 유지함. 빈 바닥 클릭은 `spawnTrain(position)`으로 한 대만 배치/재배치.
+- `state.train.position`은 바닥 기준 위치. `followers`에는 가까운 친구부터 순차 등록하며, 일반 동물과 블록 친구 모두 `animal.trainRide`로 참여 상태를 표시함.
+- 기차놀이 중에는 육식/초식의 포식·도주·회피 행동보다 대열을 우선함. `state.train`이 있는 동안에는 합류 전 동물도 포식자 회피를 하지 않음. 기차가 제거되면 참여 상태를 해제하고 기존 동물 AI로 돌아감.
+- 기차를 실제 포인터로 누른 뒤 끌면 `beginTrainRoute()` → `appendTrainRoutePoint(position)` → `finishTrainRoute()` 흐름으로 길을 그림. 그리는 동안 기차는 멈추고 OrbitControls를 잠금.
+- ESC, 두 번째 손가락, 모드 전환은 `cancelTrainRoute()`로 그리기를 취소하고 카메라 입력을 복구. `pathVisual`은 그리기 후 잠시 표시한 뒤 페이드하여 정리함.
+- `updateTrain(dt)`에는 배속을 적용한 고정 시뮬레이션 시간을 전달. 🧹 개별 삭제/길게 눌러 전체 삭제, 폭탄은 `clearTrain()`으로 기차 메시·경로 표시·친구의 참여 참조를 정리함. 기차는 편집 히스토리 복원 대상이 아님.
+
 ## 폭탄과 복원 (scene.js, entities.js)
 
 - `explodeBricks()`는 일반 블록뿐 아니라 `animals`의 블록 친구와 일반 동물도 함께 처리함. 블록 없이 동물만 있는 장면에서도 폭발 가능.
@@ -221,16 +233,17 @@ THREE.WebGLRenderer
 | 🐾 | add-dog-btn | 동물 스폰, 길게 누르면 그룹 선택 |
 | 👀 | btn-eyes | 매번 눈 붙이기 모드 활성화, 재클릭 시 유지 |
 | 🍎/🎈/🍮/🌈 | btn-food | 매번 다음 간식으로 순환하고 먹이기/배치 모드 활성화 |
-| 🧹 | btn-clear-all | 친구/먹이 개별 제거 모드, 2초 누름은 전체 제거 |
+| 🚂 | btn-train | 기차 배치/재배치 모드, 기차 드래그로 경로 그리기 |
+| 🧹 | btn-clear-all | 친구/먹이/기차 개별 제거 모드, 2초 누름은 전체 제거 |
 | ×1 | btn-game-speed | 배속 토글 (x1→x2→x3→x1) |
 
-눈 붙이기/간식/블록 편집/개별 제거 모드는 상호 배타적. 모드 변경 시 `onPointerCancel()`로 진행 중인 입력을 취소하고 툴바의 활성 상태를 동기화함. 눈 붙이기와 간식 조작은 데스크톱·모바일 모두 툴바에서 바로 수행하며, 블록 편집 복귀는 ✏️를 사용함. 네이티브 버튼의 키보드 활성화도 클릭·터치와 같은 모드 및 간식 순환 동작을 수행해야 함.
+눈 붙이기/간식/기차/블록 편집/개별 제거 모드는 상호 배타적. 모드 변경 시 `onPointerCancel()`로 진행 중인 입력을 취소하고 툴바의 활성 상태를 동기화함. 놀이 조작은 데스크톱·모바일 모두 툴바에서 바로 수행하며, 블록 편집 복귀는 ✏️를 사용함. 네이티브 버튼의 키보드 활성화도 클릭·터치와 같은 모드 및 간식 순환 동작을 수행해야 함.
 
 ## 회귀 검증
 
 Node.js 24 이상에서 `node tests/run.mjs` 실행. 개별 검증과 CDN 캐시는 `tests/README.md` 참고.
 
-Playwright와 Chromium이 준비되어 있으면 `node tests/browser.cjs`로 기존 게임, `node tests/toys-browser.cjs`로 새 놀이의 데스크톱/모바일 상호작용을 검증. 별도 설치 경로는 `PLAYWRIGHT_MODULE`, `CHROMIUM_EXECUTABLE` 환경변수로 지정. 테스트용 서버/브라우저는 각 명령이 자동 시작·종료하며 임시 결과는 `.tmp/qa/`에 저장.
+Playwright와 Chromium이 준비되어 있으면 `node tests/browser.cjs`로 기존 게임, `node tests/toys-browser.cjs`로 눈/간식 놀이, `node tests/train-browser.cjs`로 기차의 데스크톱/모바일 상호작용을 검증. 별도 설치 경로는 `PLAYWRIGHT_MODULE`, `CHROMIUM_EXECUTABLE` 환경변수로 지정. 테스트용 서버/브라우저는 각 명령이 자동 시작·종료하며 임시 결과는 `.tmp/qa/`에 저장.
 
 ## 개발 규칙
 

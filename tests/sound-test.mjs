@@ -9,7 +9,7 @@ async function loadSound(AudioContext) {
     return { ...sound, gesture: () => events.get('pointerdown')() };
 }
 const waitTurn = () => new Promise(resolve => setImmediate(resolve));
-const allSounds = ['block-place', 'block-remove', 'animal-spawn', 'animal-remove', 'food-place', 'food-eat', 'food-remove', 'explode', 'animal-click-WADDLE', 'animal-click-HOP', 'animal-click-SNEAK', 'animal-click-HEAVY', 'animal-click-quadruped', 'animal-click-CARNIVORE', 'animal-click-special'];
+const allSounds = ['train-whistle', 'train-route', 'block-place', 'block-remove', 'animal-spawn', 'animal-remove', 'food-place', 'food-eat', 'food-remove', 'explode', 'animal-click-WADDLE', 'animal-click-HOP', 'animal-click-SNEAK', 'animal-click-HEAVY', 'animal-click-quadruped', 'animal-click-CARNIVORE', 'animal-click-special'];
 function mockContext({ initialState = 'running', rejectResume = false } = {}) {
     const contexts = [];
     class MockParam {
@@ -95,7 +95,7 @@ await check('rejected resume is handled and a later gesture can retry', async ()
     process.off('unhandledRejection', capture);
 });
 
-await check('all 15 effects release every completed source, gain, and filter', async () => {
+await check('all 17 effects release every completed source, gain, and filter', async () => {
     const { MockContext, contexts } = mockContext();
     const sound = await loadSound(MockContext);
     for (const id of allSounds) sound.playSound(id);

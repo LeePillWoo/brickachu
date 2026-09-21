@@ -119,7 +119,7 @@ function runAnimation(fps, gameSpeed, seconds = 1) {
     const context = vm.createContext({
         THREE, state: simulationState, requestAnimationFrame() {}, explodingBricks: [],
         updateDogs(dt) { animalTime += dt; }, updateFoods(dt) { foodTime += dt; },
-        disposeExplodingBrick() {}, updatePreview() {}, updateMagicEffects() {}, animals: [],
+        disposeExplodingBrick() {}, updatePreview() {}, updateMagicEffects() {}, updateTrain() {}, animals: [],
     });
     vm.runInContext(animationSource, context);
     context.animate(0);

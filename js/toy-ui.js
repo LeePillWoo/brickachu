@@ -24,7 +24,7 @@ export function setupToyUI() {
 
     function sync() {
         const mode = state.animalMode === 'remove' ? '' : state.currentMode;
-        for (const [id, choiceMode] of [['btn-eyes', 'eyes'], ['btn-food', 'food']]) {
+        for (const [id, choiceMode] of [['btn-eyes', 'eyes'], ['btn-food', 'food'], ['btn-train', 'train']]) {
             const button = document.getElementById(id);
             button.classList.toggle('active', mode === choiceMode);
             button.setAttribute('aria-pressed', String(mode === choiceMode));

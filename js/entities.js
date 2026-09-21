@@ -5,6 +5,7 @@ import { explodeBlockHeavy, pushHistory } from './scene.js';
 import { foods } from './food.js';
 import { playSound } from './sound.js';
 import { applySnack, clearMagicEffect } from './magic.js';
+import { detachTrainFollower } from './train.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
@@ -25,7 +26,10 @@ const GROUND_BASE_HEIGHT = 0;
 const EAT_RADIUS = voxelSize * 1.8;
 
 export let grabbedAnimal = null;
-export function setGrabbedAnimal(a) { grabbedAnimal = a; }
+export function setGrabbedAnimal(a) {
+    if (a) detachTrainFollower(a);
+    grabbedAnimal = a;
+}
 
 export function disposeAnimalMesh(mesh) {
     if (!mesh) return;
@@ -45,6 +49,7 @@ export function disposeAnimalMesh(mesh) {
 }
 
 function detachAnimalBody(animal) {
+    detachTrainFollower(animal);
     clearMagicEffect(animal);
     if (animal.body && state.world) state.world.removeBody(animal.body);
     animal.grabbed = false;
@@ -398,7 +403,7 @@ const FLEE_RADIUS = voxelSize * 6;
 const MAX_CARNIVORES = 4;
 
 export function triggerClickAction(animal) {
-    if (!animals.includes(animal) || animal.grabbed || animal.clickActionTimer > 0) return;
+    if (!animals.includes(animal) || animal.grabbed || animal.trainRide || animal.clickActionTimer > 0) return;
     const actionType = CLICK_ACTION_MAP[animal.animGroup] || 'spin';
     animal.clickActionTimer = ACTION_DURATION[actionType] || 0.75;
     playSound('animal-click-' + animal.animGroup);
@@ -1150,7 +1155,16 @@ export function updateDogs(dt) {
         }
 
         // ── 착지 감지 ──
-        if (animal.state === 'falling') {
+        if (animal.trainRide) {
+            // The train owns travel, including joining: friends keep their usual
+            // visual animation and snacks without hunting, fleeing or smashing.
+            animal.isClimbing = false;
+            animal.climbMeshRotX = 0;
+            if (animal.isEating) {
+                animal.eatTimer -= dt;
+                if (animal.eatTimer <= 0) animal.isEating = false;
+            }
+        } else if (animal.state === 'falling') {
             if (animal.body) {
                 const halfHeight = animal.heightOffset * (voxelSize / 20);
                 const groundY = getGroundHeightBelow(animal.body.position.x, animal.body.position.y + 0.5, animal.body.position.z, GROUND_BASE_HEIGHT);
@@ -1170,9 +1184,9 @@ export function updateDogs(dt) {
 
             // ── 육식동물 도주 방향 계산 ──
             let fleeDir = null;
-            if (!animal.isCarnivore && animal.body) {
+            if (!state.train && !animal.isCarnivore && animal.body) {
                 for (const pred of animals) {
-                    if (!pred.isCarnivore || pred.grabbed || !pred.body) continue;
+                    if (!pred.isCarnivore || pred.grabbed || pred.trainRide || !pred.body) continue;
                     const fdx = animal.body.position.x - pred.body.position.x;
                     const fdz = animal.body.position.z - pred.body.position.z;
                     const dist2 = fdx * fdx + fdz * fdz;

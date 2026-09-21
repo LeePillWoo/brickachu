@@ -8,9 +8,11 @@ node tests/run.mjs
 
 npm 설치나 빌드는 필요하지 않습니다. 처음 실행할 때 `index.html`의 importmap에 고정된 Three.js와 Cannon-es를 내려받아 `.tmp/qa/`에 저장합니다. 캐시가 있으면 오프라인에서도 실행할 수 있습니다. importmap의 의존성 URL을 바꾸면 해당 캐시를 다시 내려받습니다.
 
-동물, 블록·실행 취소, 입력, 효과음, 먹이, 살아난 블록 친구, 변신 간식 테스트를 각각 독립된 Node 프로세스에서 실행합니다. 하나라도 실패하면 실행 명령은 종료 코드 `1`을 반환합니다. 실제 Three.js 기하와 Cannon-es 물리를 사용하며, DOM·렌더러·오디오 장치는 필요한 부분만 모의 구현합니다.
+동물, 블록·실행 취소, 입력, 효과음, 먹이, 살아난 블록 친구, 변신 간식, 기차 테스트를 각각 독립된 Node 프로세스에서 실행합니다. 하나라도 실패하면 실행 명령은 종료 코드 `1`을 반환합니다. 실제 Three.js 기하와 Cannon-es 물리를 사용하며, DOM·렌더러·오디오 장치는 필요한 부분만 모의 구현합니다.
 
 `living-test.mjs`는 연결된 블록 수집·형태별 능력·눈 부착·실행 취소/다시 실행·자원 정리를, `magic-test.mjs`는 변신 효과·게임 시간에 따른 만료·일반 사과 복원·자원 정리를 검증합니다. `input-test.mjs`에는 눈 붙이기와 직접 먹이기, 간식 배치 입력도 포함됩니다. 공개 UI는 툴바 버튼으로 간식을 한 종류씩 순환하며, 내부 API의 기존 두 재료 조합 호환성은 별도로 검증합니다.
+
+`train-test.mjs`는 가까운 순 합류, 실제 이동 경로 추종, 대열 간격, 장애물과 경계, 크기 변화, 합류 동선, 간식 속도 제한, 경로 취소·페이드·삭제를 검사합니다. 기차가 있는 동안 합류 전 동물까지 포식자를 피하지 않는지, 제거 후에는 원래 행동으로 돌아오는지도 확인합니다.
 
 폭탄 회귀에서는 일반 블록·블록 친구·일반 동물이 모두 폭발 대상으로 옮겨지는지, 블록 친구가 현재 위치에서 흩어지는지, 먹이는 기존 낙하 동작을 유지하는지 확인합니다. 복원 대상은 블록과 블록 친구이며, 일반 동물은 다시 소환해야 합니다.
 
@@ -27,6 +29,7 @@ Playwright와 Chromium이 준비된 환경에서는 다음을 실행합니다. �
 ```powershell
 node tests/browser.cjs
 node tests/toys-browser.cjs
+node tests/train-browser.cjs
 ```
 
 모바일 화면과 툴바 터치 조작만 빠르게 확인하려면 `node tests/toys-browser.cjs --mobile-only`를 실행합니다.
@@ -38,6 +41,7 @@ $env:PLAYWRIGHT_MODULE = 'C:/path/to/node_modules/playwright'
 $env:CHROMIUM_EXECUTABLE = 'C:/path/to/chrome.exe'
 node tests/browser.cjs
 node tests/toys-browser.cjs
+node tests/train-browser.cjs
 ```
 
 임시 로컬 서버와 헤드리스 브라우저를 자동으로 시작·종료합니다. 클릭·되돌리기·폭발·복원·먹이 낙하·동물 동작·길게 누르기·모바일 터치·주사율과 배속을 검사합니다. 스크린샷은 `.tmp/qa/desktop.png`, `.tmp/qa/mobile.png`에 저장됩니다. 실제 CDN 모듈을 사용하며 검증 중에는 분석용 태그 요청만 차단합니다.
@@ -50,4 +54,8 @@ node tests/toys-browser.cjs
 
 새 놀이 스크린샷은 `.tmp/qa/living-desktop.png`, `.tmp/qa/snacks-desktop.png`, `.tmp/qa/toys-mobile.png`에 저장됩니다. 실패 시에는 `.tmp/qa/toys-failure.png`도 저장합니다. 각 브라우저 검증 명령 역시 실패하면 종료 코드 `1`을 반환합니다.
 
-배포된 게임을 검사하려면 두 브라우저 명령에 `--url=https://leepillwoo.github.io/brickachu/`를 붙입니다. `--mobile-only`와 함께 사용할 수도 있습니다.
+`train-browser.cjs`는 실제 버튼과 바닥 클릭으로 기차를 놓고, 눈을 붙인 블록 친구와 일반 동물이 가까운 순서로 합류하는지 검사합니다. 육식·초식 친구가 함께 대열을 유지해야 합니다. 마우스/터치로 기차를 끌어 길을 그릴 때는 카메라가 움직이지 않고 기차가 멈추며, 손을 떼면 그 길을 따라가고 표시가 사라져야 합니다. ESC·모드 변경·두 손가락 취소, 개별/전체 제거와 폭탄 정리, 5개 모바일 화면 크기의 툴바도 확인합니다. 입력은 실제 브라우저 이벤트를 사용하며 경로 운행과 페이드 대기에는 게임의 고정 시간 업데이트를 사용합니다.
+
+기차 스크린샷은 `.tmp/qa/train-desktop.png`, `.tmp/qa/train-mobile.png`와 화면 크기별 파일에 저장됩니다. 실패 시 `.tmp/qa/train-failure.png`를 저장합니다. 모바일만 확인하려면 `node tests/train-browser.cjs --mobile-only`를 실행합니다.
+
+배포된 게임을 검사하려면 브라우저 명령에 `--url=https://leepillwoo.github.io/brickachu/`를 붙입니다. 기차와 새 놀이 검증은 `--mobile-only`와 함께 사용할 수도 있습니다.

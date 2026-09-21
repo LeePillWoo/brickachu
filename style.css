@@ -685,8 +685,10 @@ body > canvas {
 .mode-btn { border-radius: 11px; background: #eef1f2; }
 .mode-btn#btn-eyes { background: #dcf7e9; }
 .mode-btn#btn-food { background: #ffe9ed; }
+.mode-btn#btn-train { background: #def0ff; }
 .mode-btn#btn-eyes.active { background: #8ee0b9; color: #224d3c; box-shadow: 0 0 0 3px #e1f8eb; }
 .mode-btn#btn-food.active { background: #ffafc2; color: #773e51; box-shadow: 0 0 0 3px #fff0f4; }
+.mode-btn#btn-train.active { background: #94d4ff; color: #265878; box-shadow: 0 0 0 3px #e4f5ff; }
 
 #toy-notice,
 #toy-notice * { pointer-events: none; }
