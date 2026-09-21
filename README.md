@@ -4,6 +4,10 @@
 
 ## 실행
 
+설치 없이 바로 플레이: **[브릭카츄 실행하기](https://leepillwoo.github.io/brickachu/)**
+
+GitHub 저장소는 소스 코드를 보는 곳이며, 게임은 위 GitHub Pages 주소에서 실행합니다. `master`에 반영한 변경은 Pages 배포가 성공한 뒤 이 주소에 표시됩니다.
+
 Node.js가 설치된 터미널에서 프로젝트 폴더로 이동한 뒤 실행합니다. 별도 패키지 설치나 빌드는 필요 없습니다.
 
 ```powershell
