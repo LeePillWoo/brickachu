@@ -9,7 +9,7 @@ async function loadSound(AudioContext) {
     return { ...sound, gesture: () => events.get('pointerdown')() };
 }
 const waitTurn = () => new Promise(resolve => setImmediate(resolve));
-const allSounds = ['train-whistle', 'train-route', 'block-place', 'block-remove', 'animal-spawn', 'animal-remove', 'food-place', 'food-eat', 'food-remove', 'explode', 'animal-click-WADDLE', 'animal-click-HOP', 'animal-click-SNEAK', 'animal-click-HEAVY', 'animal-click-quadruped', 'animal-click-CARNIVORE', 'animal-click-special'];
+const allSounds = ['train-chuff', 'train-puff', 'train-ping', 'train-whistle', 'train-route', 'block-place', 'block-remove', 'animal-spawn', 'animal-remove', 'food-place', 'food-eat', 'food-remove', 'explode', 'animal-click-WADDLE', 'animal-click-HOP', 'animal-click-SNEAK', 'animal-click-HEAVY', 'animal-click-quadruped', 'animal-click-CARNIVORE', 'animal-click-special'];
 function mockContext({ initialState = 'running', rejectResume = false } = {}) {
     const contexts = [];
     class MockParam {
@@ -21,14 +21,16 @@ function mockContext({ initialState = 'running', rejectResume = false } = {}) {
     class MockNode {
         connected = false;
         starts = 0;
+        startTime = null;
+        stopTime = null;
         disconnects = 0;
         gain = new MockParam();
         frequency = new MockParam();
         Q = new MockParam();
         connect() { this.connected = true; }
         disconnect() { this.connected = false; this.disconnects++; }
-        start() { this.starts++; }
-        stop() {}
+        start(time = 0) { this.starts++; this.startTime = time; }
+        stop(time = 0) { this.stopTime = time; }
     }
     class MockContext {
         state = initialState;
@@ -95,15 +97,56 @@ await check('rejected resume is handled and a later gesture can retry', async ()
     process.off('unhandledRejection', capture);
 });
 
-await check('all 17 effects release every completed source, gain, and filter', async () => {
+await check('all effects release every completed source, gain, and filter', async () => {
     const { MockContext, contexts } = mockContext();
     const sound = await loadSound(MockContext);
-    for (const id of allSounds) sound.playSound(id);
+    for (const id of allSounds) {
+        const count = contexts[0]?.nodes.length || 0;
+        sound.playSound(id);
+        assert.ok(contexts[0].nodes.length > count, `${id} must create its audio nodes`);
+        contexts[0].currentTime += 1;
+    }
     const ac = contexts[0];
     assert.ok(ac.nodes.length > 50);
     for (const node of ac.nodes) if (node.starts) node.onended?.();
     assert.ok(ac.nodes.every(node => !node.connected));
     assert.ok(ac.nodes.every(node => node.disconnects === 1));
+});
+
+await check('train chuffs cannot pile up during fast physics catch-up and resume on the next beat', async () => {
+    const { MockContext, contexts } = mockContext();
+    const sound = await loadSound(MockContext);
+    sound.playSound('train-chuff');
+    const ac = contexts[0], firstCount = ac.nodes.length;
+    for (let i = 0; i < 120; i++) sound.playSound(i % 2 ? 'train-chuff' : 'train-puff');
+    assert.equal(ac.nodes.length, firstCount);
+    ac.currentTime += 0.2;
+    sound.playSound('train-puff');
+    assert.ok(ac.nodes.length > firstCount);
+    const movingCount = ac.nodes.length;
+    document.hidden = true;
+    ac.currentTime += 1;
+    sound.playSound('train-chuff'); sound.playSound('train-ping');
+    assert.equal(ac.nodes.length, movingCount, 'background train effects must be silent');
+    document.hidden = false;
+    sound.playSound('train-chuff');
+    assert.ok(ac.nodes.length > movingCount);
+});
+
+await check('train ping plays two brief notes and suppresses duplicate bursts', async () => {
+    const { MockContext, contexts } = mockContext();
+    const sound = await loadSound(MockContext);
+    sound.playSound('train-ping');
+    const ac = contexts[0], sources = ac.nodes.filter(node => node.starts);
+    assert.equal(sources.length, 4);
+    assert.deepEqual(sources.map(node => node.startTime), [10, 10, 10.19, 10.19]);
+    assert.ok(sources.every(node => node.stopTime > node.startTime && node.stopTime < 10.7));
+    const count = ac.nodes.length;
+    sound.playSound('train-ping');
+    assert.equal(ac.nodes.length, count);
+    ac.currentTime += 2;
+    sound.playSound('train-ping');
+    assert.equal(ac.nodes.length, count * 2);
 });
 
 await check('volume zero schedules no exponential ramps or audible nodes; invalid values are ignored', async () => {

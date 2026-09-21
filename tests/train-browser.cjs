@@ -43,6 +43,7 @@ async function resetFixture(page) {
         qa.clearTrain(); qa.clearAllAnimals(); qa.clearAllFood();
         qa.objects.filter(block => block !== qa.state.plane).forEach(qa.removeVoxel);
         qa.state.gameSpeed = 1;
+        qa.trainSteamSeen = { ordinary: false, ping: false };
         const distance = Math.max(1, 0.78 / qa.state.camera.aspect);
         qa.state.camera.position.set(560 * distance, 720 * distance, 950 * distance);
         qa.state.controls.target.set(0, 0, 0); qa.state.velocity.set(0, 0, 0);
@@ -86,6 +87,39 @@ async function placeTrain(page, position, touch = false) {
     else await page.mouse.click(point.x, point.y);
     await page.waitForFunction(() => Boolean(qa.state.train?.mesh.parent));
 }
+async function createPassengerFixture(page, touch = false) {
+    await page.evaluate(() => {
+        qa.far = qa.spawnDog('carnivore');
+        qa.far.mesh.position.set(-650, 0, -650); qa.far.body.position.set(-650, qa.far.heightOffset * (qa.voxelSize / 20), -650);
+        qa.placeVoxel(new qa.THREE.Vector3(-75, 25, -75), 'preset-10', true);
+        qa.placeVoxel(new qa.THREE.Vector3(-75, 75, -75), 'preset-9', true); qa.pushHistory();
+    });
+    await page.locator('#btn-eyes')[touch ? 'tap' : 'click']();
+    const head = await project(page, [-75, 75, -49]);
+    if (touch) await page.touchscreen.tap(head.x, head.y);
+    else await page.mouse.click(head.x, head.y);
+    check(`${touch ? 'Mobile tap' : 'A real eyes click'} creates a block friend for the train exclusion check`, await page.evaluate(() => qa.animals.some(animal => animal.livingId) && qa.objects.length === 1));
+    await page.evaluate(() => {
+        qa.blockFriend = qa.animals.find(animal => animal.livingId); qa.near = qa.spawnDog('hop');
+        for (const [animal, x] of [[qa.blockFriend, -60], [qa.near, -130], [qa.far, -250]]) {
+            animal.mesh.position.set(x, 0, -80); animal.body.position.set(x, animal.heightOffset * (qa.voxelSize / 20), -80);
+            animal.body.velocity.set(0, 0, 0); animal.state = 'idle'; animal.timer = 100; animal.isCarnivore = false;
+        }
+        // Keep everyone still until placement, then restore the predator flag.
+    });
+}
+async function checkRopeChain(page, label) {
+    check(`${label} ropes connect the locomotive and each ordinary animal in order`, await page.evaluate(() => {
+        const train = qa.state.train;
+        return train.ropeGroup.parent === qa.state.scene && train.ropes.length === 2 && train.ropes.every((rope, i) => rope.from === (i ? train.followers[i - 1] : train) && rope.to === train.followers[i] && rope.mesh.parent === train.ropeGroup && rope.segments.length === 8 && rope.segments.every(segment => segment.visible && segment.parent && segment.geometry && segment.material));
+    }));
+}
+async function captureTravel(page) {
+    return page.evaluate(() => ({ train: qa.state.train.position.toArray(), friend: qa.near.mesh.position.toArray(), ropes: qa.state.train.ropes.map(rope => ({ start: rope.start.toArray(), end: rope.end.toArray() })) }));
+}
+async function checkRopeMovement(page, before, label) {
+    check(`${label} rope endpoints follow the moving locomotive and animals`, await page.evaluate(before => qa.state.train.ropes.length === before.ropes.length && qa.state.train.ropes.every((rope, i) => rope.start.distanceTo(new qa.THREE.Vector3(...before.ropes[i].start)) > 10 && rope.end.distanceTo(new qa.THREE.Vector3(...before.ropes[i].end)) > 10), before));
+}
 async function touchEvent(session, type, points) {
     await session.send('Input.dispatchTouchEvent', { type, touchPoints: points.map((point, id) => ({ x: point.x, y: point.y, id, radiusX: 1, radiusY: 1, force: 1 })) });
 }
@@ -116,7 +150,10 @@ async function advance(page, seconds) {
     // spending many rendered seconds on route following and decoration expiry.
     await page.evaluate(seconds => {
         for (let i = 0; i < Math.ceil(seconds * 60); i++) {
-            qa.state.world.step(1 / 60); qa.updateTrain(1 / 60); qa.updateDogs(1 / 60); qa.updateFoods(1 / 60); qa.updateMagicEffects(qa.animals, 1 / 60);
+            qa.state.world.step(1 / 60); qa.updateTrain(1 / 60); qa.updateDogs(1 / 60); qa.updateFoods(1 / 60); qa.updateMagicEffects(qa.animals, 1 / 60); qa.syncTrainRopes();
+            for (const puff of qa.state.train?.steam || []) {
+                if (puff.life > 0 && puff.mesh.visible) qa.trainSteamSeen[puff.emphasized ? 'ping' : 'ordinary'] = true;
+            }
         }
     }, seconds);
 }
@@ -143,34 +180,19 @@ async function checkFinishedRoute(page, label) {
             await initialize(page, url); await resetFixture(page);
             await page.locator('#btn-train').click(); await page.locator('#btn-train').click();
             check('Repeated train button clicks keep train mode without creating anything', await page.evaluate(() => qa.state.currentMode === 'train' && !qa.state.train && qa.objects.length === 1 && document.getElementById('btn-train').classList.contains('active')));
-            await page.evaluate(() => {
-                qa.far = qa.spawnDog('carnivore');
-                qa.placeVoxel(new qa.THREE.Vector3(-75, 25, -75), 'preset-10', true);
-                qa.placeVoxel(new qa.THREE.Vector3(-75, 75, -75), 'preset-9', true);
-                qa.pushHistory();
-            });
-            await page.locator('#btn-eyes').click();
-            const head = await project(page, [-75, 75, -49]); await page.mouse.click(head.x, head.y);
-            check('A real eyes click creates the block friend used in the train', await page.evaluate(() => qa.animals.some(animal => animal.livingId) && qa.objects.length === 1));
-            await page.evaluate(() => {
-                qa.near = qa.animals.find(animal => animal.livingId);
-                for (const [animal, x] of [[qa.near, -90], [qa.far, -190]]) {
-                    animal.mesh.position.set(x, 0, -40); animal.body.position.set(x, animal.heightOffset * (qa.voxelSize / 20), -40);
-                    animal.body.velocity.set(0, 0, 0); animal.state = 'idle'; animal.timer = 100; animal.isCarnivore = false;
-                }
-                // Keep the fixture motionless until the train exists, then turn
-                // the ordinary animal back into a predator to test the contract.
-            });
+            await createPassengerFixture(page);
             await placeTrain(page, [0, 0, 0]);
             await page.evaluate(() => { qa.far.isCarnivore = true; });
             check('A canvas click places one train without a block or snack', await page.evaluate(() => Boolean(qa.state.train.mesh.parent) && qa.objects.length === 1 && qa.foods.length === 0));
             await page.waitForFunction(() => qa.state.train.followers.length > 0, null, { polling: 50 });
-            check('The closest block friend joins before the farther ordinary animal', await page.evaluate(() => qa.state.train.followers[0] === qa.near));
+            check('The closest ordinary animal joins while the nearer block friend is excluded', await page.evaluate(() => qa.state.train.followers[0] === qa.near && !qa.state.train.followers.includes(qa.blockFriend) && !qa.blockFriend.trainRide));
             await advance(page, 3);
-            check('Predator and prey join the same train', await page.evaluate(() => qa.state.train.followers.includes(qa.near) && qa.state.train.followers.includes(qa.far)));
-            const travelStart = await page.evaluate(() => ({ train: qa.state.train.position.toArray(), friend: qa.near.mesh.position.toArray() }));
+            check('Predator and prey join the same train without the living blocks', await page.evaluate(() => qa.state.train.followers.length === 2 && qa.state.train.followers.includes(qa.near) && qa.state.train.followers.includes(qa.far) && !qa.blockFriend.trainRide));
+            await checkRopeChain(page, 'Desktop');
+            const travelStart = await captureTravel(page);
             await advance(page, 2);
             check('The train drives automatically and its animal queue moves with it', await page.evaluate(before => qa.state.train.position.distanceTo(new qa.THREE.Vector3(...before.train)) > 20 && qa.near.mesh.position.distanceTo(new qa.THREE.Vector3(...before.friend)) > 20, travelStart));
+            await checkRopeMovement(page, travelStart, 'Desktop');
             check('Predator avoidance never breaks the passenger queue', await page.evaluate(() => qa.state.train.followers.includes(qa.near) && qa.state.train.followers.includes(qa.far) && Boolean(qa.near.trainRide) && Boolean(qa.far.trainRide)));
             // Recenter only the camera as preparation for a visible train pick.
             await page.evaluate(() => {
@@ -186,12 +208,23 @@ async function checkFinishedRoute(page, label) {
             check('Escape cancels route drawing and releases camera controls', await page.evaluate(() => !qa.state.train.drawing && qa.state.controls.enabled));
             await startDrawing(page); await page.locator('#btn-food').click(); await page.mouse.up();
             check('Changing tools cancels route drawing', await page.evaluate(() => !qa.state.train.drawing && qa.state.controls.enabled && qa.state.currentMode === 'food'));
-            await page.evaluate(() => { qa.oldTrainMesh = qa.state.train.mesh; });
+            await page.evaluate(() => {
+                qa.oldTrainMesh = qa.state.train.mesh; qa.oldRopeGroup = qa.state.train.ropeGroup; qa.oldRopes = qa.state.train.ropes;
+                const geometries = new Set(), materials = new Set();
+                qa.oldRopeGroup.traverse(part => {
+                    if (part.geometry) geometries.add(part.geometry);
+                    if (part.material) (Array.isArray(part.material) ? part.material : [part.material]).forEach(material => materials.add(material));
+                });
+                qa.ropeDisposal = { geometries: 0, materials: 0, expectedGeometries: geometries.size, expectedMaterials: materials.size };
+                geometries.forEach(geometry => geometry.addEventListener('dispose', () => qa.ropeDisposal.geometries++));
+                materials.forEach(material => material.addEventListener('dispose', () => qa.ropeDisposal.materials++));
+            });
             await page.evaluate(() => { qa.state.camera.position.set(560, 720, 950); qa.state.controls.target.set(0, 0, 0); qa.state.controls.update(); });
             await placeTrain(page, [-250, 0, 200]);
             check('Another floor click relocates the single train', await page.evaluate(() => qa.state.train.position.distanceTo(new qa.THREE.Vector3(-250, 0, 200)) < 35 && (qa.oldTrainMesh === qa.state.train.mesh || !qa.oldTrainMesh.parent)));
+            check('Relocating the train removes old ropes and disposes each shared resource once', await page.evaluate(() => !qa.oldRopeGroup.parent && qa.oldRopes.length === 0 && qa.ropeDisposal.expectedGeometries > 0 && qa.ropeDisposal.expectedMaterials > 0 && qa.ropeDisposal.geometries === qa.ropeDisposal.expectedGeometries && qa.ropeDisposal.materials === qa.ropeDisposal.expectedMaterials));
             await page.locator('#btn-clear-all').click(); const removePoint = await trainPoint(page); await page.mouse.click(removePoint.x, removePoint.y);
-            check('The broom removes an individual train and releases all passengers', await page.evaluate(() => !qa.state.train && qa.animals.every(animal => !animal.trainRide)));
+            check('The broom removes an individual train, its ropes and all passenger references', await page.evaluate(() => !qa.state.train && qa.animals.every(animal => !animal.trainRide) && !qa.state.scene.children.some(child => child.name === 'train-friend-ropes')));
             await placeTrain(page, [0, 0, 0]);
             const broom = await page.locator('#btn-clear-all').boundingBox(); await page.mouse.move(broom.x + broom.width / 2, broom.y + broom.height / 2); await page.mouse.down();
             await page.waitForTimeout(2200); await page.mouse.up();
@@ -205,12 +238,20 @@ async function checkFinishedRoute(page, label) {
         const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
         const errors = []; mobile.on('pageerror', error => errors.push(error.message));
         await initialize(mobile, url); await resetFixture(mobile);
+        await createPassengerFixture(mobile, true);
         await placeTrain(mobile, [0, 0, 0], true);
+        await mobile.evaluate(() => { qa.far.isCarnivore = true; });
         check('A real mobile tap places a train without editing blocks', await mobile.evaluate(() => Boolean(qa.state.train) && qa.objects.length === 1));
+        await advance(mobile, 3);
+        check('Mobile excludes the nearest living blocks and recruits ordinary prey then predator', await mobile.evaluate(() => qa.state.train.followers.length === 2 && qa.state.train.followers[0] === qa.near && qa.state.train.followers[1] === qa.far && !qa.blockFriend.trainRide));
+        await checkRopeChain(mobile, 'Mobile');
+        const mobileTravel = await captureTravel(mobile); await advance(mobile, 2);
+        await checkRopeMovement(mobile, mobileTravel, 'Mobile');
         const touch = await mobile.context().newCDPSession(mobile);
         await startDrawing(mobile, touch);
         await mobile.screenshot({ path: '.tmp/qa/train-mobile.png' });
         await touchEvent(touch, 'touchEnd', []); await checkFinishedRoute(mobile, 'Mobile');
+        check('Mobile movement emits ordinary steam and occasional ping bursts', await mobile.evaluate(() => qa.trainSteamSeen.ordinary && qa.trainSteamSeen.ping));
         const drawing = await startDrawing(mobile, touch);
         await touchEvent(touch, 'touchStart', [drawing.end, { x: drawing.end.x - 35, y: drawing.end.y + 35 }]);
         await touchEvent(touch, 'touchEnd', []);

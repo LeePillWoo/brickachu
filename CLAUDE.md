@@ -27,7 +27,7 @@ js/
   entities.js       — 동물 스폰/AI/애니메이션/클릭 액션 (animals 배열)
   living.js         — 연결된 블록 수집, 형태별 능력, 눈 부착, 블록 친구 스냅샷 복원
   magic.js          — 간식 재료/레시피, 변신 적용·만료, 무지개 흔적/자원 정리
-  train.js          — 기차 배치, 가까운 친구 순차 합류, 운행/그린 경로와 자원 정리
+  train.js          — 기차 배치, 일반 동물 순차 합류, 밧줄/운행/경로/연기와 자원 정리
   food.js           — 간식 스폰/낙하 물리/고스트 프리뷰
   sound.js          — Web Audio API 절차적 효과음
   camera.js         — 3D 프리뷰 카메라 업데이트, 스냅 방향
@@ -64,7 +64,7 @@ pikachu_reference.png
 
 ```js
 state.currentMode   // 'add' | 'remove' | 'food' | 'eyes' | 'train'
-state.train         // null 또는 { mesh, position, followers, route, routeIndex, drawing, pathVisual, ... }
+state.train         // null 또는 { mesh, position, followers, route, routeIndex, drawing, pathVisual, ropeGroup, ropes, ... }
 state.snackIngredients // UI에서는 [] 또는 balloon/jelly/rainbow 중 한 종류
 state.onToyNotice   // toy-ui.js가 등록하는 클릭을 막지 않는 알림 함수
 state.gameSpeed     // 1 | 2 | 3 (배속)
@@ -150,7 +150,11 @@ HEAVY 동물 클릭 시 화면 흔들림 + 블록 파괴 (`explodeBlockHeavy`)
 ## 동물 기차 (train.js)
 
 - 🚂(`btn-train`)는 매번 `train` 모드를 활성화하며 다시 눌러도 유지함. 빈 바닥 클릭은 `spawnTrain(position)`으로 한 대만 배치/재배치.
-- `state.train.position`은 바닥 기준 위치. `followers`에는 가까운 친구부터 순차 등록하며, 일반 동물과 블록 친구 모두 `animal.trainRide`로 참여 상태를 표시함.
+- `state.train.position`은 바닥 기준 위치. `followers`에는 가까운 일반 동물부터 순차 등록하고 `animal.trainRide`로 참여 상태를 표시함. `livingId`가 있는 블록 친구는 가장 가까이 있어도 합류 대상에서 제외함.
+- 기관차 → 첫 동물 → 다음 동물 사이에 밧줄을 표시하며 이동/대열 변경에 맞춰 연결 위치를 갱신함. 동물 이탈·기차 재배치·삭제 시 밧줄 참조와 소유 자원도 정리함.
+- `ropeGroup`은 씬 직속 그룹. `ropes`의 각 항목은 `{ from, to, mesh, start, end, segments }`이며 `start`/`end`는 월드 좌표. 대기 중인 동물을 포함해 참여 동물당 한 연결을 표시하고, 공유 geometry/material은 기차가 소유하여 정리 시 각각 한 번 해제함.
+- 고정 스텝에서 `updateMagicEffects()` 직후 `syncTrainRopes()`를 호출하여 풍선 변신의 방향·크기 보정까지 밧줄 끝 위치에 반영함.
+- 이동 중 칙칙폭폭 효과음을 반복하고 간헐적으로 핑핑 소리와 연기를 냄. 멈추거나 경로를 그리는 동안에는 운행 효과를 멈추며, Web Audio API로 소리를 생성함.
 - 기차놀이 중에는 육식/초식의 포식·도주·회피 행동보다 대열을 우선함. `state.train`이 있는 동안에는 합류 전 동물도 포식자 회피를 하지 않음. 기차가 제거되면 참여 상태를 해제하고 기존 동물 AI로 돌아감.
 - 기차를 실제 포인터로 누른 뒤 끌면 `beginTrainRoute()` → `appendTrainRoutePoint(position)` → `finishTrainRoute()` 흐름으로 길을 그림. 그리는 동안 기차는 멈추고 OrbitControls를 잠금.
 - ESC, 두 번째 손가락, 모드 전환은 `cancelTrainRoute()`로 그리기를 취소하고 카메라 입력을 복구. `pathVisual`은 그리기 후 잠시 표시한 뒤 페이드하여 정리함.

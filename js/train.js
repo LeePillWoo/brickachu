@@ -9,6 +9,9 @@ export const MAX_TRAIN_ROUTE_POINTS = 160;
 export const MAX_TRAIN_ROUTE_LENGTH = 8000;
 const TRAIN_RADIUS = 68, TRAIN_HEIGHT = 110;
 const BOARD_LIMIT = 900, JOIN_INTERVAL = 0.65, MAX_TRAIL_POINTS = 4096;
+const ROPE_SEGMENTS = 8;
+const DRIVE_BEATS = ['train-chuff', 'train-chuff', 'train-puff', 'train-puff'];
+const isLivingBlock = animal => Boolean(animal?.livingId) || animal?.animalType === 'living-block';
 
 function disposeTree(root) {
     if (!root) return;
@@ -139,13 +142,19 @@ export function detachTrainFollower(animal) {
     animal.trainJoinCooldown = 2;
     animal.state = 'idle'; animal.timer = 0.8;
     if (animal.body) { animal.body.velocity.x = 0; animal.body.velocity.z = 0; }
+    if (!ride.train.clearing) updateRopes(ride.train);
 }
 
 export function clearTrain() {
     const train = state.train;
     if (!train) return;
+    train.clearing = true;
     for (const animal of [...train.followers]) detachTrainFollower(animal);
     disposeTree(train.pathVisual); disposeTree(train.mesh);
+    train.ropeGroup?.removeFromParent();
+    train.ropeGroup?.clear(); train.ropes.length = 0;
+    train.ropeGeometry?.dispose(); train.ropeMaterial?.dispose();
+    train.ropeGeometry = null; train.ropeMaterial = null;
     train.pathVisual = null; train.route.length = 0; train.trail.length = 0;
     train.drawing = false; train.routeBackup = null;
     state.train = null;
@@ -164,12 +173,15 @@ export function spawnTrain(point) {
         ...model, position, followers: [], route: [], routeIndex: 0, drawing: false,
         pathVisual: null, pathFade: 0, routeBackup: null, draftLength: 0,
         trail: [{ position: position.clone(), distance: 0 }], distance: 0,
-        heading: 0, autoGoal: null, recruitTimer: 0, steamTimer: 0, elapsed: 0,
+        heading: 0, autoGoal: null, recruitTimer: 0, elapsed: 0,
+        ropeGroup: new THREE.Group(), ropes: [], ropeGeometry: null, ropeMaterial: null,
+        chuffDistance: 0, chuffPhase: 0, runningTime: 0, pingTimer: 5 + Math.random() * 4,
         speed: TRAIN_SPEED, blockedNotice: false
     };
     model.mesh.position.copy(position);
     model.mesh.traverse(child => { child.userData.trainRef = train; });
-    state.scene.add(model.mesh); state.train = train;
+    train.ropeGroup.name = 'train-friend-ropes';
+    state.scene.add(model.mesh, train.ropeGroup); state.train = train;
     model.mesh.updateMatrixWorld(true);
     playSound('train-whistle');
     return train;
@@ -271,7 +283,7 @@ function recordTrail(train, position) {
 function recruit(train, blocks) {
     const tail = train.followers.at(-1);
     const meeting = tail?.trainRide?.lastPosition || train.position;
-    const candidates = animals.filter(animal => animal.body && !animal.grabbed && !animal.trainRide && !(animal.trainJoinCooldown > 0)
+    const candidates = animals.filter(animal => animal.body && !isLivingBlock(animal) && !animal.grabbed && !animal.trainRide && !(animal.trainJoinCooldown > 0)
         && animal.body.position.y - animal.heightOffset * (voxelSize / 20) < 260)
         .map(animal => ({ animal, distance: Math.hypot(animal.body.position.x - meeting.x, animal.body.position.z - meeting.z) }))
         .filter(candidate => candidate.distance <= TRAIN_JOIN_RADIUS).sort((a, b) => a.distance - b.distance);
@@ -310,7 +322,7 @@ function followerSpeed(animal) {
 function updateFollowers(train, dt, blocks) {
     let spacing = TRAIN_RADIUS + 20;
     for (const animal of [...train.followers]) {
-        if (!animals.includes(animal) || animal.grabbed || !animal.body) { detachTrainFollower(animal); continue; }
+        if (!animals.includes(animal) || isLivingBlock(animal) || animal.grabbed || !animal.body) { detachTrainFollower(animal); continue; }
         const ride = animal.trainRide, size = followerSize(animal);
         spacing += size.radius;
         ride.followDistance = spacing;
@@ -379,21 +391,102 @@ function chooseAutoGoal(train, size, blocks) {
     return null;
 }
 
+function animalRopeAnchor(animal, front) {
+    const halfHeight = animal.heightOffset * (voxelSize / 20);
+    let depth = 15;
+    animal.body.shapes.forEach((shape, index) => {
+        if (shape.halfExtents) depth = Math.max(depth, Math.abs(animal.body.shapeOffsets[index].z) + shape.halfExtents.z);
+    });
+    animal.mesh.updateWorldMatrix(true, false);
+    return animal.mesh.localToWorld(new THREE.Vector3(0, Math.max(12, Math.min(halfHeight * 0.9, 38)), depth * 0.7 * front));
+}
+
+function updateRopes(train) {
+    if (!train.ropeGroup || train.clearing) return;
+    while (train.ropes.length > train.followers.length) {
+        const rope = train.ropes.pop(); rope.mesh.removeFromParent(); rope.mesh.clear();
+    }
+    if (train.followers.length && !train.ropeGeometry) {
+        train.ropeGeometry = new THREE.CylinderGeometry(2.2, 2.2, 1, 6);
+        train.ropeMaterial = new THREE.MeshStandardMaterial({ color: 0xcda473, roughness: 1 });
+    }
+    const cylinderAxis = new THREE.Vector3(0, 1, 0);
+    for (let index = 0; index < train.followers.length; index++) {
+        const animal = train.followers[index];
+        let rope = train.ropes[index];
+        if (!rope) {
+            const mesh = new THREE.Group(); mesh.name = 'train-rope-link';
+            const segments = Array.from({ length: ROPE_SEGMENTS }, () => {
+                const segment = new THREE.Mesh(train.ropeGeometry, train.ropeMaterial);
+                segment.name = 'train-rope-segment'; mesh.add(segment); return segment;
+            });
+            rope = { mesh, segments, start: new THREE.Vector3(), end: new THREE.Vector3() };
+            train.ropes.push(rope); train.ropeGroup.add(mesh);
+        }
+        rope.from = index === 0 ? train : train.followers[index - 1]; rope.to = animal;
+        if (index === 0) rope.start.copy(train.position).add(new THREE.Vector3(-Math.sin(train.heading) * 47, 30, -Math.cos(train.heading) * 47));
+        else rope.start.copy(animalRopeAnchor(rope.from, -1));
+        rope.end.copy(animalRopeAnchor(animal, 1));
+        const sag = Math.min(18, rope.start.distanceTo(rope.end) * 0.1);
+        const sample = t => {
+            const p = rope.start.clone().lerp(rope.end, t);
+            p.y = Math.max(3, p.y - sag * 4 * t * (1 - t)); return p;
+        };
+        let previous = sample(0);
+        for (let part = 0; part < ROPE_SEGMENTS; part++) {
+            const next = sample((part + 1) / ROPE_SEGMENTS), direction = next.clone().sub(previous);
+            const segment = rope.segments[part], length = direction.length();
+            segment.visible = length > 0.001;
+            segment.position.copy(previous).add(next).multiplyScalar(0.5);
+            segment.scale.y = Math.max(length, 0.001);
+            if (length > 0.001) segment.quaternion.setFromUnitVectors(cylinderAxis, direction.normalize());
+            previous = next;
+        }
+    }
+    train.ropeGroup.updateMatrixWorld(true);
+}
+
+// Balloon drift changes heading/scale after AI. Call once after snack updates
+// (or just before rendering) so ropes use the final visible attachment points.
+export function syncTrainRopes() {
+    if (state.train) updateRopes(state.train);
+}
+
+function emitSteam(train, count = 1, emphasized = false) {
+    for (let index = 0; index < count; index++) {
+        const puff = train.steam.find(particle => particle.life <= 0) || train.steam.reduce((a, b) => a.life < b.life ? a : b);
+        puff.maxLife = emphasized ? 1.3 : 0.9; puff.life = puff.maxLife;
+        puff.baseScale = emphasized ? 8 : 5; puff.riseSpeed = emphasized ? 39 : 26;
+        puff.drift = emphasized ? (index - (count - 1) / 2) * 8 : (Math.random() - 0.5) * 8;
+        puff.emphasized = emphasized;
+        puff.mesh.position.set(emphasized ? (index - (count - 1) / 2) * 6 : 0, 96, 27);
+        puff.mesh.visible = true;
+    }
+}
+
 function updateVisuals(train, dt, traveled) {
     train.mesh.position.copy(train.position);
     train.mesh.rotation.y = train.heading;
     train.wheels.forEach(wheel => { wheel.rotation.x -= traveled / 13; });
-    train.steamTimer -= dt;
-    if (traveled > 0 && train.steamTimer <= 0) {
-        const puff = train.steam.find(particle => particle.life <= 0);
-        if (puff) { puff.life = 0.9; puff.mesh.position.set(0, 96, 27); puff.mesh.visible = true; }
-        train.steamTimer = 0.24;
+    if (traveled > 0.001 && !train.drawing && !document.hidden) {
+        train.chuffDistance += traveled; train.runningTime += dt; train.pingTimer -= dt;
+        if (train.chuffDistance >= 26) {
+            train.chuffDistance %= 26;
+            playSound(DRIVE_BEATS[train.chuffPhase]);
+            train.chuffPhase = (train.chuffPhase + 1) % DRIVE_BEATS.length; emitSteam(train);
+        }
+        if (train.pingTimer <= 0) {
+            playSound('train-ping'); emitSteam(train, 3, true);
+            train.pingTimer = 5 + Math.random() * 4;
+        }
     }
     for (const puff of train.steam) {
         if (puff.life <= 0) continue;
         puff.life = Math.max(0, puff.life - dt); puff.mesh.visible = puff.life > 0;
-        puff.mesh.position.y += dt * 28; puff.mesh.position.z -= dt * 16;
-        puff.mesh.scale.setScalar(5 + (0.9 - puff.life) * 10); puff.mesh.material.opacity = puff.life * 0.48;
+        const age = puff.maxLife - puff.life;
+        puff.mesh.position.y += dt * (puff.riseSpeed + age * 9); puff.mesh.position.z -= dt * 13;
+        puff.mesh.position.x += dt * puff.drift;
+        puff.mesh.scale.setScalar(puff.baseScale + age * 10); puff.mesh.material.opacity = puff.life / puff.maxLife * 0.48;
     }
     if (train.pathVisual && !train.drawing) {
         train.pathFade -= dt;
@@ -401,6 +494,7 @@ function updateVisuals(train, dt, traveled) {
         else train.pathVisual.traverse(child => { if (child.material) child.material.opacity = Math.min(1, train.pathFade / 2) * 0.9; });
     }
     train.mesh.updateMatrixWorld(true);
+    updateRopes(train);
 }
 
 export function updateTrain(dt) {
@@ -410,7 +504,7 @@ export function updateTrain(dt) {
     if (!train) return;
     dt = Math.min(dt, 0.1);
     const blocks = obstacles();
-    for (const animal of [...train.followers]) if (!animals.includes(animal) || animal.grabbed) detachTrainFollower(animal);
+    for (const animal of [...train.followers]) if (!animals.includes(animal) || isLivingBlock(animal) || animal.grabbed) detachTrainFollower(animal);
     train.elapsed += dt; train.recruitTimer -= dt;
     if (!train.drawing && train.recruitTimer <= 0) { recruit(train, blocks); train.recruitTimer = JOIN_INTERVAL; }
     const size = convoySize(train);

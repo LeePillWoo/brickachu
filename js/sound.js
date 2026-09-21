@@ -83,22 +83,23 @@ function makeGain(ac, vol) {
 }
 
 /** 오실레이터 음 재생. startFreq 지정 시 freq까지 슬라이드 */
-function osc(type, freq, dur, vol = 1.0, startFreq = null) {
+function osc(type, freq, dur, vol = 1.0, startFreq = null, offset = 0) {
     const ac = getCtx();
     if (!ac || vol * masterVolume <= 0) return;
     const g = makeGain(ac, vol);
+    const start = ac.currentTime + offset;
     const node = ac.createOscillator();
     node.type = type;
-    node.frequency.setValueAtTime(startFreq ?? freq, ac.currentTime);
+    node.frequency.setValueAtTime(startFreq ?? freq, start);
     if (startFreq !== null) {
-        node.frequency.linearRampToValueAtTime(freq, ac.currentTime + dur * 0.75);
+        node.frequency.linearRampToValueAtTime(freq, start + dur * 0.75);
     }
     node.connect(g);
     disconnectWhenEnded(node, g);
-    g.gain.setValueAtTime(vol * masterVolume, ac.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
-    node.start(ac.currentTime);
-    node.stop(ac.currentTime + dur + 0.01);
+    g.gain.setValueAtTime(vol * masterVolume, start);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    node.start(start);
+    node.stop(start + dur + 0.01);
 }
 
 /** 화이트 노이즈 버스트 */
@@ -127,6 +128,26 @@ function noise(dur, vol = 1.0, lpFreq = 4000) {
 // ── 효과음 정의 ────────────────────────────────────────────
 
 const SOUNDS = {
+
+    /** 바퀴 박자에 맞춘 가벼운 칙칙 소리 */
+    'train-chuff': () => {
+        noise(0.105, 0.17, 3400);
+        osc('triangle', 110, 0.065, 0.025, 170);
+    },
+
+    /** 칙칙 뒤에 이어지는 낮고 둥근 폭폭 소리 */
+    'train-puff': () => {
+        noise(0.16, 0.14, 1100);
+        osc('sine', 74, 0.14, 0.065, 116);
+    },
+
+    /** 굴뚝의 큰 연기와 함께 핑핑~ 하고 울리는 두 음 */
+    'train-ping': () => {
+        osc('sine', 880, 0.29, 0.18, 1174);
+        osc('triangle', 1760, 0.22, 0.035, 2348);
+        osc('sine', 1046.5, 0.46, 0.17, 1396.9, 0.19);
+        osc('triangle', 2093, 0.35, 0.03, 2793.8, 0.19);
+    },
 
     /** 장난감 기관차의 부드러운 출발 기적 */
     'train-whistle': () => {
@@ -263,6 +284,9 @@ const SOUNDS = {
 
 // ── 공개 API ───────────────────────────────────────────────
 
+// 물리 프레임을 한꺼번에 따라잡거나 배속을 높여도 주행음이 겹쳐 쌓이지 않는다.
+const trainSoundTimes = new WeakMap();
+
 /**
  * 효과음 재생
  * @param {string} id  SOUNDS 키 (예: 'block-place', 'explode')
@@ -273,6 +297,15 @@ export function playSound(id) {
         // 잠긴 상태에서 음을 쌓아 두면 다음 터치 때 한꺼번에 재생된다.
         const ac = getCtx();
         if (!ac || ac.state !== 'running') return;
+        const trainBeat = id === 'train-chuff' || id === 'train-puff';
+        if (trainBeat || id === 'train-ping') {
+            if (document.hidden) return;
+            const times = trainSoundTimes.get(ac) || { beat: -Infinity, ping: -Infinity };
+            const key = trainBeat ? 'beat' : 'ping';
+            if (ac.currentTime - times[key] < (trainBeat ? 0.12 : 0.8)) return;
+            times[key] = ac.currentTime;
+            trainSoundTimes.set(ac, times);
+        }
         SOUNDS[id]();
     } catch (_) {
         // AudioContext 미지원 환경 또는 권한 없음 → 무시

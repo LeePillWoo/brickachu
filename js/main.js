@@ -11,7 +11,7 @@ import { getFullSnapshot, disposeExplodingBrick } from './scene.js';
 import { updatePreview } from './camera.js';
 import { onPointerMove, onPointerDown, onPointerUp, onPointerCancel, onWindowResize, onKeyDown, onKeyUp } from './input.js';
 import { setupPalette, setupModeButtons, setupGUI, setupSnapControls } from './ui.js';
-import { updateTrain } from './train.js';
+import { updateTrain, syncTrainRopes } from './train.js';
 import { animals, updateDogs } from './entities.js';
 import { updateFoods, initFoodGhost } from './food.js';
 import { updateMagicEffects } from './magic.js';
@@ -216,6 +216,7 @@ function animate(now) {
         updateDogs(fixedDt);
         updateFoods(fixedDt);
         updateMagicEffects(animals, fixedDt);
+        syncTrainRopes();
         simulationAccumulator -= fixedDt;
     }
 

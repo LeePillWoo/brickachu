@@ -7,9 +7,10 @@ import { placeVoxel, explodeBricks, disposeExplodingBrick } from '../js/scene.js
 import { awakenBlocks } from '../js/living.js';
 import { clearAllFood } from '../js/food.js';
 import { applySnack, updateMagicEffects } from '../js/magic.js';
-import { spawnTrain, clearTrain, beginTrainRoute, appendTrainRoutePoint, finishTrainRoute, cancelTrainRoute, updateTrain, MAX_TRAIN_ROUTE_POINTS, MAX_TRAIN_ROUTE_LENGTH } from '../js/train.js';
+import { spawnTrain, clearTrain, beginTrainRoute, appendTrainRoutePoint, finishTrainRoute, cancelTrainRoute, updateTrain, syncTrainRopes, MAX_TRAIN_ROUTE_POINTS, MAX_TRAIN_ROUTE_LENGTH } from '../js/train.js';
 
 const point = (x, z, y = 0) => new THREE.Vector3(x, y, z);
+let testAudioContext = null;
 function reset() {
     clearTrain(); clearAllAnimals(); clearAllFood();
     while (explodingBricks.length) disposeExplodingBrick(explodingBricks.pop());
@@ -22,6 +23,7 @@ function reset() {
     materials['preset-0'] = new THREE.MeshPhysicalMaterial({ color: 0xffdd77 }); state.currentSlot = 'preset-0';
     state.actionHistory.length = 0; state.actionRedoStack.length = 0;
     state.screenShakeTimer = 0; state.onToyNotice = null;
+    document.hidden = false;
 }
 function pet(type, x, z) {
     GROUP_ANIMALS.trainTest = [type]; const animal = spawnDog('trainTest'); delete GROUP_ANIMALS.trainTest;
@@ -37,8 +39,37 @@ function route(...points) {
 }
 function step(count = 1) {
     for (let index = 0; index < count; index++) {
-        state.world.step(1 / 60); updateTrain(1 / 60); updateDogs(1 / 60); updateMagicEffects(animals, 1 / 60);
+        if (testAudioContext) testAudioContext.currentTime += 1 / 60;
+        state.world.step(1 / 60); updateTrain(1 / 60); updateDogs(1 / 60); updateMagicEffects(animals, 1 / 60); syncTrainRopes();
     }
+}
+function captureAudio() {
+    const previous = window.AudioContext, oscillators = [];
+    class Param {
+        value = 1;
+        setValueAtTime(value) { this.start ??= value; this.value = value; }
+        linearRampToValueAtTime() {}
+        exponentialRampToValueAtTime() {}
+    }
+    class Node {
+        gain = new Param(); frequency = new Param(); Q = new Param();
+        connect() {} disconnect() {} start() {} stop() { this.onended?.(); }
+    }
+    window.AudioContext = class {
+        state = 'running'; currentTime = 10; sampleRate = 8000; destination = {};
+        constructor() { testAudioContext = this; }
+        createGain() { return new Node(); }
+        createOscillator() { const node = new Node(); oscillators.push(node); return node; }
+        createBufferSource() { return new Node(); }
+        createBiquadFilter() { return new Node(); }
+        createBuffer(channels, length) { return { getChannelData() { return new Float32Array(length); } }; }
+    };
+    return {
+        oscillators,
+        beats: () => oscillators.map(node => node.frequency.start).filter(freq => freq === 170 || freq === 116),
+        pings: () => oscillators.filter(node => node.frequency.start === 1174).length,
+        close() { if (testAudioContext) testAudioContext.state = 'closed'; testAudioContext = null; window.AudioContext = previous; }
+    };
 }
 let passed = 0;
 function test(name, fn) { reset(); fn(); passed++; console.log(`PASS ${name}`); }
@@ -94,15 +125,17 @@ test('followers traverse the actual train corner instead of a diagonal shortcut'
     assert.ok(train.trail.some(sample => sample.position.distanceTo(point(0,400)) < 1e-6));
 });
 
-test('larger living block friends receive more room in the tail', () => {
-    const normal = pet('dog',0,-75);
+test('living block friends stay outside the train even when they are closest', () => {
+    const normal = pet('dog',-160,0);
     const seed = placeVoxel(point(25,-200,25),null,true);
     placeVoxel(point(75,-200,25),null,true); placeVoxel(point(125,-200,25),null,true);
     const { animal: large } = awakenBlocks(seed);
+    large.body.position.set(-40,25,0); large.mesh.position.set(-40,0,0);
     large.state = 'idle'; large.timer = 1000;
     const train = spawnTrain(point(0,0)); route(point(0,650)); step(90);
-    assert.deepEqual(train.followers,[normal,large]);
-    assert.ok(large.trainRide.followDistance - normal.trainRide.followDistance > 125);
+    assert.deepEqual(train.followers,[normal]);
+    assert.equal(large.trainRide,undefined); assert.ok(animals.includes(large));
+    assert.equal(train.ropes.length,1); assert.equal(train.ropes[0].to,normal);
 });
 
 test('drawing pauses motion and cancel restores the previous route and index exactly', () => {
@@ -182,22 +215,19 @@ test('a large tail candidate cannot strand the locomotive in a narrow clearance'
     pet('dog',0,-550);
     const train = spawnTrain(point(0,-400)); route(point(0,650));
     while (train.position.z < 0) step();
-    const seed = placeVoxel(point(-50,-300,25),null,true);
-    placeVoxel(point(0,-300,25),null,true); placeVoxel(point(50,-300,25),null,true);
-    const { animal: large } = awakenBlocks(seed); large.state = 'idle'; large.timer = 1000;
+    const large = pet('elephant',0,-300);
+    applySnack(large,['balloon','jelly']); updateMagicEffects(animals,0.2);
     train.recruitTimer = 0;
     const before = train.position.clone(); step(); assert.equal(large.trainRide,undefined);
     step(150); assert.ok(train.position.distanceTo(before) > 100);
 });
 
 test('a passenger that grows near the board edge lets the convoy safely retreat instead of freezing', () => {
-    const seed = placeVoxel(point(-150,0,25),null,true);
-    placeVoxel(point(-100,0,25),null,true); placeVoxel(point(-50,0,25),null,true);
-    const { animal } = awakenBlocks(seed); animal.state = 'idle'; animal.timer = 1000;
-    const train = spawnTrain(point(0,0)); route(point(800,0),point(800,500));
-    for (let i = 0; i < 500 && train.position.x < 797; i++) step();
+    const animal = pet('dog',-100,0);
+    const train = spawnTrain(point(0,0)); route(point(830,0),point(830,500));
+    for (let i = 0; i < 500 && train.position.x < 827; i++) step();
     assert.ok(animal.trainRide); const before = train.position.clone();
-    applySnack(animal,['balloon']); step(180);
+    applySnack(animal,['balloon','jelly']); step(180);
     assert.ok(train.position.distanceTo(before) > 30);
     assert.ok(train.position.x < before.x - 10);
     assert.ok(animal.trainRide);
@@ -230,6 +260,92 @@ test('grabbing, deleting and clearing release follower references and owned trai
 test('bomb cleanup cannot leave animals attached to a stale train', () => {
     const animal = pet('dog',-60,0); const train = spawnTrain(point(0,0)); step(); assert.ok(animal.trainRide);
     explodeBricks(); assert.equal(state.train,null); assert.equal(animal.trainRide,undefined); assert.equal(train.followers.length,0);
+});
+
+test('an existing member marked as a living block is detached and its rope is removed', () => {
+    const animal = pet('dog',-60,0), train = spawnTrain(point(0,0)); step();
+    assert.equal(train.ropes.length,1);
+    animal.animalType = 'living-block'; updateTrain(1 / 60);
+    assert.equal(animal.trainRide,undefined); assert.equal(train.followers.length,0); assert.equal(train.ropes.length,0);
+    step(60); assert.equal(animal.trainRide,undefined);
+});
+
+test('ropes connect consecutive members with shared triangle geometry and natural sag', () => {
+    const first = pet('dog',-70,0), second = pet('cat',-160,0);
+    const train = spawnTrain(point(0,0)); route(point(0,600)); step(180);
+    assert.equal(train.ropeGroup.parent,state.scene); assert.equal(train.ropes.length,2);
+    assert.equal(train.ropes[0].from,train); assert.equal(train.ropes[0].to,first);
+    assert.equal(train.ropes[1].from,first); assert.equal(train.ropes[1].to,second);
+    for (const rope of train.ropes) {
+        assert.equal(rope.mesh.parent,train.ropeGroup); assert.equal(rope.segments.length,8);
+        assert.ok(rope.segments.every(segment => segment.isMesh && !segment.isLine && segment.geometry === train.ropeGeometry && segment.material === train.ropeMaterial && segment.geometry.getAttribute('normal')));
+        assert.ok(rope.segments[3].position.y < (rope.start.y + rope.end.y) / 2);
+    }
+    const before = train.ropes[0].end.clone(); step(30); assert.ok(train.ropes[0].end.distanceTo(before) > 10);
+});
+
+test('rope endpoints follow final balloon turns and hopping animation in the same frame', () => {
+    const first = pet('dog',0,-80); pet('rabbit',0,-190);
+    const train = spawnTrain(point(0,0)); route(point(0,300),point(300,300),point(300,-300)); applySnack(first,['balloon']);
+    let checked = 0;
+    for (let frame = 0; frame < 460; frame++) {
+        step();
+        for (const rope of train.ropes) {
+            const animal = rope.to, halfHeight = animal.heightOffset * 2.5;
+            const expected = new THREE.Vector3(0,Math.max(12,Math.min(halfHeight * 0.9,38)),28).applyMatrix4(animal.mesh.matrixWorld);
+            assert.ok(rope.end.distanceTo(expected) < 1e-6, `stale rope at frame ${frame}`); checked++;
+        }
+    }
+    assert.ok(checked > 600); assert.ok(train.ropes[0].end.y > train.ropes[1].end.y + 60);
+});
+
+test('removing a middle friend reconnects ropes and final cleanup disposes shared resources once', () => {
+    const first = pet('dog',-60,0), middle = pet('cat',-140,0), last = pet('rabbit',-230,0);
+    const train = spawnTrain(point(0,0)); route(point(0,700)); step(100);
+    const geometry = train.ropeGeometry, material = train.ropeMaterial; let geometryDisposals = 0, materialDisposals = 0;
+    geometry.addEventListener('dispose',() => geometryDisposals++); material.addEventListener('dispose',() => materialDisposals++);
+    removeAnimalImmediately(middle);
+    assert.equal(train.ropes.length,2); assert.equal(train.ropes[1].from,first); assert.equal(train.ropes[1].to,last);
+    assert.equal(geometryDisposals,0); assert.equal(materialDisposals,0);
+    first.grabbed = true; setGrabbedAnimal(first);
+    assert.equal(train.ropes.length,1); assert.equal(train.ropes[0].from,train); assert.equal(train.ropes[0].to,last);
+    clearTrain(); clearTrain(); assert.equal(train.ropeGroup.parent,null); assert.equal(train.ropes.length,0);
+    assert.equal(geometryDisposals,1); assert.equal(materialDisposals,1);
+});
+
+test('driving audio follows four wheel beats and pauses during drawing, hiding and standstill', () => {
+    const audio = captureAudio();
+    try {
+        const train = spawnTrain(point(0,0)); route(point(0,700)); step(120);
+        assert.deepEqual(audio.beats().slice(0,8),[170,170,116,116,170,170,116,116]);
+        const beatCount = audio.beats().length, runningTime = train.runningTime, pingTimer = train.pingTimer;
+        beginTrainRoute(); step(100);
+        assert.equal(audio.beats().length,beatCount); assert.equal(train.runningTime,runningTime); assert.equal(train.pingTimer,pingTimer);
+        assert.ok(train.steam.every(puff => puff.life === 0));
+        document.hidden = true; cancelTrainRoute(); step(120);
+        assert.equal(audio.beats().length,beatCount); assert.equal(train.runningTime,runningTime); assert.equal(train.pingTimer,pingTimer);
+        assert.ok(train.steam.every(puff => puff.life === 0)); document.hidden = false;
+        clearTrain(); spawnTrain(point(-500,0));
+        for (const [dx,dz] of [[100,0],[-100,0],[0,100],[0,-100]]) placeVoxel(point(-500+dx,dz,25),null,true);
+        step(80); const stoppedBeats = audio.beats().length, stoppedTime = state.train.runningTime;
+        step(120); assert.equal(audio.beats().length,stoppedBeats); assert.equal(state.train.runningTime,stoppedTime);
+        assert.ok(state.train.steam.every(puff => puff.life === 0));
+    } finally { document.hidden = false; audio.close(); }
+});
+
+test('a five-to-nine-second driving ping synchronizes three emphasized steam puffs', () => {
+    const audio = captureAudio();
+    try {
+        const train = spawnTrain(point(0,-600)); route(point(0,700));
+        const plannedTime = train.pingTimer; assert.ok(plannedTime >= 5 && plannedTime <= 9);
+        while (train.runningTime + 1 / 60 < plannedTime) step();
+        assert.equal(audio.pings(),0);
+        step(2); assert.equal(audio.pings(),1);
+        assert.equal(train.steam.filter(puff => puff.emphasized && puff.life > 1.1).length,3);
+        assert.ok(train.pingTimer >= 5 - 1 / 60 && train.pingTimer <= 9);
+        beginTrainRoute(); const pings = audio.pings(); step(200);
+        assert.equal(audio.pings(),pings); assert.ok(train.steam.every(puff => puff.life === 0));
+    } finally { audio.close(); }
 });
 
 reset(); console.log(`\n${passed} train checks passed.`);

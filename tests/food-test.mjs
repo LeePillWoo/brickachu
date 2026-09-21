@@ -109,7 +109,7 @@ test('fall triggers leave consumed/removed food unchanged', () => {
 const main = fs.readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
 const animationSource = main.slice(main.indexOf('const fixedDt = '), main.lastIndexOf('\ninit();'));
 function runAnimation(fps, gameSpeed, seconds = 1) {
-    let steps = 0, animalTime = 0, foodTime = 0;
+    let steps = 0, animalTime = 0, foodTime = 0, magicSteps = 0, ropeSyncSteps = 0;
     const simulationState = {
         gameSpeed, world: { step(dt) { assert.equal(dt, 1 / 60); steps++; } },
         camera: new THREE.PerspectiveCamera(), controls: { target: new THREE.Vector3(), update() {} },
@@ -119,12 +119,17 @@ function runAnimation(fps, gameSpeed, seconds = 1) {
     const context = vm.createContext({
         THREE, state: simulationState, requestAnimationFrame() {}, explodingBricks: [],
         updateDogs(dt) { animalTime += dt; }, updateFoods(dt) { foodTime += dt; },
-        disposeExplodingBrick() {}, updatePreview() {}, updateMagicEffects() {}, updateTrain() {}, animals: [],
+        disposeExplodingBrick() {}, updatePreview() {}, updateTrain() {}, animals: [],
+        updateMagicEffects() { magicSteps++; },
+        syncTrainRopes() {
+            assert.equal(magicSteps, ropeSyncSteps + 1, 'ropes must sync after the latest snack animation');
+            ropeSyncSteps++;
+        },
     });
     vm.runInContext(animationSource, context);
     context.animate(0);
     for (let i = 1; i <= fps * seconds; i++) context.animate(i * 1000 / fps);
-    return { steps, animalTime, foodTime, context, simulationState, getSteps: () => steps };
+    return { steps, animalTime, foodTime, ropeSyncSteps, context, simulationState, getSteps: () => steps };
 }
 test('main simulation is consistent at 30/60/144 Hz and x1/x2/x3', () => {
     for (const fps of [30, 60, 144]) for (const speed of [1, 2, 3]) {
@@ -132,6 +137,7 @@ test('main simulation is consistent at 30/60/144 Hz and x1/x2/x3', () => {
         assert.equal(result.steps, speed * 60, `${fps}Hz x${speed}`);
         assert.ok(Math.abs(result.animalTime - speed) < 1e-8);
         assert.ok(Math.abs(result.foodTime - speed) < 1e-8);
+        assert.equal(result.ropeSyncSteps, result.steps);
     }
 });
 test('main clamps long frame gaps to bounded fixed physics steps', () => {
