@@ -4,14 +4,14 @@ import { playSound } from './sound.js';
 
 // ── 낙하 물리 상수 ──
 const FOOD_GRAVITY = -980;
-const FOOD_GROUND_BASE = 80;
+const FOOD_GROUND_BASE = 0;
 const _foodRaycaster = new THREE.Raycaster();
 const _foodRayDown = new THREE.Vector3(0, -1, 0);
 
 function getFoodGroundY(x, fromY, z) {
     _foodRaycaster.set(new THREE.Vector3(x, fromY, z), _foodRayDown);
     const meshes = objects.filter(o => o && o.isMesh);
-    if (state.plane) meshes.push(state.plane);
+    if (state.plane && !meshes.includes(state.plane)) meshes.push(state.plane);
     const hits = _foodRaycaster.intersectObjects(meshes, false);
     return hits.length > 0 ? hits[0].point.y : FOOD_GROUND_BASE;
 }
@@ -24,6 +24,45 @@ export function triggerFoodFall(food, bounceVy = 160) {
 }
 
 export const foods = [];
+const removalEffects = new Set();
+
+function disposeFood(food) {
+    if (food.disposed) return;
+    food.disposed = true;
+    food.eaten = true;
+    removalEffects.delete(food);
+    state.scene.remove(food.mesh);
+    const geometries = new Set();
+    const materials = new Set();
+    food.mesh.traverse(child => {
+        if (child.geometry) geometries.add(child.geometry);
+        if (child.material) {
+            for (const material of Array.isArray(child.material) ? child.material : [child.material]) materials.add(material);
+        }
+    });
+    geometries.forEach(geometry => geometry.dispose());
+    materials.forEach(material => material.dispose());
+}
+
+function animateFoodRemoval(food, pop = false) {
+    food.eaten = true;
+    removalEffects.add(food);
+    const startScale = food.mesh.scale.x;
+    let elapsed = 0;
+    let previous = performance.now();
+    function frame(now) {
+        if (food.disposed) return;
+        elapsed += Math.max(0, Math.min((now - previous) / 1000, 0.1));
+        previous = now;
+        const scale = pop && elapsed < 0.06
+            ? 1 + elapsed / 0.06 * 0.35
+            : Math.max(0, (pop ? 1.35 : 1) * (1 - (elapsed - (pop ? 0.06 : 0)) / 0.16));
+        food.mesh.scale.setScalar(startScale * scale);
+        if (scale > 0) requestAnimationFrame(frame);
+        else disposeFood(food);
+    }
+    requestAnimationFrame(frame);
+}
 
 // ── 먹이 고스트 (Ghost Preview) ──
 let _ghost = null;
@@ -103,53 +142,22 @@ export function removeFoodWithEffect(food) {
     foods.splice(idx, 1);
     playSound('food-remove');
 
-    const mesh = food.mesh;
-    if (!mesh) return;
-
-    let t = 0;
-    function poof() {
-        t += 0.13;
-        if (t < 0.25) {
-            const s = 1 + t * 1.8;
-            mesh.scale.set(s, s, s);
-            requestAnimationFrame(poof);
-        } else {
-            const s = Math.max(0, 1.45 - (t - 0.25) * 4.8);
-            mesh.scale.set(s, s, s);
-            if (s > 0.01) {
-                requestAnimationFrame(poof);
-            } else {
-                state.scene.remove(mesh);
-            }
-        }
-    }
-    poof();
+    animateFoodRemoval(food, true);
 }
 
 // ── 전체 먹이 제거: 연기 효과 ──
 export function clearAllFoodWithEffect() {
     const toRemove = [...foods];
     foods.length = 0;
-    toRemove.forEach(food => {
-        const mesh = food.mesh;
-        if (!mesh) return;
-        let t = 0;
-        function shrink() {
-            t += 0.14;
-            const s = Math.max(0, 1 - t);
-            mesh.scale.set(s, s, s);
-            if (s > 0.01) { requestAnimationFrame(shrink); }
-            else { state.scene.remove(mesh); }
-        }
-        shrink();
-    });
+    toRemove.forEach(food => animateFoodRemoval(food));
 }
 
 export function clearAllFood() {
     while (foods.length > 0) {
         const food = foods.pop();
-        state.scene.remove(food.mesh);
+        disposeFood(food);
     }
+    for (const food of removalEffects) disposeFood(food);
 }
 
 export function updateFoods(dt) {
@@ -157,19 +165,20 @@ export function updateFoods(dt) {
         const food = foods[i];
         food.floatTime += dt;
 
-        if (food.consumeTimer > 0) {
+        if (food.eaten || food.consumeTimer >= 0) {
             // 먹힌 뒤 2초에 걸쳐 축소 + 회전하며 사라짐
             food.consumeTimer -= dt;
             const scale = Math.max(food.consumeTimer / 2.0, 0);
             food.mesh.scale.setScalar(scale);
             food.mesh.rotation.y += dt * 4;
             if (food.consumeTimer <= 0) {
-                state.scene.remove(food.mesh);
+                disposeFood(food);
                 foods.splice(i, 1);
             }
         } else if (!food.eaten) {
             if (food.falling) {
                 // ── 낙하 물리 ──
+                const previousY = food.position.y;
                 food.fallVelocity += FOOD_GRAVITY * dt;
                 food.position.y += food.fallVelocity * dt;
                 food.mesh.position.y = food.position.y;
@@ -179,10 +188,10 @@ export function updateFoods(dt) {
                 // 착지 체크
                 const groundY = getFoodGroundY(
                     food.position.x,
-                    food.position.y + voxelSize,
+                    Math.max(previousY, food.position.y) + 0.01,
                     food.position.z
                 );
-                if (food.position.y <= groundY) {
+                if (food.fallVelocity <= 0 && food.position.y <= groundY) {
                     food.position.y = groundY;
                     food.mesh.position.y = groundY;
                     food.mesh.rotation.z = 0;
@@ -198,7 +207,7 @@ export function updateFoods(dt) {
                 }
             } else {
                 // 공중에서 살짝 떠다니는 애니메이션
-                food.mesh.position.y = food.position.y + Math.sin(food.floatTime * 2.2) * voxelSize * 0.18;
+                food.mesh.position.y = food.position.y + (1 + Math.sin(food.floatTime * 2.2)) * voxelSize * 0.09;
                 food.mesh.rotation.y += dt * 0.9;
             }
         }

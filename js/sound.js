@@ -8,29 +8,62 @@ let _ctx = null;
 let _unlocked = false;
 
 function getCtx() {
+    if (_ctx?.state === 'closed') {
+        _ctx = null;
+        _unlocked = false;
+    }
     if (!_ctx) {
         const Ctor = window.AudioContext || window.webkitAudioContext;
         if (!Ctor) return null;
-        _ctx = new Ctor();
+        try {
+            _ctx = new Ctor();
+        } catch (_) {
+            return null;
+        }
     }
-    if (_ctx.state === 'suspended') _ctx.resume();
     return _ctx;
+}
+
+function disconnectWhenEnded(source, ...nodes) {
+    source.onended = () => {
+        source.disconnect();
+        nodes.forEach(node => node.disconnect());
+        source.onended = null;
+    };
 }
 
 /** iOS/Android 브라우저 오디오 언락: 최초 터치 시 무음 버퍼 재생 */
 function _unlockAudio() {
-    if (_unlocked) return;
+    if (_unlocked && _ctx?.state === 'running') return;
     const ac = getCtx();
     if (!ac) return;
 
-    // 무음 1샘플 버퍼 재생 → 브라우저 오디오 잠금 해제
-    const buf = ac.createBuffer(1, 1, ac.sampleRate);
-    const src = ac.createBufferSource();
-    src.buffer = buf;
-    src.connect(ac.destination);
-    src.start(0);
+    let src = null;
+    const cancelUnlock = () => {
+        _unlocked = false;
+        if (!src) return;
+        src.onended = null;
+        src.disconnect();
+        try { src.stop(); } catch (_) { /* start가 실패했을 수도 있다. */ }
+    };
+    try {
+        // 무음 1샘플 버퍼 재생 → 브라우저 오디오 잠금 해제
+        const buf = ac.createBuffer(1, 1, ac.sampleRate);
+        src = ac.createBufferSource();
+        src.buffer = buf;
+        src.connect(ac.destination);
+        disconnectWhenEnded(src);
+        src.start(0);
 
-    ac.resume().then(() => { _unlocked = true; });
+        Promise.resolve(ac.resume()).then(() => {
+            _unlocked = ac.state === 'running';
+        }).catch(() => {
+            // 권한 거부 후에도 다음 사용자 제스처에서 다시 시도할 수 있다.
+            cancelUnlock();
+        });
+    } catch (_) {
+        cancelUnlock();
+    }
 }
 
 // 모든 사용자 제스처 이벤트에 언락 훅 등록
@@ -42,8 +75,7 @@ let masterVolume = 0.45;
 
 // ── 내부 헬퍼 ──────────────────────────────────────────────
 
-function makeGain(vol) {
-    const ac = getCtx();
+function makeGain(ac, vol) {
     const g = ac.createGain();
     g.gain.value = vol * masterVolume;
     g.connect(ac.destination);
@@ -53,7 +85,8 @@ function makeGain(vol) {
 /** 오실레이터 음 재생. startFreq 지정 시 freq까지 슬라이드 */
 function osc(type, freq, dur, vol = 1.0, startFreq = null) {
     const ac = getCtx();
-    const g = makeGain(vol);
+    if (!ac || vol * masterVolume <= 0) return;
+    const g = makeGain(ac, vol);
     const node = ac.createOscillator();
     node.type = type;
     node.frequency.setValueAtTime(startFreq ?? freq, ac.currentTime);
@@ -61,6 +94,7 @@ function osc(type, freq, dur, vol = 1.0, startFreq = null) {
         node.frequency.linearRampToValueAtTime(freq, ac.currentTime + dur * 0.75);
     }
     node.connect(g);
+    disconnectWhenEnded(node, g);
     g.gain.setValueAtTime(vol * masterVolume, ac.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
     node.start(ac.currentTime);
@@ -70,6 +104,7 @@ function osc(type, freq, dur, vol = 1.0, startFreq = null) {
 /** 화이트 노이즈 버스트 */
 function noise(dur, vol = 1.0, lpFreq = 4000) {
     const ac = getCtx();
+    if (!ac || vol * masterVolume <= 0) return;
     const bufLen = Math.ceil(ac.sampleRate * dur);
     const buf = ac.createBuffer(1, bufLen, ac.sampleRate);
     const data = buf.getChannelData(0);
@@ -79,11 +114,12 @@ function noise(dur, vol = 1.0, lpFreq = 4000) {
     const filter = ac.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = lpFreq;
-    const g = makeGain(vol);
+    const g = makeGain(ac, vol);
     g.gain.setValueAtTime(vol * masterVolume, ac.currentTime);
     g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
     src.connect(filter);
     filter.connect(g);
+    disconnectWhenEnded(src, filter, g);
     src.start();
     src.stop(ac.currentTime + dur + 0.01);
 }
@@ -143,6 +179,7 @@ const SOUNDS = {
             g.connect(ac.destination);
             src.connect(filter);
             filter.connect(g);
+            disconnectWhenEnded(src, filter, g);
             src.start(ac.currentTime + offset);
             src.stop(ac.currentTime + offset + 0.06);
         });
@@ -217,10 +254,11 @@ const SOUNDS = {
  * @param {string} id  SOUNDS 키 (예: 'block-place', 'explode')
  */
 export function playSound(id) {
-    if (!SOUNDS[id]) return;
-    // 아직 언락 안 됐으면 재생 시도 자체가 무의미 → 조용히 건너뜀
-    if (_ctx && _ctx.state === 'suspended') return;
+    if (!Object.hasOwn(SOUNDS, id) || masterVolume <= 0) return;
     try {
+        // 잠긴 상태에서 음을 쌓아 두면 다음 터치 때 한꺼번에 재생된다.
+        const ac = getCtx();
+        if (!ac || ac.state !== 'running') return;
         SOUNDS[id]();
     } catch (_) {
         // AudioContext 미지원 환경 또는 권한 없음 → 무시
@@ -231,6 +269,7 @@ export function playSound(id) {
  * 마스터 볼륨 설정 (0.0 ~ 1.0)
  */
 export function setMasterVolume(v) {
+    if (!Number.isFinite(v)) return;
     masterVolume = Math.max(0, Math.min(1, v));
 }
 

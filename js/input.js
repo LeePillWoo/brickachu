@@ -1,357 +1,336 @@
 import * as THREE from 'three';
 import { state, objects, voxelSize, materials } from './state.js';
-import { applyActionState, placeVoxel, removeVoxel } from './scene.js';
+import { placeVoxel, removeVoxel, pushHistory, undo, redo } from './scene.js';
 import { frameCamera } from './camera.js';
 import { animals, setGrabbedAnimal, triggerClickAction, getGroundHeightAt, getGroundHeightBelow, snapAnimalToGround, removeAnimalWithEffect } from './entities.js';
 import { foods, spawnFood, showFoodGhost, hideFoodGhost, removeFoodWithEffect } from './food.js';
 
-// 동물 잡기 상태
+let activePointer = null;
 let _grabbedAnimal = null;
-let _grabHoldTimer = null;       // 꺼 누름 직전 예약 타이머
-const GRAB_HOLD_MS = 350;        // 구 누르는 시간 (ms)
-
-// 마우스 위치 평면 투영 (y=const 평면으로 커서 방향 변환)
+let _grabHoldTimer = null;
+let _grabGroundY = null;
+let _controlsWereEnabled = true;
+const GRAB_HOLD_MS = 350;
+const TAP_DISTANCE = 10;
+const GRAB_HOVER_HEIGHT = 120;
+const MAX_PATH_BLOCKS = 1000;
 const _grabPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const _grabIntersect = new THREE.Vector3();
-const GRAB_HOVER_HEIGHT = 120; // 공중 부양 높이 (units)
 
+function isInterface(target) {
+    return !!target?.closest?.('#ui-layer, #palette-popup, .lil-gui, input, textarea, select, button, [contenteditable="true"]');
+}
 
-export function onKeyDown(event) {
-    const key = event.key.toLowerCase();
-    if (state.keys.hasOwnProperty(key)) state.keys[key] = true;
-    if (event.code === 'KeyF') frameCamera();
-    if (event.code === 'Escape') cancelDragBuild();
+function isEditingText(target) {
+    return !!target?.closest?.('input, textarea, select, [contenteditable="true"]');
+}
 
-    if (event.ctrlKey) {
-        if (key === 'z') {
-            event.preventDefault();
-            import('./scene.js').then(m => m.undo());
+function setPointerRay(event) {
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    state.pointer.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    state.camera.updateMatrixWorld();
+    state.scene.updateMatrixWorld(true);
+    state.raycaster.setFromCamera(state.pointer, state.camera);
+}
+
+// 같은 레이의 가장 가까운 물체만 선택하여 벽 뒤 동물을 잡거나 지우지 않는다.
+function getHit() {
+    const hits = state.raycaster.intersectObjects([
+        ...objects,
+        ...animals.map(a => a.mesh),
+        ...foods.filter(f => !f.eaten && f.consumeTimer < 0).map(f => f.mesh)
+    ], true);
+    for (const hit of hits) {
+        let object = hit.object;
+        while (object) {
+            if (object.userData.animalRef) return { ...hit, animal: object.userData.animalRef };
+            if (object.userData.foodRef) return { ...hit, food: object.userData.foodRef };
+            object = object.parent;
         }
-        if (key === 'y') {
-            event.preventDefault();
-            import('./scene.js').then(m => m.redo());
-        }
+        if (objects.includes(hit.object)) return hit;
     }
+    return null;
+}
 
-    if (state.isDraggingBuild) {
-        if (event.code === 'KeyE') { state.verticalBuildOffset++; updatePreviewPath(state.rollOverMesh.position); }
-        if (event.code === 'KeyQ') { state.verticalBuildOffset--; updatePreviewPath(state.rollOverMesh.position); }
+function clearPreview() {
+    state.previewGroup.clear();
+    state.targetGuideOpacity = 0;
+    if (state.rollOverMaterial) state.rollOverMaterial.opacity = 0;
+    hideFoodGhost();
+}
+
+function clearGrabTimer() {
+    if (_grabHoldTimer !== null) clearTimeout(_grabHoldTimer);
+    _grabHoldTimer = null;
+}
+
+function releaseAnimal() {
+    if (!_grabbedAnimal) return;
+    const animal = _grabbedAnimal;
+    animal.grabbed = false;
+    if (animals.includes(animal)) {
+        animal.state = 'falling';
+        if (animal.body) {
+            if (_grabGroundY !== null) animal.body.position.y = _grabGroundY + animal.heightOffset * (voxelSize / 20);
+            animal.body.wakeUp();
+        }
+        snapAnimalToGround(animal);
+    }
+    setGrabbedAnimal(null);
+    _grabbedAnimal = null;
+    _grabGroundY = null;
+    if (state.controls) state.controls.enabled = _controlsWereEnabled;
+}
+
+export function onPointerCancel(event) {
+    if (event?.type === 'pointercancel' && activePointer && event.pointerId !== activePointer.id) return;
+    clearGrabTimer();
+    releaseAnimal();
+    if (state.isDraggingRemove) pushHistory();
+    state.isDraggingBuild = false;
+    state.isDraggingRemove = false;
+    state.verticalBuildOffset = 0;
+    activePointer = null;
+    clearPreview();
+    if (!event || event.type === 'blur') {
+        Object.keys(state.keys).forEach(key => { state.keys[key] = false; });
+        state.velocity.set(0, 0, 0);
     }
 }
 
+export function onKeyDown(event) {
+    if (isEditingText(event.target)) return;
+    const key = event.code?.startsWith('Key') ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
+    if (event.code === 'Escape') { onPointerCancel(); return; }
+    if (event.ctrlKey || event.metaKey) {
+        if (key === 'z' || key === 'y') {
+            event.preventDefault();
+            onPointerCancel();
+            if (key === 'y' || event.shiftKey) redo();
+            else undo();
+        }
+        return;
+    }
+    if (event.altKey) return;
+    if (event.code === 'KeyF' && !event.repeat) frameCamera();
+    if (state.isDraggingBuild && (key === 'q' || key === 'e')) {
+        event.preventDefault();
+        state.keys[key] = false;
+        state.verticalBuildOffset += key === 'e' ? 1 : -1;
+        updatePreviewPath(state.rollOverMesh.position);
+        return;
+    }
+    if (Object.prototype.hasOwnProperty.call(state.keys, key)) state.keys[key] = true;
+}
+
 export function onKeyUp(event) {
-    const key = event.key.toLowerCase();
-    if (state.keys.hasOwnProperty(key)) state.keys[key] = false;
+    const key = event.code?.startsWith('Key') ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(state.keys, key)) state.keys[key] = false;
 }
 
 export function onWindowResize() {
     state.camera.aspect = window.innerWidth / window.innerHeight;
     state.camera.updateProjectionMatrix();
     state.renderer.setSize(window.innerWidth, window.innerHeight);
+    if (state.composer) state.composer.setSize(window.innerWidth, window.innerHeight);
 }
 
 export function onPointerMove(event) {
-    state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
-    state.raycaster.setFromCamera(state.pointer, state.camera);
-
-    // 잡힌 동물 이동 시: 커서가 가리키는 면이 지붕 위(바닥)인지 지붕 아래(천장)인지 구분해 안착 높이 계산
+    if (activePointer && event.pointerId !== activePointer.id) return;
+    if (activePointer && Math.hypot(event.clientX - state.downPointerPos.x, event.clientY - state.downPointerPos.y) >= TAP_DISTANCE) {
+        activePointer.moved = true;
+        clearGrabTimer();
+    }
+    if (_grabbedAnimal && !animals.includes(_grabbedAnimal)) {
+        onPointerCancel();
+        return;
+    }
+    if (isInterface(event.target) && !_grabbedAnimal) {
+        state.targetGuideOpacity = 0;
+        hideFoodGhost();
+        return;
+    }
+    setPointerRay(event);
     if (_grabbedAnimal) {
-        const blockOnly = objects.filter(o => o !== state.plane);
-        const hits = blockOnly.length > 0 ? state.raycaster.intersectObjects(blockOnly, false) : [];
-
+        const hits = state.raycaster.intersectObjects(objects.filter(o => o !== state.plane), false);
         let groundY, posX, posZ;
         if (hits.length > 0) {
             const hit = hits[0];
             posX = hit.point.x;
             posZ = hit.point.z;
-            const ny = hit.face ? hit.face.normal.y : 0;
-            if (ny > 0.5) {
-                groundY = hit.point.y;
-            } else if (ny < -0.5) {
-                groundY = getGroundHeightBelow(hit.point.x, hit.point.y - 0.1, hit.point.z);
-            } else {
-                groundY = hit.object.position.y + voxelSize / 2;
-            }
+            const ny = hit.face?.normal.y || 0;
+            groundY = ny > 0.5 ? hit.point.y : ny < -0.5
+                ? getGroundHeightBelow(posX, hit.point.y - 0.1, posZ)
+                : hit.object.position.y + voxelSize / 2;
         } else {
-            _grabPlane.constant = 0;
-            state.raycaster.ray.intersectPlane(_grabPlane, _grabIntersect);
+            if (!state.raycaster.ray.intersectPlane(_grabPlane, _grabIntersect)) return;
             posX = _grabIntersect.x;
             posZ = _grabIntersect.z;
-            groundY = getGroundHeightAt(_grabIntersect.x, _grabIntersect.z);
+            groundY = getGroundHeightAt(posX, posZ);
         }
+        _grabGroundY = groundY;
         const hoverY = groundY + GRAB_HOVER_HEIGHT;
         _grabbedAnimal.mesh.position.set(posX, hoverY, posZ);
         if (_grabbedAnimal.body) {
-            _grabbedAnimal.body.position.set(posX, hoverY, posZ);
+            const halfHeight = _grabbedAnimal.heightOffset * (voxelSize / 20);
+            _grabbedAnimal.body.position.set(posX, hoverY + halfHeight, posZ);
             _grabbedAnimal.body.velocity.set(0, 0, 0);
         }
         return;
     }
-
-    // 제거 모드: 위치 표시 프리뷰 숨김
-    if (state.animalMode === 'remove') {
-        hideFoodGhost();
+    if (state.animalMode === 'remove' || event.altKey || event.ctrlKey || event.metaKey || (event.buttons & 6)) {
         state.targetGuideOpacity = 0;
+        hideFoodGhost();
         return;
     }
-
-    const intersects = state.raycaster.intersectObjects(objects, false);
-
-    if (intersects.length > 0) {
-        const intersect = intersects[0];
-
-        // 먹이 설치 모드: 고스트 프리뷰만 이동 (실제 스폰은 클릭 시)
-        if (state.currentMode === 'food') {
-            const ny = intersect.face ? intersect.face.normal.y : 0;
-            if (ny > 0.5) {
-                showFoodGhost(intersect.point.x, intersect.point.y, intersect.point.z);
-            } else {
-                hideFoodGhost();
-            }
-            return;
-        }
-
-        if (state.currentMode === 'add') {
-            const pos = intersect.point.clone().add(intersect.face.normal);
-            pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
-
-            const isColliding = objects.some(obj => obj !== state.plane && obj.position.distanceToSquared(pos) < 1);
-            if (isColliding) {
-                state.targetGuideOpacity = 0;
-            } else {
-                state.rollOverMaterial.color.set(0x00ff00);
-                state.targetGuideOpacity = 0.5;
-                state.rollOverMesh.position.copy(pos);
-            }
-
-            if (state.isDraggingBuild) {
-                updatePreviewPath(state.rollOverMesh.position);
-            }
-        } else {
-            if (intersect.object !== state.plane) {
-                state.rollOverMaterial.color.set(0xff0000);
-                state.targetGuideOpacity = 0.5;
-                state.rollOverMesh.position.copy(intersect.object.position);
-
-                if (state.isDraggingRemove) {
-                    removeVoxel(intersect.object);
-                }
-            } else {
-                state.targetGuideOpacity = 0;
-            }
-        }
-    } else {
+    const hit = getHit();
+    if (!hit || hit.animal || hit.food) {
         state.targetGuideOpacity = 0;
         hideFoodGhost();
+        return;
     }
+    if (state.currentMode === 'food') {
+        state.targetGuideOpacity = 0;
+        if (hit.face?.normal.y > 0.5) showFoodGhost(hit.point.x, hit.point.y, hit.point.z);
+        else hideFoodGhost();
+        return;
+    }
+    hideFoodGhost();
+    if (state.currentMode === 'add') {
+        const pos = gridPosition(hit);
+        state.rollOverMesh.position.copy(pos);
+        state.rollOverMaterial.color.set(0x00ff00);
+        state.targetGuideOpacity = canPreview(pos) ? 0.5 : 0;
+        if (state.isDraggingBuild) updatePreviewPath(pos);
+    } else if (hit.object !== state.plane) {
+        state.rollOverMaterial.color.set(0xff0000);
+        state.targetGuideOpacity = 0.5;
+        state.rollOverMesh.position.copy(hit.object.position);
+        if (state.isDraggingRemove) removeVoxel(hit.object);
+    } else state.targetGuideOpacity = 0;
 }
 
 export function onPointerDown(event) {
-    if (event.target.closest('#ui-layer') && !event.target.closest('#instructions') && !event.target.closest('#palette-popup')) {
+    if (activePointer && event.pointerId !== activePointer.id) {
+        onPointerCancel();
         return;
     }
-
-    const isSmallScreen = window.innerWidth < 768;
+    if (event.button !== 0 || event.isPrimary === false || event.altKey || event.ctrlKey || event.metaKey || isInterface(event.target)) return;
+    onPointerCancel(event);
     state.downPointerPos.set(event.clientX, event.clientY);
     state.pointerDownTime = performance.now();
-
-    if (event.button === 0 && !event.target.closest('#ui-layer')) {
-        state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
-        state.raycaster.setFromCamera(state.pointer, state.camera);
-
-        // 동물 잡기: 동물 파트에 레이쾐스팅, GRAB_HOLD_MS 후 잡기 시작
-        const allAnimalMeshes = animals.flatMap(a => [...a.mesh.children]);
-        const animalHits = state.raycaster.intersectObjects(allAnimalMeshes, false);
-        if (animalHits.length > 0) {
-            const hitAnimal = animalHits[0].object.userData.animalRef;
-            if (hitAnimal) {
-                _grabHoldTimer = setTimeout(() => {
-                    _grabbedAnimal = hitAnimal;
-                    _grabbedAnimal.grabbed = true;
-                    setGrabbedAnimal(_grabbedAnimal);
-                    // 블록 드래그 취소
-                    state.isDraggingBuild = false;
-                    state.isDraggingRemove = false;
-                }, GRAB_HOLD_MS);
-                return; // 동물 누름 중에는 블록 조작 안 시작
+    activePointer = { id: event.pointerId, moved: false, entity: false };
+    setPointerRay(event);
+    const hit = getHit();
+    if (state.animalMode === 'remove') return;
+    if (hit?.animal) {
+        activePointer.entity = true;
+        const hitAnimal = hit.animal;
+        _grabHoldTimer = setTimeout(() => {
+            _grabHoldTimer = null;
+            if (!activePointer || !animals.includes(hitAnimal)) return;
+            _grabbedAnimal = hitAnimal;
+            _grabbedAnimal.grabbed = true;
+            _grabGroundY = null;
+            setGrabbedAnimal(hitAnimal);
+            if (state.controls) {
+                _controlsWereEnabled = state.controls.enabled;
+                state.controls.enabled = false;
             }
-        }
-
-        const intersects = state.raycaster.intersectObjects(objects, false);
-
-        if (state.currentMode === 'add') {
-            if (intersects.length > 0) {
-                if (!isSmallScreen) {
-                    state.isDraggingBuild = true;
-                    state.verticalBuildOffset = 0;
-                    const intersect = intersects[0];
-                    state.dragStartPos.copy(intersect.point).add(intersect.face.normal);
-                    state.dragStartPos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
-                    addPreviewBlock(state.dragStartPos);
-                }
-            }
-        } else if (state.currentMode === 'remove') {
-            if (intersects.length > 0 && intersects[0].object !== state.plane) {
-                if (!isSmallScreen) {
-                    state.isDraggingRemove = true;
-                }
-            }
-        }
+            clearPreview();
+        }, GRAB_HOLD_MS);
+        return;
+    }
+    if (!hit || hit.food) { activePointer.entity = true; return; }
+    const canDrag = event.pointerType !== 'touch';
+    if (state.currentMode === 'add' && canDrag) {
+        state.isDraggingBuild = true;
+        state.verticalBuildOffset = 0;
+        state.dragStartPos.copy(gridPosition(hit));
+        state.rollOverMesh.position.copy(state.dragStartPos);
+        addPreviewBlock(state.dragStartPos);
+    } else if (state.currentMode === 'remove' && canDrag && hit.object !== state.plane) {
+        state.isDraggingRemove = true;
+        removeVoxel(hit.object);
     }
 }
 
 export function onPointerUp(event) {
-    // 잡기 예약 타이머 취소 (꺼 누르지 않고 떼면 그냥 클릭으로 처리)
-    if (_grabHoldTimer) {
-        clearTimeout(_grabHoldTimer);
-        _grabHoldTimer = null;
-    }
-
-    // 잡힘 동물 놓기: 다시 물리 적용 + 현재 층 최상단에 스냅
+    if (!activePointer || event.pointerId !== activePointer.id || event.button !== 0) return;
+    const interaction = activePointer;
+    activePointer = null;
+    clearGrabTimer();
     if (_grabbedAnimal) {
-        _grabbedAnimal.grabbed = false;
-        _grabbedAnimal.state = 'falling';
-        if (_grabbedAnimal.body) {
-            _grabbedAnimal.body.wakeUp();
-        }
-        // 놓는 순간, 현재 위치의 가장 높은 블록 윗면 위에 정확히 안착시킴
-        snapAnimalToGround(_grabbedAnimal);
-        setGrabbedAnimal(null);
-        _grabbedAnimal = null;
-        return; // 놓을 때는 블록 조작 불필요
+        releaseAnimal();
+        clearPreview();
+        return;
     }
-
-    if (event.button === 0) {
-        if (state.previewGroup.children.length > 0) {
-            state.previewGroup.children.forEach(child => {
-                placeVoxel(child.position, state.currentSlot, true);
-            });
-            while (state.previewGroup.children.length > 0) {
-                state.previewGroup.remove(state.previewGroup.children[0]);
-            }
-            import('./scene.js').then(m => m.pushHistory());
-        }
-        if (state.isDraggingRemove) {
-            import('./scene.js').then(m => m.pushHistory());
-        }
-        state.isDraggingBuild = false;
-        state.isDraggingRemove = false;
-        state.targetGuideOpacity = 0;
-        state.rollOverMaterial.opacity = 0;
+    const wasBuilding = state.isDraggingBuild;
+    const wasRemoving = state.isDraggingRemove;
+    const overInterface = isInterface(document.elementFromPoint?.(event.clientX, event.clientY) || event.target);
+    if (wasBuilding && !overInterface) {
+        for (const child of state.previewGroup.children) placeVoxel(child.position, state.currentSlot, true);
+        pushHistory();
     }
-
-    const dist = state.downPointerPos.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
-    const timeDelta = performance.now() - state.pointerDownTime;
-
-    if (dist < 10 && timeDelta < 500 && !event.target.closest('#ui-layer')) {
-        state.pointer.set((event.clientX / window.innerWidth) * 2 - 1, - (event.clientY / window.innerHeight) * 2 + 1);
-        state.raycaster.setFromCamera(state.pointer, state.camera);
-
-        // ── 1) 제거 모드: 동물 / 먹이 개별 제거 우선 처리 ──
-        if (state.animalMode === 'remove') {
-            const allAnimalMeshes = animals.flatMap(a => [...a.mesh.children]);
-            const animalHits = state.raycaster.intersectObjects(allAnimalMeshes, false);
-            if (animalHits.length > 0) {
-                const hitAnimal = animalHits[0].object.userData.animalRef;
-                if (hitAnimal) { removeAnimalWithEffect(hitAnimal); return; }
-            }
-            const allFoodMeshes = foods.flatMap(f => [...f.mesh.children]);
-            const foodHits = state.raycaster.intersectObjects(allFoodMeshes, false);
-            if (foodHits.length > 0) {
-                const hitFood = foodHits[0].object.userData.foodRef;
-                if (hitFood) { removeFoodWithEffect(hitFood); return; }
-            }
-            return; // 제거 모드에서는 블록 조작 생략
-        }
-
-        // ── 2) 일반 모드: 동물 클릭 액션 ──
-        const allAnimalMeshes = animals.flatMap(a => [...a.mesh.children]);
-        const animalHits = state.raycaster.intersectObjects(allAnimalMeshes, false);
-        if (animalHits.length > 0) {
-            const hitAnimal = animalHits[0].object.userData.animalRef;
-            if (hitAnimal) {
-                triggerClickAction(hitAnimal);
-                return;
-            }
-        }
-
-        // ── 3) 동물이 아니면 모드별 처리 ──
-        const intersects = state.raycaster.intersectObjects(objects, false);
-
-        if (intersects.length > 0) {
-            const intersect = intersects[0];
-            if (state.currentMode === 'food') {
-                const ny = intersect.face ? intersect.face.normal.y : 0;
-                if (ny > 0.5) {
-                    spawnFood(new THREE.Vector3(intersect.point.x, intersect.point.y, intersect.point.z));
-                }
-            } else if (state.currentMode === 'add') {
-                const pos = intersect.point.clone().add(intersect.face.normal);
-                pos.divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
-                placeVoxel(pos);
-            } else {
-                if (intersect.object !== state.plane) {
-                    removeVoxel(intersect.object);
-                }
-            }
-            state.targetGuideOpacity = 0;
-            state.rollOverMaterial.opacity = 0;
-        }
+    if (wasRemoving) pushHistory();
+    state.isDraggingBuild = false;
+    state.isDraggingRemove = false;
+    clearPreview();
+    if (wasBuilding || wasRemoving || overInterface || interaction.moved) return;
+    const dist = Math.hypot(event.clientX - state.downPointerPos.x, event.clientY - state.downPointerPos.y);
+    if (dist >= TAP_DISTANCE || performance.now() - state.pointerDownTime >= 500) return;
+    setPointerRay(event);
+    const hit = getHit();
+    if (!hit) return;
+    if (state.animalMode === 'remove') {
+        if (hit.animal) removeAnimalWithEffect(hit.animal);
+        else if (hit.food) removeFoodWithEffect(hit.food);
+        return;
     }
+    if (hit.animal) { triggerClickAction(hit.animal); return; }
+    if (interaction.entity || hit.food) return;
+    if (state.currentMode === 'food') {
+        if (hit.face?.normal.y > 0.5) spawnFood(hit.point.clone());
+    } else if (state.currentMode === 'add') placeVoxel(gridPosition(hit));
+    else if (hit.object !== state.plane) removeVoxel(hit.object);
 }
 
-function cancelDragBuild() {
-    if (state.isDraggingBuild) {
-        state.isDraggingBuild = false;
-        state.verticalBuildOffset = 0;
-        while (state.previewGroup.children.length > 0) {
-            state.previewGroup.remove(state.previewGroup.children[0]);
-        }
-    }
+function gridPosition(hit) {
+    return hit.point.clone().add(hit.face.normal).divideScalar(voxelSize).floor().multiplyScalar(voxelSize).addScalar(voxelSize / 2);
+}
+
+function canPreview(pos) {
+    return pos.y >= voxelSize / 2 && !objects.some(obj => obj !== state.plane && obj.position.distanceToSquared(pos) < 1);
 }
 
 function updatePreviewPath(currentPos) {
-    while (state.previewGroup.children.length > 0) {
-        state.previewGroup.remove(state.previewGroup.children[0]);
-    }
-
+    state.previewGroup.clear();
     const dx = Math.round((currentPos.x - state.dragStartPos.x) / voxelSize);
     const dz = Math.round((currentPos.z - state.dragStartPos.z) / voxelSize);
     const dy = state.verticalBuildOffset;
-
     let targetDx = dx, targetDz = dz;
-    const absX = Math.abs(dx);
-    const absZ = Math.abs(dz);
-
-    if (absX > absZ * 1.5) { targetDz = 0; }
-    else if (absZ > absX * 1.5) { targetDx = 0; }
+    const absX = Math.abs(dx), absZ = Math.abs(dz);
+    if (absX > absZ * 1.5) targetDz = 0;
+    else if (absZ > absX * 1.5) targetDx = 0;
     else {
         const diag = Math.max(absX, absZ);
-        targetDx = dx > 0 ? diag : -diag;
-        targetDz = dz > 0 ? diag : -diag;
+        targetDx = Math.sign(dx) * diag;
+        targetDz = Math.sign(dz) * diag;
     }
-
     const steps = Math.max(Math.abs(targetDx), Math.abs(dy), Math.abs(targetDz));
-    if (steps === 0) {
-        addPreviewBlock(state.dragStartPos);
-        return;
-    }
-
-    for (let i = 0; i <= steps; i++) {
-        const stepX = Math.round((targetDx / steps) * i);
-        const stepY = Math.round((dy / steps) * i);
-        const stepZ = Math.round((targetDz / steps) * i);
-
+    if (steps === 0) { addPreviewBlock(state.dragStartPos); return; }
+    for (let i = 0; i <= Math.min(steps, MAX_PATH_BLOCKS - 1); i++) {
         const pos = state.dragStartPos.clone().add(new THREE.Vector3(
-            stepX * voxelSize,
-            stepY * voxelSize,
-            stepZ * voxelSize
+            Math.round(targetDx / steps * i) * voxelSize,
+            Math.round(dy / steps * i) * voxelSize,
+            Math.round(targetDz / steps * i) * voxelSize
         ));
         addPreviewBlock(pos);
     }
 }
 
 function addPreviewBlock(pos) {
+    if (!canPreview(pos)) return;
     const mesh = new THREE.Mesh(state.cubeGeo, state.previewMaterial);
     mesh.position.copy(pos);
     state.previewGroup.add(mesh);

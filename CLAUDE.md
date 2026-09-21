@@ -12,7 +12,7 @@
 - **lil-gui** — Three.js addons에 포함된 GUI 라이브러리
 - **Web Audio API** — 절차적 효과음 (외부 파일 없음)
 - 바닐라 JS ES Modules, CSS
-- 서버 불필요 (로컬 파일로 실행 가능)
+- 정적 HTTP 서버로 실행 (`node serve.mjs`). 파일 직접 열기는 ES 모듈 보안 제한으로 실패할 수 있음.
 
 ## 파일 구조
 
@@ -37,7 +37,7 @@ pikachu_reference.png
 | 상수 | 위치 | 값 | 의미 |
 |------|------|----|------|
 | `voxelSize` | state.js:3 | 50 | 블록 한 칸 크기 (단위: Three.js 유닛) |
-| `GROUND_BASE_HEIGHT` | entities.js:23 | 80 | 동물이 서 있는 기준 지면 높이 |
+| `GROUND_BASE_HEIGHT` | entities.js | 0 | 물리 바닥과 동일한 기준 지면 높이 |
 | `MAX_ANIMALS` | entities.js:10 | 20 | 최대 동물 수 |
 | 중력 | main.js:38 | -1470 | Cannon-es 중력 (y축, 기본 -980의 1.5배) |
 | `linearDamping` | entities.js | 0.95 | 동물 물리 감쇠 |
@@ -165,7 +165,7 @@ THREE.WebGLRenderer
 
 ## 개발 규칙
 
-- **빌드 없음**: npm run, webpack 등 사용 안 함. 브라우저에서 직접 실행.
+- **빌드 없음**: npm run, webpack 등 사용 안 함. `node serve.mjs`로 로컬 서버를 띄워 브라우저에서 실행.
 - **전역 상태 공유**: 새 기능도 `state.js`의 `state` 객체에 필드 추가.
 - **새 모듈 추가 시**: `main.js`에서 import 후 `init()` 또는 `animate()`에 연결.
 - **물리 body 제거**: 반드시 `state.world.removeBody(body)` 호출 (메모리 누수 방지).

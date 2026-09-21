@@ -7,9 +7,9 @@ import { SAOPass } from 'three/addons/postprocessing/SAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { state, guiParams, objects, voxelSize, materials, presetColors, numCustomSlots, explodingBricks } from './state.js';
-import { pushHistory, getFullSnapshot } from './scene.js';
+import { getFullSnapshot, disposeExplodingBrick } from './scene.js';
 import { updatePreview } from './camera.js';
-import { onPointerMove, onPointerDown, onPointerUp, onWindowResize, onKeyDown, onKeyUp } from './input.js';
+import { onPointerMove, onPointerDown, onPointerUp, onPointerCancel, onWindowResize, onKeyDown, onKeyUp } from './input.js';
 import { setupPalette, setupModeButtons, setupGUI, setupSnapControls } from './ui.js';
 import { updateDogs } from './entities.js';
 import { updateFoods, initFoodGhost } from './food.js';
@@ -119,20 +119,31 @@ function init() {
 
     const pmremGenerator = new THREE.PMREMGenerator(state.renderer);
     state.scene.environment = pmremGenerator.fromScene(new THREE.Scene()).texture;
+    pmremGenerator.dispose();
 
     state.controls = new OrbitControls(state.camera, state.renderer.domElement);
     state.controls.mouseButtons = {
-        LEFT: THREE.MOUSE.NONE,
+        LEFT: undefined,
         MIDDLE: THREE.MOUSE.DOLLY,
         RIGHT: THREE.MOUSE.ROTATE
     };
     state.controls.enablePan = true;
+    state.renderer.domElement.addEventListener('pointerdown', event => {
+        state.controls.mouseButtons.LEFT = event.altKey ? THREE.MOUSE.ROTATE : undefined;
+    }, { capture: true });
 
     state.actionHistory.push(getFullSnapshot());
 
     document.addEventListener('pointermove', onPointerMove);
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('blur', onPointerCancel);
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) onPointerCancel();
+        previousFrameTime = null;
+        simulationAccumulator = 0;
+    });
     window.addEventListener('resize', onWindowResize);
     document.addEventListener('keydown', onKeyDown);
     document.addEventListener('keyup', onKeyUp);
@@ -144,7 +155,7 @@ function init() {
 
     state.saoPass = new SAOPass(state.scene, state.camera);
     state.saoPass.params.saoIntensity = guiParams.ao.intensity * 0.00005;
-    state.saoPass.params.saoRadius = guiParams.ao.radius;
+    state.saoPass.params.saoKernelRadius = guiParams.ao.radius;
     state.saoPass.params.saoBlur = true;
     state.saoPass.params.saoBias = 0.5;
     state.composer.addPass(state.saoPass);
@@ -182,29 +193,38 @@ function initPreview() {
     container.appendChild(state.previewRenderer.domElement);
 }
 
-function animate() {
+const fixedDt = 1 / 60;
+let previousFrameTime = null;
+let simulationAccumulator = 0;
+const cameraMove = new THREE.Vector3();
+const cameraShake = new THREE.Vector3();
+
+function animate(now) {
     requestAnimationFrame(animate);
 
-    const now = performance.now();
-    const dt = 1 / 60; // Fixed time step
+    // Rendering frequency must not change game speed. Keep collision steps small
+    // even at x3, and discard long gaps when returning from another tab.
+    const dt = previousFrameTime === null ? 0 : Math.max(0, Math.min((now - previousFrameTime) / 1000, 0.1));
+    previousFrameTime = now;
     const scaledDt = dt * (state.gameSpeed ?? 1);
-    if (state.world) {
-        state.world.step(scaledDt);
+    simulationAccumulator += scaledDt;
+    while (simulationAccumulator + 1e-10 >= fixedDt) {
+        if (state.world) state.world.step(fixedDt);
+        updateDogs(fixedDt);
+        updateFoods(fixedDt);
+        simulationAccumulator -= fixedDt;
     }
-
-    updateDogs(scaledDt);
-    updateFoods(scaledDt);
 
     for (let i = explodingBricks.length - 1; i >= 0; i--) {
         const item = explodingBricks[i];
-        const elapsed = (now - item.startTime) / 1000;
+        item.elapsed = (item.elapsed ?? 0) + scaledDt;
+        const elapsed = item.elapsed;
 
         const maxLife = item.maxLife ?? 7.0;
         const fadeLife = item.fadeLife ?? 6.0;
 
         if (elapsed > maxLife) {
-            if (item.mesh) state.scene.remove(item.mesh);
-            if (item.body && state.world) state.world.removeBody(item.body);
+            disposeExplodingBrick(item);
             explodingBricks.splice(i, 1);
             continue;
         }
@@ -221,19 +241,19 @@ function animate() {
 
             // Hide/remove blocks that fall way off the board
             if (item.body.position.y < -1000) {
-                state.scene.remove(item.mesh);
-                state.world.removeBody(item.body);
+                disposeExplodingBrick(item);
                 explodingBricks.splice(i, 1);
             }
         } else {
             // Fallback for old snapshot objects if any
-            state.scene.remove(item);
+            disposeExplodingBrick(item);
             explodingBricks.splice(i, 1);
         }
     }
 
-    const accel = 2.0;
-    const friction = 0.85;
+    const frameScale = dt * 60;
+    const friction = Math.pow(0.85, frameScale);
+    const accel = 2.0 * 0.85 * (1 - friction) / (1 - 0.85);
 
     const forward = new THREE.Vector3();
     state.camera.getWorldDirection(forward);
@@ -243,6 +263,7 @@ function animate() {
     const right = new THREE.Vector3();
     right.crossVectors(forward, state.camera.up).normalize();
 
+    state.velocity.multiplyScalar(friction);
     if (state.keys.w) state.velocity.addScaledVector(forward, accel);
     if (state.keys.s) state.velocity.addScaledVector(forward, -accel);
     if (state.keys.a) state.velocity.addScaledVector(right, -accel);
@@ -250,18 +271,12 @@ function animate() {
     if (state.keys.e) state.velocity.y += accel;
     if (state.keys.q) state.velocity.y -= accel;
 
-    state.velocity.multiplyScalar(friction);
-    state.camera.position.add(state.velocity);
-
-    if (state.velocity.lengthSq() > 0.1) {
-        const lookDirection = new THREE.Vector3();
-        state.camera.getWorldDirection(lookDirection);
-        const distance = state.controls.target.distanceTo(state.camera.position);
-        state.controls.target.copy(state.camera.position).addScaledVector(lookDirection, Math.max(distance, 100));
-    }
+    cameraMove.copy(state.velocity).multiplyScalar(frameScale);
+    state.camera.position.add(cameraMove);
+    state.controls.target.add(cameraMove);
 
     if (state.rollOverMaterial) {
-        state.rollOverMaterial.opacity += (state.targetGuideOpacity - state.rollOverMaterial.opacity) * 0.2;
+        state.rollOverMaterial.opacity += (state.targetGuideOpacity - state.rollOverMaterial.opacity) * (1 - Math.pow(0.8, frameScale));
         if (state.rollOverMaterial.opacity > 0.01) {
             state.rollOverMesh.visible = true;
         } else {
@@ -269,25 +284,28 @@ function animate() {
         }
     }
 
-    // ── 화면 흔들림 (HEAVY 동물 클릭 시) ──
+    state.controls.update();
+    updatePreview();
+
+    // Apply shake only for rendering so it cannot permanently move the camera.
+    cameraShake.set(0, 0, 0);
     if (state.screenShakeTimer > 0) {
-        state.screenShakeTimer -= dt;
+        state.screenShakeTimer -= scaledDt;
         if (state.screenShakeTimer < 0) state.screenShakeTimer = 0;
         const decay = state.screenShakeTimer / 0.5;
         const shakeAmt = state.screenShakeIntensity * decay;
-        state.camera.position.x += (Math.random() - 0.5) * 2 * shakeAmt;
-        state.camera.position.y += (Math.random() - 0.5) * shakeAmt;
+        cameraShake.set((Math.random() - 0.5) * 2 * shakeAmt, (Math.random() - 0.5) * shakeAmt, 0);
     }
-
-    state.controls.update();
-    updatePreview();
+    state.camera.position.add(cameraShake);
 
     if (state.composer) {
         state.composer.render();
     } else {
         state.renderer.render(state.scene, state.camera);
     }
+    state.camera.position.sub(cameraShake);
+    state.camera.updateMatrixWorld();
 }
 
 init();
-animate();
+requestAnimationFrame(animate);

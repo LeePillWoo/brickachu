@@ -1,5 +1,7 @@
 # 브릭카츄 (Brickkachu) - 개발 체크리스트
 
+> 2026-09-21: 아래 항목은 기존 개발 기록입니다. 이번 버그 수정 및 검증 결과는 [BUGFIX_REPORT.md](BUGFIX_REPORT.md)에 정리했습니다. 재검증은 `node tests/run.mjs`로 실행합니다.
+
 ---
 
 ## 🔲 현재 계획 (Upcoming Tasks)

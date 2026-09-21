@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, voxelSize, objects } from './state.js';
-import { removeVoxel, explodeBlockHeavy } from './scene.js';
+import { explodeBlockHeavy } from './scene.js';
 import { foods } from './food.js';
 import { playSound } from './sound.js';
 
@@ -10,7 +10,7 @@ export const dogs = animals; // Aliased for backwards compatibility in main.js
 const MAX_ANIMALS = 20;
 
 export const GROUP_ANIMALS = {
-    all:        ['dog','cat','rabbit','sheep','snake','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','elephant','penguin','pig','turtle','eevee','gengar','psyduck','bulbasaur','slowpoke','togepi','clefairy','wobbuffet','grasshopper','frog','snail','lizard','lion','crocodile','bear','lion','crocodile','bear'],
+    all:        ['dog','cat','rabbit','sheep','snake','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','elephant','penguin','pig','turtle','eevee','gengar','psyduck','bulbasaur','slowpoke','togepi','clefairy','wobbuffet','grasshopper','frog','snail','lizard','lion','crocodile','bear'],
     quad:       ['dog','cat','sheep','pig','bulbasaur','squirtle','charmander'],
     hop:        ['rabbit','pikachu','eevee','grasshopper','frog'],
     sneak:      ['snake','turtle','snail','lizard'],
@@ -20,17 +20,40 @@ export const GROUP_ANIMALS = {
     carnivore:  ['lion','crocodile','bear'],
 };
 
-const GROUND_BASE_HEIGHT = 80;
+const GROUND_BASE_HEIGHT = 0;
 const EAT_RADIUS = voxelSize * 1.8;
 
 export let grabbedAnimal = null;
 export function setGrabbedAnimal(a) { grabbedAnimal = a; }
 
+function disposeAnimalMesh(mesh) {
+    if (!mesh) return;
+    mesh.removeFromParent();
+    const geometries = new Set();
+    const materials = new Set();
+    mesh.traverse(child => {
+        if (child.geometry) geometries.add(child.geometry);
+        if (child.material) {
+            const childMaterials = Array.isArray(child.material) ? child.material : [child.material];
+            childMaterials.forEach(material => materials.add(material));
+        }
+        delete child.userData.animalRef;
+    });
+    geometries.forEach(geometry => geometry.dispose());
+    materials.forEach(material => material.dispose());
+}
+
+function detachAnimalBody(animal) {
+    if (animal.body && state.world) state.world.removeBody(animal.body);
+    animal.grabbed = false;
+    if (grabbedAnimal === animal) grabbedAnimal = null;
+}
+
 export function clearAllAnimals() {
     while (animals.length > 0) {
         const animal = animals.pop();
-        if (animal.mesh) state.scene.remove(animal.mesh);
-        if (animal.body && state.world) state.world.removeBody(animal.body);
+        detachAnimalBody(animal);
+        disposeAnimalMesh(animal.mesh);
     }
     grabbedAnimal = null;
 }
@@ -40,7 +63,7 @@ export function removeAnimalWithEffect(animal) {
     const idx = animals.indexOf(animal);
     if (idx === -1) return;
     animals.splice(idx, 1);
-    if (animal.body && state.world) state.world.removeBody(animal.body);
+    detachAnimalBody(animal);
     playSound('animal-remove');
 
     let t = 0;
@@ -59,7 +82,7 @@ export function removeAnimalWithEffect(animal) {
             if (s > 0.01) {
                 requestAnimationFrame(poof);
             } else {
-                state.scene.remove(mesh);
+                disposeAnimalMesh(mesh);
             }
         }
     }
@@ -88,8 +111,13 @@ function _createSmokePoof(position) {
     function animateSmoke() {
         let alive = false;
         for (const p of particles) {
+            if (p.life <= 0) continue;
             p.life -= 0.034;
-            if (p.life <= 0) { state.scene.remove(p.mesh); continue; }
+            if (p.life <= 0) {
+                p.mesh.removeFromParent();
+                p.mesh.material.dispose();
+                continue;
+            }
             alive = true;
             p.mesh.position.addScaledVector(p.vel, 0.016);
             p.vel.y -= 55 * 0.016;
@@ -98,6 +126,7 @@ function _createSmokePoof(position) {
             p.mesh.material.opacity = p.life * 0.8;
         }
         if (alive) requestAnimationFrame(animateSmoke);
+        else geo.dispose();
     }
     animateSmoke();
 }
@@ -109,7 +138,7 @@ export function removeAllAnimalsWithEffect() {
     grabbedAnimal = null;
 
     toRemove.forEach(animal => {
-        if (animal.body && state.world) state.world.removeBody(animal.body);
+        detachAnimalBody(animal);
         const mesh = animal.mesh;
         if (!mesh) return;
 
@@ -123,7 +152,7 @@ export function removeAllAnimalsWithEffect() {
             if (s > 0.01) {
                 requestAnimationFrame(shrink);
             } else {
-                state.scene.remove(mesh);
+                disposeAnimalMesh(mesh);
             }
         }
         shrink();
@@ -143,16 +172,16 @@ const _aimOrigin = new THREE.Vector3();
 const _thicknessCheck = new THREE.Vector3();
 
 function getBlockObjects() {
-    return objects && state.plane ? objects.filter(o => o !== state.plane) : [];
+    return objects.filter(o => o !== state.plane);
 }
 
 export function getGroundHeightBelow(x, yStart, z, defaultY = GROUND_BASE_HEIGHT) {
-    if (!objects || objects.length === 0) return GROUND_BASE_HEIGHT;
-    RAY_ORIGIN.set(x, yStart + 10, z);
+    if (objects.length === 0) return defaultY;
+    RAY_ORIGIN.set(x, yStart, z);
     _groundRaycaster.set(RAY_ORIGIN, _groundRayDown);
     const hits = _groundRaycaster.intersectObjects(objects, true);
     if (hits.length > 0) return hits[0].point.y;
-    return GROUND_BASE_HEIGHT;
+    return defaultY;
 }
 
 export function getCeilingHeightAbove(x, yStart, z) {
@@ -180,6 +209,8 @@ export function snapAnimalToGround(animal) {
     );
     const targetY = groundY + halfHeight;
     animal.body.position.y = targetY;
+    animal.body.velocity.set(0, 0, 0);
+    animal.body.aabbNeedsUpdate = true;
     animal.mesh.position.copy(animal.body.position);
     animal.mesh.position.y -= halfHeight;
 }
@@ -236,12 +267,13 @@ function countThickness(firstHit, direction) {
     if (blockObjects.length === 0) return 1;
     let count = 1;
     // 첫 히트 블록을 지나쳐 연속된 블록을 단계적으로 확인
-    for (let step = 1; step <= 3; step++) {
-        _thicknessCheck.copy(firstHit.point).addScaledVector(direction, voxelSize * step);
+    // 다섯 번째 블록까지 확인해야 4블록 제한을 실제로 판별할 수 있다.
+    for (let step = 1; step <= 4; step++) {
+        _thicknessCheck.copy(firstHit.point).addScaledVector(direction, voxelSize * step + 0.1);
         const found = blockObjects.some(obj => {
-            const dx = obj.position.x - _thicknessCheck.x;
-            const dz = obj.position.z - _thicknessCheck.z;
-            return (dx * dx + dz * dz) < (voxelSize * voxelSize);
+            return Math.abs(obj.position.x - _thicknessCheck.x) <= voxelSize * 0.5 &&
+                Math.abs(obj.position.y - _thicknessCheck.y) <= voxelSize * 0.5 &&
+                Math.abs(obj.position.z - _thicknessCheck.z) <= voxelSize * 0.5;
         });
         if (found) count++;
         else break;
@@ -304,6 +336,18 @@ function findNearestFood(animal) {
     return nearest;
 }
 
+function canReachFood(animal, food) {
+    _aimOrigin.copy(animal.body.position);
+    const direction = food.position.clone();
+    direction.y += voxelSize * 0.24;
+    direction.sub(_aimOrigin);
+    const distance = direction.length();
+    if (distance < 0.001) return true;
+    _aimRay.set(_aimOrigin, direction.normalize());
+    const hits = _aimRay.intersectObjects(getBlockObjects(), false);
+    return hits.length === 0 || hits[0].distance >= distance;
+}
+
 // ── 애니메이션 그룹 매핑 ──
 const ANIM_TYPE = {};
 [
@@ -350,7 +394,7 @@ const FLEE_RADIUS = voxelSize * 6;
 const MAX_CARNIVORES = 4;
 
 export function triggerClickAction(animal) {
-    if (animal.clickActionTimer > 0) return;
+    if (!animals.includes(animal) || animal.grabbed || animal.clickActionTimer > 0) return;
     const actionType = CLICK_ACTION_MAP[animal.animGroup] || 'spin';
     animal.clickActionTimer = ACTION_DURATION[actionType] || 0.75;
     playSound('animal-click-' + animal.animGroup);
@@ -366,11 +410,6 @@ function getRandomColor() {
 }
 
 export function spawnDog(group = 'all') {
-    if (animals.length >= MAX_ANIMALS) removeOldestAnimal();
-
-    const animalGroup = new THREE.Group();
-    const u = voxelSize / 25;
-
     let pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
     const carnivoreCount = animals.filter(a => a.isCarnivore).length;
     if (carnivoreCount >= MAX_CARNIVORES) {
@@ -381,6 +420,10 @@ export function spawnDog(group = 'all') {
         if (pool.length === 0) pool = GROUP_ANIMALS.all.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
     }
     const type = pool[Math.floor(Math.random() * pool.length)];
+    if (animals.length >= MAX_ANIMALS) removeOldestAnimal();
+
+    const animalGroup = new THREE.Group();
+    const u = voxelSize / 25;
 
     const baseColor = getRandomColor();
     const secondaryColor = getRandomColor();
@@ -846,6 +889,11 @@ export function spawnDog(group = 'all') {
         addPart(8, 22, 8, -7, 6, 0, brn); addPart(8, 22, 8, 7, 6, 0, brn);
     }
 
+    // 발/꼬리 파트가 모델 원점 아래로 내려간 종도 지면에 파묻히지 않게 맞춘다.
+    const modelBounds = new THREE.Box3().setFromObject(animalGroup);
+    if (modelBounds.min.y < 0) {
+        animalGroup.children.forEach(child => { child.position.y -= modelBounds.min.y; });
+    }
     state.scene.add(animalGroup);
 
     const hw = (24 * u) / 2;
@@ -855,7 +903,7 @@ export function spawnDog(group = 'all') {
 
     const spawnX = (Math.random() - 0.5) * 1600;
     const spawnZ = (Math.random() - 0.5) * 1600;
-    const spawnY = 400 + Math.random() * 200;
+    const spawnY = Math.max(400 + Math.random() * 200, getGroundHeightAt(spawnX, spawnZ) + hh + voxelSize * 2);
 
     const body = new CANNON.Body({
         mass: 10,
@@ -867,6 +915,8 @@ export function spawnDog(group = 'all') {
     });
 
     if (state.world) state.world.addBody(body);
+    animalGroup.position.copy(body.position);
+    animalGroup.position.y -= hh;
 
     const animGroup = ANIM_TYPE[type] || 'quadruped';
     const baseSpeed = 300 + Math.random() * 300;
@@ -906,13 +956,14 @@ export function spawnDog(group = 'all') {
     animalGroup.children.forEach(child => { child.userData.animalRef = animalData; });
     animals.push(animalData);
     playSound('animal-spawn');
+    return animalData;
 }
 
 function removeOldestAnimal() {
     const animal = animals.shift();
     if (animal) {
-        if (animal.mesh) state.scene.remove(animal.mesh);
-        if (animal.body && state.world) state.world.removeBody(animal.body);
+        detachAnimalBody(animal);
+        disposeAnimalMesh(animal.mesh);
     }
 }
 
@@ -922,7 +973,6 @@ function getAnimalFullHeight(animal) {
 
 function getCurrentStandingGroundY(animal) {
     if (!animal.body) return GROUND_BASE_HEIGHT;
-    const halfHeight = animal.heightOffset * (voxelSize / 20);
     return getGroundHeightBelow(animal.body.position.x, animal.body.position.y + 0.5, animal.body.position.z, GROUND_BASE_HEIGHT);
 }
 
@@ -963,7 +1013,16 @@ export function updateDogs(dt) {
 
         // ── 잡힌 상태 ──
         if (animal.grabbed) {
-            if (animal.body) { animal.body.velocity.set(0, 0, 0); animal.body.angularVelocity.set(0, 0, 0); }
+            if (animal.body) {
+                animal.body.position.copy(animal.mesh.position);
+                animal.body.position.y += animal.heightOffset * (voxelSize / 20);
+                animal.body.velocity.set(0, 0, 0);
+                animal.body.angularVelocity.set(0, 0, 0);
+                animal.body.aabbNeedsUpdate = true;
+            }
+            animal.isClimbing = false;
+            animal.climbMeshRotX = 0;
+            animal.mesh.rotation.x = 0;
             return;
         }
 
@@ -981,7 +1040,7 @@ export function updateDogs(dt) {
                     animal.timer = 0.3 + Math.random() * 0.7;
                 }
             }
-        } else {
+        } else if (animal.clickActionTimer <= 0) {
             const halfHeight = animal.heightOffset * (voxelSize / 20);
             const groundY = getCurrentStandingGroundY(animal);
             const targetFood = findNearestFood(animal);
@@ -1059,9 +1118,9 @@ export function updateDogs(dt) {
                 const dx = targetFood.position.x - animal.body.position.x;
                 const dz = targetFood.position.z - animal.body.position.z;
                 const dist = Math.sqrt(dx * dx + dz * dz);
-                const heightDiff = Math.abs(targetFood.position.y - animal.body.position.y);
+                const heightDiff = Math.abs(targetFood.position.y - (animal.body.position.y - halfHeight));
 
-                if (dist < EAT_RADIUS && heightDiff < voxelSize * 1.5) {
+                if (dist < EAT_RADIUS && heightDiff < voxelSize * 1.5 && canReachFood(animal, targetFood)) {
                     // 먹기 시작!
                     if (!targetFood.eaten) {
                         targetFood.eaten = true;
@@ -1087,7 +1146,7 @@ export function updateDogs(dt) {
 
                         if (wallHit) {
                             const thickness = countThickness(wallHit, desiredDir);
-                            const blockTop = wallHit.object.position.y + voxelSize / 2;
+                            const blockTop = getWallTopY(wallHit.point, desiredDir);
 
                             if (animal.animGroup === 'HOP' &&
                                 blockTop <= groundY + voxelSize * 5 &&
@@ -1168,27 +1227,28 @@ export function updateDogs(dt) {
                     const nextGroundY = getGroundHeightBelow(predictX, groundY + fullHeight, predictZ, GROUND_BASE_HEIGHT);
                     const maxStep = voxelSize * 1.5;
 
-                    let blockForward = false;
-                    if (predictX > boardLimit || predictX < -boardLimit) blockForward = true;
-                    if (predictZ > boardLimit || predictZ < -boardLimit) blockForward = true;
+                    const outsideBoard = Math.abs(predictX) > boardLimit || Math.abs(predictZ) > boardLimit;
+                    let blockForward = outsideBoard;
                     if (Math.abs(nextGroundY - groundY) > maxStep) blockForward = true;
                     const nextCeilingY = getCeilingHeightAbove(predictX, nextGroundY + 0.1, predictZ);
                     if (nextCeilingY - nextGroundY < fullHeight * 0.95) blockForward = true;
 
                     // ── HOP/HEAVY 전방 벽 감지 (배회 모드) ──
-                    if (!blockForward && animal.body.velocity.y <= 80 && animal.jumpCooldown <= 0) {
+                    if (!outsideBoard && animal.body.velocity.y <= 80 && animal.jumpCooldown <= 0) {
                         const wHit = probeAhead(animal.body.position, animal.targetDir, groundY, halfHeight);
                         if (wHit) {
                             const wThick = countThickness(wHit, animal.targetDir);
-                            const wTop = wHit.object.position.y + voxelSize / 2;
+                            const wTop = getWallTopY(wHit.point, animal.targetDir);
                             if (animal.animGroup === 'HOP' && wTop <= groundY + voxelSize * 5 && wThick <= 4) {
                                 // HOP: 점프
+                                blockForward = false;
                                 animal.body.velocity.y = 1200;
                                 animal.jumpCooldown = 1.5;
                                 animal.body.velocity.x = animal.targetDir.x * animal.speed;
                                 animal.body.velocity.z = animal.targetDir.z * animal.speed;
                             } else if (animal.animGroup === 'HEAVY') {
                                 // HEAVY: 2단 블록 폭발 파괴
+                                blockForward = false;
                                 explodeBlockHeavy(wHit.object, animal.targetDir);
                                 const wUpper = findBlockAtPos(
                                     wHit.object.position.x,
@@ -1201,6 +1261,7 @@ export function updateDogs(dt) {
                                 animal.jumpCooldown = 1.0;
                             } else if ((animal.animGroup === 'SNEAK' || animal.animGroup === 'sliding') && !animal.isClimbing) {
                                 // SNEAK / sliding: 벽 타기 시작 — 스택 전체 꼭대기까지 목표 설정
+                                blockForward = false;
                                 animal.climbTargetY = getWallTopY(wHit.point, animal.targetDir) + halfHeight + voxelSize * 0.6;
                                 animal.climbDir.copy(animal.targetDir);
                                 animal.isClimbing = true;
@@ -1230,6 +1291,17 @@ export function updateDogs(dt) {
 
         // ── mesh 위치를 body에 동기화 ──
         if (animal.body) {
+            // 먹이 추적, 도주, 클릭 대시에도 배회와 같은 보드 경계를 적용한다.
+            for (const axis of ['x', 'z']) {
+                const position = animal.body.position[axis];
+                if (Math.abs(position) >= boardLimit) {
+                    const edge = Math.sign(position);
+                    animal.body.position[axis] = edge * boardLimit;
+                    animal.body.aabbNeedsUpdate = true;
+                    if (animal.body.velocity[axis] * edge > 0) animal.body.velocity[axis] *= -1;
+                    if (animal.targetDir[axis] * edge > 0) animal.targetDir[axis] *= -1;
+                }
+            }
             animal.mesh.position.copy(animal.body.position);
             animal.mesh.position.y -= (animal.heightOffset * (voxelSize / 20));
         }

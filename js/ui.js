@@ -1,9 +1,10 @@
 import GUI from 'three/addons/libs/lil-gui.module.min.js';
 import { state, guiParams, defaultParams, materials, presetColors, numCustomSlots } from './state.js';
-import { explodeBricks, pushHistory, applyActionState } from './scene.js';
+import { explodeBricks, pushHistory, restoreBricks } from './scene.js';
 import { snapPreviewCamera } from './camera.js';
-import { spawnDog, clearAllAnimals, removeAllAnimalsWithEffect } from './entities.js';
-import { clearAllFood, clearAllFoodWithEffect } from './food.js';
+import { spawnDog, removeAllAnimalsWithEffect } from './entities.js';
+import { clearAllFoodWithEffect } from './food.js';
+import { onPointerCancel } from './input.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -79,7 +80,9 @@ export function setupPalette() {
             mat.color.set(hex);
             updatePaletteIcon(state.selectedSlotForPopup, hex);
             if (state.currentSlot === state.selectedSlotForPopup) state.rollOverMaterial.color.set(hex);
+            if (guiParams.block.slotTarget === state.selectedSlotForPopup && window.syncGUIToSlot) window.syncGUIToSlot(state.selectedSlotForPopup);
         });
+        popColor.addEventListener('change', pushHistory);
     }
 
     ['roughness'].forEach(id => {
@@ -90,7 +93,9 @@ export function setupPalette() {
                 if (!state.selectedSlotForPopup) return;
                 const mat = materials[state.selectedSlotForPopup];
                 mat[id] = val;
+                if (guiParams.block.slotTarget === state.selectedSlotForPopup && window.syncGUIToSlot) window.syncGUIToSlot(state.selectedSlotForPopup);
             });
+            el.addEventListener('change', pushHistory);
         }
     });
 }
@@ -110,9 +115,9 @@ export function setupModeButtons() {
 
     // ── 블록 그룹 (add ↔ remove 루프 토글) ──
     let blockState = 'add'; // 'add' | 'remove'
-    let foodActive = false; // applyBlockState가 foodActive를 참조하므로 먼저 선언
 
     function applyBlockState(s) {
+        onPointerCancel();
         blockState = s;
         state.currentMode = s;
         if (s === 'add') {
@@ -131,14 +136,16 @@ export function setupModeButtons() {
             btnFood.classList.remove('active');
             btnFood.textContent = '🍎';
             btnFood.title = '먹이 설치 모드';
-            foodActive = false;
         }
     }
 
-    btnBlock.addEventListener('pointerdown', (e) => {
+    btnBlock.addEventListener('click', (e) => {
         e.stopPropagation();
+        const wasClearMode = state.animalMode === 'remove';
         deactivateClearMode();
-        if (state.currentMode === 'add' || state.currentMode === 'remove') {
+        if (wasClearMode) {
+            applyBlockState(blockState);
+        } else if (state.currentMode === 'add' || state.currentMode === 'remove') {
             applyBlockState(blockState === 'add' ? 'remove' : 'add');
         } else {
             applyBlockState('add');
@@ -163,6 +170,7 @@ export function setupModeButtons() {
     let _animalLongPressTimer = null;
     let _animalLongPressFired = false;
     let _animalMenuOpen = false;
+    let _animalPointerId = null;
 
     // 메뉴 DOM 생성
     const animalTypeMenu = document.createElement('div');
@@ -174,6 +182,7 @@ export function setupModeButtons() {
         item.innerHTML = `<span class="atm-icon">${g.icon}</span><span class="atm-label">${g.label}</span>`;
         item.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
+            if (e.button !== 0) return;
             selectAnimalGroup(g.id);
             closeAnimalMenu();
         });
@@ -198,24 +207,42 @@ export function setupModeButtons() {
         const rect = btnAnimal.getBoundingClientRect();
         animalTypeMenu.style.display = 'flex';
         // 버튼 왼쪽에 메뉴 표시 (버튼 그룹이 우측에 있으므로)
-        animalTypeMenu.style.top = `${rect.top}px`;
-        animalTypeMenu.style.left = `${rect.left - 148}px`;
-        requestAnimationFrame(() => animalTypeMenu.classList.add('atm-visible'));
+        animalTypeMenu.style.top = `${Math.max(8, Math.min(rect.top, window.innerHeight - animalTypeMenu.offsetHeight - 8))}px`;
+        animalTypeMenu.style.left = `${Math.max(8, rect.left - animalTypeMenu.offsetWidth - 8)}px`;
+        requestAnimationFrame(() => { if (_animalMenuOpen) animalTypeMenu.classList.add('atm-visible'); });
     }
 
     function closeAnimalMenu() {
         _animalMenuOpen = false;
         animalTypeMenu.classList.remove('atm-visible');
+        animalTypeMenu.querySelectorAll('.atm-item').forEach(item => item.classList.remove('atm-hover'));
         setTimeout(() => { if (!_animalMenuOpen) animalTypeMenu.style.display = 'none'; }, 200);
+    }
+
+    function cancelAnimalPress() {
+        if (_animalLongPressTimer !== null) clearTimeout(_animalLongPressTimer);
+        _animalLongPressTimer = null;
+        _animalPointerId = null;
+        closeAnimalMenu();
+    }
+
+    function spawnSelectedAnimal() {
+        const wasClearMode = state.animalMode === 'remove';
+        deactivateClearMode();
+        if (wasClearMode) applyBlockState(blockState);
+        spawnDog(selectedAnimalGroup);
     }
 
     if (btnAnimal) {
         btnAnimal.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
-            if (e.button !== 0) return;
+            if (e.button !== 0 || e.isPrimary === false) return;
+            if (_animalLongPressTimer !== null) clearTimeout(_animalLongPressTimer);
+            _animalPointerId = e.pointerId;
             _animalLongPressFired = false;
             btnAnimal.setPointerCapture(e.pointerId);
             _animalLongPressTimer = setTimeout(() => {
+                _animalLongPressTimer = null;
                 _animalLongPressFired = true;
                 openAnimalMenu();
             }, 500);
@@ -231,22 +258,32 @@ export function setupModeButtons() {
         });
 
         btnAnimal.addEventListener('pointerup', (e) => {
+            if (e.pointerId !== _animalPointerId || e.button !== 0) return;
+            _animalPointerId = null;
             if (_animalLongPressTimer) { clearTimeout(_animalLongPressTimer); _animalLongPressTimer = null; }
             if (_animalMenuOpen) {
+                let selected = false;
                 // 드래그 후 메뉴 아이템 위에서 놓으면 해당 타입 선택
                 animalTypeMenu.querySelectorAll('.atm-item').forEach(item => {
                     const r = item.getBoundingClientRect();
                     if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
                         selectAnimalGroup(item.dataset.group);
+                        selected = true;
                     }
                     item.classList.remove('atm-hover');
                 });
-                closeAnimalMenu();
+                if (selected) closeAnimalMenu();
                 return;
             }
             if (_animalLongPressFired) return;
-            if (e.button === 0) spawnDog(selectedAnimalGroup);
+            const rect = btnAnimal.getBoundingClientRect();
+            if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) spawnSelectedAnimal();
         });
+        btnAnimal.addEventListener('pointercancel', cancelAnimalPress);
+        btnAnimal.addEventListener('lostpointercapture', () => { if (_animalPointerId !== null) cancelAnimalPress(); });
+        btnAnimal.addEventListener('click', e => { if (e.detail === 0) spawnSelectedAnimal(); });
+        btnAnimal.addEventListener('contextmenu', e => e.preventDefault());
+        window.addEventListener('blur', cancelAnimalPress);
 
         // 메뉴 외부 클릭 시 닫기
         document.addEventListener('pointerdown', (e) => {
@@ -260,16 +297,15 @@ export function setupModeButtons() {
 
     // ── 먹이 버튼 (단일 클릭 → food 모드 토글) ──
     if (btnFood) {
-        btnFood.addEventListener('pointerdown', (e) => {
+        btnFood.addEventListener('click', (e) => {
             e.stopPropagation();
+            onPointerCancel();
             deactivateClearMode();
             if (state.currentMode !== 'food') {
-                foodActive = true;
                 state.currentMode = 'food';
                 btnFood.classList.add('active');
                 btnBlock.classList.remove('active', 'remove-mode');
             } else {
-                foodActive = false;
                 state.currentMode = blockState;
                 btnFood.classList.remove('active');
                 if (blockState === 'add') {
@@ -285,12 +321,20 @@ export function setupModeButtons() {
     const btnClearAll = document.getElementById('btn-clear-all');
     let _clearLongPressTimer = null;
     let _clearLongPressFired = false;
+    let _clearPointerId = null;
+
+    function cancelClearPress() {
+        if (_clearLongPressTimer !== null) clearTimeout(_clearLongPressTimer);
+        _clearLongPressTimer = null;
+        _clearPointerId = null;
+        if (btnClearAll) btnClearAll.classList.remove('longpress-active');
+    }
 
     // 제거 모드 해제 (다른 버튼 활성화 시 호출)
     function deactivateClearMode() {
+        cancelClearPress();
         if (state.animalMode !== 'remove') return;
         state.animalMode = 'spawn';
-        if (_clearLongPressTimer) { clearTimeout(_clearLongPressTimer); _clearLongPressTimer = null; }
         if (btnClearAll) {
             btnClearAll.classList.remove('remove-mode', 'longpress-active');
             btnClearAll.title = '동물/먹이 개별 제거 (2초 누름: 전체 삭제)';
@@ -298,6 +342,7 @@ export function setupModeButtons() {
     }
 
     function applyClearMode(active) {
+        onPointerCancel();
         state.animalMode = active ? 'remove' : 'spawn';
         if (active) {
             btnClearAll.classList.add('remove-mode');
@@ -307,12 +352,13 @@ export function setupModeButtons() {
                 btnFood.classList.remove('active');
                 btnFood.textContent = '🍎';
                 btnFood.title = '먹이 설치 모드';
-                foodActive = false;
             }
             // 블록 버튼 시각적 비활성화 (blockState는 유지, currentMode는 복원)
             state.currentMode = blockState;
             btnBlock.classList.remove('active', 'remove-mode');
         } else {
+            state.currentMode = blockState;
+            if (btnFood) btnFood.classList.remove('active');
             btnClearAll.classList.remove('remove-mode', 'longpress-active');
             btnClearAll.title = '동물/먹이 개별 제거 (2초 누름: 전체 삭제)';
             // 블록 버튼 상태 복원
@@ -339,14 +385,18 @@ export function setupModeButtons() {
     if (btnClearAll) {
         btnClearAll.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
+            if (e.button !== 0 || e.isPrimary === false) return;
+            cancelClearPress();
             _clearLongPressFired = false;
-            if (e.button !== 0) return;
+            _clearPointerId = e.pointerId;
 
             btnClearAll.setPointerCapture(e.pointerId); // 버튼 밖으로 나가도 pointerup 수신
             btnClearAll.classList.add('longpress-active');
             _clearLongPressTimer = setTimeout(() => {
+                _clearLongPressTimer = null;
                 _clearLongPressFired = true;
                 btnClearAll.classList.remove('longpress-active');
+                onPointerCancel();
                 removeAllAnimalsWithEffect();
                 clearAllFoodWithEffect();
                 applyClearMode(false);
@@ -355,8 +405,8 @@ export function setupModeButtons() {
         });
 
         btnClearAll.addEventListener('pointerup', (e) => {
-            if (_clearLongPressTimer) { clearTimeout(_clearLongPressTimer); _clearLongPressTimer = null; }
-            btnClearAll.classList.remove('longpress-active');
+            if (e.pointerId !== _clearPointerId || e.button !== 0) return;
+            cancelClearPress();
             if (_clearLongPressFired) return;
 
             if (e.button === 0) {
@@ -364,10 +414,15 @@ export function setupModeButtons() {
             }
         });
 
-        btnClearAll.addEventListener('pointerleave', () => {
-            // 타이머는 취소하지 않음 — 2초 홀드 중 버튼 밖으로 나가도 자동 실행됨
-            btnClearAll.classList.remove('longpress-active');
+        btnClearAll.addEventListener('pointermove', e => {
+            if (_clearPointerId !== e.pointerId) return;
+            const rect = btnClearAll.getBoundingClientRect();
+            if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) cancelClearPress();
         });
+        btnClearAll.addEventListener('pointercancel', cancelClearPress);
+        btnClearAll.addEventListener('lostpointercapture', cancelClearPress);
+        btnClearAll.addEventListener('click', e => { if (e.detail === 0) applyClearMode(state.animalMode !== 'remove'); });
+        window.addEventListener('blur', cancelClearPress);
 
         btnClearAll.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
 
@@ -376,36 +431,45 @@ export function setupModeButtons() {
 
     // ── 폭발 ──
     let explosionInProgress = false;
+    let explosionTimer = null;
     btnExplode.addEventListener('click', (e) => {
         e.stopPropagation();
         if (explosionInProgress) return;
 
-        import('./scene.js').then(m => {
-            state.preExplosionSnapshot = m.getFullSnapshot();
-            explosionInProgress = true;
+        onPointerCancel();
+        explosionInProgress = true;
 
-            let count = 3;
-            countdownEl.innerText = count;
-            countdownEl.style.display = 'block';
+        let count = 3;
+        countdownEl.innerText = count;
+        countdownEl.style.display = 'block';
 
-            const timer = setInterval(() => {
-                count--;
-                if (count > 0) {
-                    countdownEl.innerText = count;
-                } else {
-                    clearInterval(timer);
-                    countdownEl.style.display = 'none';
-                    m.explodeBricks();
-                    explosionInProgress = false;
-                }
-            }, 1000);
-        });
+        explosionTimer = setInterval(() => {
+            count--;
+            if (count > 0) {
+                countdownEl.innerText = count;
+            } else {
+                clearInterval(explosionTimer);
+                explosionTimer = null;
+                countdownEl.style.display = 'none';
+                onPointerCancel();
+                explodeBricks();
+                explosionInProgress = false;
+            }
+        }, 1000);
     });
 
     // ── 복원 ──
     btnRestore.addEventListener('click', (e) => {
         e.stopPropagation();
-        import('./scene.js').then(m => m.undo());
+        onPointerCancel();
+        if (explosionTimer !== null) {
+            clearInterval(explosionTimer);
+            explosionTimer = null;
+            explosionInProgress = false;
+            countdownEl.style.display = 'none';
+            return;
+        }
+        restoreBricks();
     });
 
     // ── 게임 속도 ──
@@ -448,14 +512,12 @@ export function setupModeButtons() {
     };
 
     helpBtn.addEventListener('click', toggleHelp);
-    helpBtn.addEventListener('touchstart', toggleHelp, { passive: false });
 
     const closeHelp = (e) => {
         e.preventDefault();
         instructionsPanel.style.display = 'none';
     };
     closeHelpBtn.addEventListener('click', closeHelp);
-    closeHelpBtn.addEventListener('touchstart', closeHelp, { passive: false });
 }
 
 export function setupGUI() {
@@ -467,8 +529,11 @@ export function setupGUI() {
 
     function updateBlockGUIOptions() {
         const mat = materials[guiParams.block.slotTarget];
-        if (cCtrl) cCtrl.setValue(mat.color.getHex());
-        if (rCtrl) rCtrl.setValue(mat.roughness);
+        if (!mat) return;
+        guiParams.block.color = mat.color.getHex();
+        guiParams.block.roughness = mat.roughness;
+        if (cCtrl) cCtrl.updateDisplay();
+        if (rCtrl) rCtrl.updateDisplay();
     }
 
     const blockTargetCtrl = blockFolder.add(guiParams.block, 'slotTarget', slotOptions).name('Target Slot').onChange(updateBlockGUIOptions);
@@ -482,8 +547,10 @@ export function setupGUI() {
 
     blockFolder.add({
         reset: () => {
-            Object.assign(guiParams.block, defaultParams.block);
-            blockTargetCtrl.setValue(guiParams.block.slotTarget);
+            const mat = materials[guiParams.block.slotTarget];
+            mat.color.setHex(defaultParams.block.color);
+            mat.roughness = defaultParams.block.roughness;
+            updatePaletteIcon(guiParams.block.slotTarget, '#' + mat.color.getHexString());
             updateBlockGUIOptions();
             pushHistory();
         }
@@ -491,7 +558,7 @@ export function setupGUI() {
 
     window.syncGUIToSlot = function (slot) {
         guiParams.block.slotTarget = slot;
-        blockTargetCtrl.setValue(slot);
+        blockTargetCtrl.updateDisplay();
         updateBlockGUIOptions();
     };
 
@@ -532,14 +599,14 @@ export function setupGUI() {
     aoFolder.add(guiParams.ao, 'intensity', 0, 4).step(1).name('Intensity (Step)').onChange(v => {
         state.saoPass.params.saoIntensity = v * 0.00005;
     }).onFinishChange(pushHistory);
-    aoFolder.add(guiParams.ao, 'radius', 0, 500).name('Radius').onChange(v => state.saoPass.params.saoRadius = v).onFinishChange(pushHistory);
+    aoFolder.add(guiParams.ao, 'radius', 0, 500).name('Radius').onChange(v => state.saoPass.params.saoKernelRadius = v).onFinishChange(pushHistory);
     aoFolder.add(guiParams.ao, 'bias', 0, 1).name('Bias').onChange(v => state.saoPass.params.saoBias = v).onFinishChange(pushHistory);
     aoFolder.add({
         reset: () => {
             Object.assign(guiParams.ao, defaultParams.ao);
             state.saoPass.enabled = guiParams.ao.enabled;
             state.saoPass.params.saoIntensity = guiParams.ao.intensity * 0.00005;
-            state.saoPass.params.saoRadius = guiParams.ao.radius;
+            state.saoPass.params.saoKernelRadius = guiParams.ao.radius;
             state.saoPass.params.saoBias = guiParams.ao.bias;
             gui.controllersRecursive().forEach(c => c.updateDisplay());
             pushHistory();
@@ -555,10 +622,17 @@ export function setupGUI() {
         state.directionalLight.position.set(guiParams.light.x, guiParams.light.y, guiParams.light.z);
         state.saoPass.enabled = guiParams.ao.enabled;
         state.saoPass.params.saoIntensity = guiParams.ao.intensity * 0.00005;
-        state.saoPass.params.saoRadius = guiParams.ao.radius;
+        state.saoPass.params.saoKernelRadius = guiParams.ao.radius;
         state.saoPass.params.saoBias = guiParams.ao.bias;
+        updateBlockGUIOptions();
         gui.controllersRecursive().forEach(c => c.updateDisplay());
-        state.rollOverMaterial.color.copy(materials[guiParams.block.slotTarget].color);
+        Object.entries(materials).forEach(([slot, mat]) => updatePaletteIcon(slot, '#' + mat.color.getHexString()));
+        if (state.selectedSlotForPopup && materials[state.selectedSlotForPopup]) {
+            const mat = materials[state.selectedSlotForPopup];
+            document.getElementById('pop-color').value = '#' + mat.color.getHexString();
+            document.getElementById('pop-roughness').value = mat.roughness;
+        }
+        state.rollOverMaterial.color.copy(materials[state.currentSlot].color);
     };
 
     gui.close();

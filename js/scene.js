@@ -3,11 +3,63 @@ import * as CANNON from 'cannon-es';
 import { state, guiParams, objects, voxelSize, materials, explodingBricks } from './state.js';
 import { foods, triggerFoodFall } from './food.js';
 import { playSound } from './sound.js';
+import { invalidatePreview } from './camera.js';
 
 // 블록 색상으로 MeshBasicMaterial을 만드는 헬퍼
 function makePreviewMaterial(slot) {
     const srcMat = materials[slot];
     return new THREE.MeshBasicMaterial({ color: srcMat ? srcMat.color.clone() : new THREE.Color(0xffffff) });
+}
+
+function removePreviewMesh(voxel) {
+    const previewMesh = voxel.userData.previewMesh;
+    if (!previewMesh) return;
+    if (state.previewScene) state.previewScene.remove(previewMesh);
+    const index = state.previewObjects.indexOf(previewMesh);
+    if (index !== -1) state.previewObjects.splice(index, 1);
+    previewMesh.material.dispose();
+    voxel.userData.previewMesh = null;
+    invalidatePreview();
+}
+
+function triggerUnsupportedFoodFall(bounceVelocity = 0) {
+    const half = voxelSize / 2 + 0.001;
+    for (const food of foods) {
+        if (food.eaten || food.consumeTimer > 0 || food.falling || food.position.y <= 0.001) continue;
+        const supported = objects.some(block => block !== state.plane
+            && Math.abs(block.position.x - food.position.x) <= half
+            && Math.abs(block.position.z - food.position.z) <= half
+            && Math.abs(block.position.y + voxelSize / 2 - food.position.y) <= 0.001);
+        if (!supported) triggerFoodFall(food, bounceVelocity);
+    }
+}
+
+function detachVoxel(voxel) {
+    const index = objects.indexOf(voxel);
+    if (!voxel || voxel === state.plane || index === -1) return false;
+    state.scene.remove(voxel);
+    objects.splice(index, 1);
+    if (voxel.userData.physicsBody && state.world) {
+        state.world.removeBody(voxel.userData.physicsBody);
+        voxel.userData.physicsBody = null;
+    }
+    removePreviewMesh(voxel);
+    return true;
+}
+
+// 일반 블록의 geometry/material은 팔레트와 공유하지만 HEAVY 파편은 소유 리소스다.
+export function disposeExplodingBrick(item) {
+    if (!item || item.disposed) return;
+    item.disposed = true;
+    const mesh = item.mesh || item;
+    state.scene.remove(mesh);
+    if (mesh.userData) removePreviewMesh(mesh);
+    if (item.body && state.world) state.world.removeBody(item.body);
+    const resources = item.fragmentResources;
+    if (resources && --resources.references === 0) {
+        resources.geometry.dispose();
+        resources.material.dispose();
+    }
 }
 
 export function getFullSnapshot() {
@@ -17,6 +69,10 @@ export function getFullSnapshot() {
     }));
     return JSON.stringify({
         settings: guiParams,
+        materials: Object.fromEntries(Object.entries(materials).map(([slot, material]) => [slot, {
+            color: material.color.getHex(),
+            roughness: material.roughness
+        }])),
         blocks: blockData
     });
 }
@@ -53,7 +109,7 @@ export function placeVoxel(position, slotOverride = null, skipHistory = false) {
     const duplicate = objects.find(obj => obj !== state.plane && obj.position.equals(position));
     if (duplicate) return;
 
-    const targetSlot = slotOverride || state.currentSlot;
+    const targetSlot = slotOverride ?? state.currentSlot;
     const material = materials[targetSlot];
     const voxel = new THREE.Mesh(state.cubeGeo, material);
     voxel.userData.slot = targetSlot;
@@ -61,6 +117,8 @@ export function placeVoxel(position, slotOverride = null, skipHistory = false) {
     voxel.castShadow = true;
     voxel.receiveShadow = true;
     state.scene.add(voxel);
+    // AI 지면 검사와 스폰은 다음 렌더보다 먼저 실행될 수 있다.
+    voxel.updateMatrixWorld(true);
     objects.push(voxel);
 
     // 블록에 정적 물리 바디 추가 → 동물이 블록 위에 서거나 부딪힘
@@ -79,117 +137,75 @@ export function placeVoxel(position, slotOverride = null, skipHistory = false) {
     // 프리뷰 씬 동기화: MeshBasicMaterial로 동일 위치에 복사본 추가
     if (state.previewScene) {
         const previewMesh = new THREE.Mesh(state.cubeGeo, makePreviewMaterial(targetSlot));
+        previewMesh.userData.slot = targetSlot;
         previewMesh.position.copy(position);
         voxel.userData.previewMesh = previewMesh;
         state.previewScene.add(previewMesh);
         state.previewObjects.push(previewMesh);
+        invalidatePreview();
     }
 
     if (!skipHistory) pushHistory();
-    playSound('block-place');
+    if (!state.isRestoringHistory) playSound('block-place');
+    return voxel;
 }
 
 export function removeVoxel(object) {
-    if (object === state.plane) return;
-    state.scene.remove(object);
-    objects.splice(objects.indexOf(object), 1);
-
-    // 블록 물리 바디 제거
-    if (object.userData.physicsBody && state.world) {
-        state.world.removeBody(object.userData.physicsBody);
-        object.userData.physicsBody = null;
-    }
-
-    // 프리뷰 씬 동기화: 대응하는 프리뷰 메시 제거
-    if (state.previewScene && object.userData.previewMesh) {
-        state.previewScene.remove(object.userData.previewMesh);
-        const idx = state.previewObjects.indexOf(object.userData.previewMesh);
-        if (idx > -1) state.previewObjects.splice(idx, 1);
-    }
-
+    if (!detachVoxel(object)) return;
+    triggerUnsupportedFoodFall();
     if (!state.isDraggingRemove) pushHistory();
     playSound('block-remove');
 }
 
 export function applyActionState(stateStr) {
-    state.isRestoringHistory = true;
     const data = JSON.parse(stateStr);
+    state.isRestoringHistory = true;
+    try {
+        Object.assign(guiParams.block, data.settings.block);
+        Object.assign(guiParams.board, data.settings.board);
+        Object.assign(guiParams.light, data.settings.light);
+        Object.assign(guiParams.ao, data.settings.ao);
 
-    Object.assign(guiParams.block, data.settings.block);
-    Object.assign(guiParams.board, data.settings.board);
-    Object.assign(guiParams.light, data.settings.light);
-    Object.assign(guiParams.ao, data.settings.ao);
-
-    if (window.refreshGUI) window.refreshGUI();
-
-    const placed = objects.filter(o => o !== state.plane);
-    placed.forEach(o => {
-        state.scene.remove(o);
-        // undo/redo 시 블록 물리 바디도 제거
-        if (o.userData.physicsBody && state.world) {
-            state.world.removeBody(o.userData.physicsBody);
-            o.userData.physicsBody = null;
+        for (const [slot, saved] of Object.entries(data.materials || {})) {
+            if (!materials[slot]) continue;
+            materials[slot].color.setHex(saved.color);
+            materials[slot].roughness = saved.roughness;
         }
-        objects.splice(objects.indexOf(o), 1);
-    });
+        if (window.refreshGUI) window.refreshGUI();
 
-    // 프리뷰 씬 초기화
-    if (state.previewScene) {
-        state.previewObjects.forEach(pm => state.previewScene.remove(pm));
+        objects.filter(o => o !== state.plane).forEach(detachVoxel);
+        // 이전 폭발에서 남아 있을 수 있는 프리뷰도 함께 정리한다.
+        state.previewObjects.forEach(mesh => {
+            if (state.previewScene) state.previewScene.remove(mesh);
+            mesh.material.dispose();
+        });
         state.previewObjects.length = 0;
-    }
 
-    while (explodingBricks.length > 0) {
-        const item = explodingBricks.pop();
-        if (item.mesh) state.scene.remove(item.mesh);
-        else state.scene.remove(item); // Fallback old
-
-        if (item.body && state.world) {
-            state.world.removeBody(item.body);
+        while (explodingBricks.length > 0) {
+            disposeExplodingBrick(explodingBricks.pop());
         }
+
+        data.blocks.forEach(b => placeVoxel(new THREE.Vector3(...b.pos), b.slot, true));
+        triggerUnsupportedFoodFall();
+    } finally {
+        state.isRestoringHistory = false;
     }
-
-    data.blocks.forEach(b => {
-        placeVoxel(new THREE.Vector3(...b.pos), b.slot, true);
-    });
-
-    state.isRestoringHistory = false;
 }
 
 // HEAVY 동물이 블록을 파괴할 때: 파편 8조각이 폭발하며 날아감
 export function explodeBlockHeavy(block, hitDirection) {
-    if (!block || block === state.plane) return;
+    if (!block || block === state.plane || !objects.includes(block)) return;
 
     const blockPos = block.position.clone();
     const blockColor = block.material ? block.material.color.getHex() : 0xffffff;
     const blockRoughness = (block.material && block.material.roughness != null) ? block.material.roughness : 0.5;
 
     // 원본 블록 제거 (물리 바디 포함)
-    state.scene.remove(block);
-    const blockIdx = objects.indexOf(block);
-    if (blockIdx > -1) objects.splice(blockIdx, 1);
-    if (block.userData.physicsBody && state.world) {
-        state.world.removeBody(block.userData.physicsBody);
-        block.userData.physicsBody = null;
-    }
-    if (state.previewScene && block.userData.previewMesh) {
-        state.previewScene.remove(block.userData.previewMesh);
-        const idx = state.previewObjects.indexOf(block.userData.previewMesh);
-        if (idx > -1) state.previewObjects.splice(idx, 1);
-    }
+    detachVoxel(block);
     pushHistory();
 
     // ── 파괴된 블록 위 사과 낙하 트리거 ──
-    const blockTopY = blockPos.y + voxelSize * 0.5;
-    for (const food of foods) {
-        if (food.eaten || food.consumeTimer > 0 || food.falling) continue;
-        const dx = Math.abs(food.position.x - blockPos.x);
-        const dz = Math.abs(food.position.z - blockPos.z);
-        const dy = Math.abs(food.position.y - blockTopY);
-        if (dx <= voxelSize * 0.65 && dz <= voxelSize * 0.65 && dy <= voxelSize * 0.3) {
-            triggerFoodFall(food, 100 + Math.random() * 160);
-        }
-    }
+    triggerUnsupportedFoodFall(100 + Math.random() * 160);
 
     // 파편 8조각 (2×2×2 분할)
     const fragSize = voxelSize * 0.46;
@@ -202,6 +218,7 @@ export function explodeBlockHeavy(block, hitDirection) {
         [-1, -1, -1], [1, -1, -1], [-1, 1, -1], [1, 1, -1],
         [-1, -1,  1], [1, -1,  1], [-1, 1,  1], [1, 1,  1],
     ];
+    const fragmentResources = { geometry: fragGeo, material: fragMat, references: offsets.length };
 
     offsets.forEach(([ox, oy, oz]) => {
         const fragMesh = new THREE.Mesh(fragGeo, fragMat);
@@ -243,6 +260,7 @@ export function explodeBlockHeavy(block, hitDirection) {
             startTime: performance.now(),
             maxLife: 2.5,   // 커스텀 수명 (초)
             fadeLife: 1.8,  // 이 시점부터 축소 페이드
+            fragmentResources,
         });
     });
 }
@@ -251,6 +269,7 @@ export function explodeBricks() {
     const bricks = objects.filter(obj => obj !== state.plane);
     if (bricks.length === 0) return;
 
+    state.preExplosionSnapshot = getFullSnapshot();
     pushHistory();
     playSound('explode');
 
@@ -264,6 +283,7 @@ export function explodeBricks() {
     const brickMaterial = new CANNON.Material();
 
     bricks.forEach(brick => {
+        removePreviewMesh(brick);
         // 폭발 전 정적 물리 바디 먼저 제거
         if (brick.userData.physicsBody && state.world) {
             state.world.removeBody(brick.userData.physicsBody);
@@ -307,4 +327,13 @@ export function explodeBricks() {
         const index = objects.indexOf(brick);
         if (index > -1) objects.splice(index, 1);
     });
+    triggerUnsupportedFoodFall();
+    pushHistory();
+}
+
+export function restoreBricks() {
+    if (!state.preExplosionSnapshot) return;
+    pushHistory();
+    applyActionState(state.preExplosionSnapshot);
+    pushHistory();
 }
