@@ -67,7 +67,6 @@ export const state = {
     snackIngredients: [],
     eyesPreview: null,
     onToyNotice: null,
-    createToyStarter: null,
     currentSlot: 'preset-0',
     keys: { w: false, a: false, s: false, d: false, q: false, e: false },
     velocity: new THREE.Vector3(),

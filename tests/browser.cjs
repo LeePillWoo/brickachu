@@ -34,7 +34,7 @@ async function preparePage(page) {
 function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON.stringify(details)}`); checks.push(name); console.log('PASS', name, details ?? ''); }
 (async () => {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const url = `http://127.0.0.1:${server.address().port}`;
+    const url = process.argv.find(arg => arg.startsWith('--url='))?.slice(6) || `http://127.0.0.1:${server.address().port}/`;
     const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--enable-webgl', '--use-angle=swiftshader'] });
     try {
         const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -44,9 +44,10 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         page.on('requestfailed', request => console.log('REQUEST FAILED', request.url(), request.failure()?.errorText));
         await preparePage(page);
         await page.goto(url);
-        await page.waitForFunction(async () => (await import('/js/state.js')).state.previewRenderer !== null, null, { timeout: 45000 });
+        await page.waitForFunction(async () => (await import(new URL('js/state.js', document.baseURI).href)).state.previewRenderer !== null, null, { timeout: 45000 });
         await page.evaluate(async () => {
-            window.qa = { ...await import('/js/state.js'), ...await import('/js/scene.js'), ...await import('/js/entities.js'), ...await import('/js/food.js'), ...await import('/js/input.js'), THREE: await import('three') };
+            const load = file => import(new URL('js/' + file, document.baseURI).href);
+            window.qa = { ...await load('state.js'), ...await load('scene.js'), ...await load('entities.js'), ...await load('food.js'), ...await load('input.js'), THREE: await import('three') };
         });
         check('Game initializes without exceptions', errors.length === 0, errors);
         const point = await page.evaluate(() => {
@@ -64,6 +65,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         await page.keyboard.press('Control+y');
         check('Redo restores the single block', await page.evaluate(() => qa.objects.length - 1) === 1);
         await page.locator('#btn-food').click();
+        check('One snack toolbar click selects balloon immediately', await page.evaluate(() => qa.state.currentMode === 'food' && JSON.stringify(qa.state.snackIngredients) === '["balloon"]' && document.getElementById('btn-food').textContent.trim() === '🎈'));
         const foodPoint = await page.evaluate(() => {
             const p = new qa.THREE.Vector3(-200, 0, 200).project(qa.state.camera);
             return { x: (p.x + 1) * innerWidth / 2, y: (1 - p.y) * innerHeight / 2 };
@@ -143,8 +145,11 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         mobile.on('pageerror', error => mobileErrors.push(error.message));
         await preparePage(mobile);
         await mobile.goto(url);
-        await mobile.waitForFunction(async () => (await import('/js/state.js')).state.previewRenderer !== null);
-        await mobile.evaluate(async () => { window.qa = { ...await import('/js/state.js'), ...await import('/js/food.js'), THREE: await import('three') }; });
+        await mobile.waitForFunction(async () => (await import(new URL('js/state.js', document.baseURI).href)).state.previewRenderer !== null);
+        await mobile.evaluate(async () => {
+            const load = file => import(new URL('js/' + file, document.baseURI).href);
+            window.qa = { ...await load('state.js'), ...await load('food.js'), THREE: await import('three') };
+        });
         await mobile.touchscreen.tap(195, 500);
         check('Mobile tap places one block', await mobile.evaluate(() => qa.objects.length === 2));
         const cdp = await mobile.context().newCDPSession(mobile);
@@ -153,6 +158,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         check('Mobile orbit drag does not build blocks', await mobile.evaluate(() => qa.objects.length === 2));
         await mobile.locator('#btn-food').tap();
+        check('A mobile snack toolbar tap advances exactly once', await mobile.evaluate(() => qa.state.currentMode === 'food' && JSON.stringify(qa.state.snackIngredients) === '["balloon"]' && document.getElementById('btn-food').textContent.trim() === '🎈' && qa.objects.length === 2 && qa.foods.length === 0));
         await mobile.touchscreen.tap(195, 370);
         check('Mobile food mode places food without building', await mobile.evaluate(() => qa.foods.length === 1 && qa.objects.length === 2));
         await mobile.screenshot({ path: '.tmp/qa/mobile.png' });
@@ -169,7 +175,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         });
         await timed.waitForFunction(() => qaFrames.length > 0, null, { polling: 50 });
         const timing = await timed.evaluate(async () => {
-            const { state } = await import('/js/state.js');
+            const { state } = await import(new URL('js/state.js', document.baseURI).href);
             state.composer.render = () => {};
             state.previewRenderer.render = () => {};
             let now = performance.now();

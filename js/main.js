@@ -7,7 +7,7 @@ import { SAOPass } from 'three/addons/postprocessing/SAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { state, guiParams, objects, voxelSize, materials, presetColors, numCustomSlots, explodingBricks } from './state.js';
-import { getFullSnapshot, disposeExplodingBrick, placeVoxel, pushHistory } from './scene.js';
+import { getFullSnapshot, disposeExplodingBrick } from './scene.js';
 import { updatePreview } from './camera.js';
 import { onPointerMove, onPointerDown, onPointerUp, onPointerCancel, onWindowResize, onKeyDown, onKeyUp } from './input.js';
 import { setupPalette, setupModeButtons, setupGUI, setupSnapControls } from './ui.js';
@@ -164,45 +164,12 @@ function init() {
     const outputPass = new OutputPass();
     state.composer.addPass(outputPass);
 
-    state.createToyStarter = createToyStarter;
     setupPalette();
     setupModeButtons();
     setupGUI();
     setupSnapControls();
     initPreview();
     initFoodGhost();
-}
-
-function createToyStarter() {
-    // A six-block blank friend, created only when the child asks for one.
-    const pattern = [
-        [-1, 0, 0, 'preset-10'], [1, 0, 0, 'preset-10'],
-        [-1, 1, 0, 'preset-20'], [0, 1, 0, 'preset-20'], [1, 1, 0, 'preset-20'],
-        [0, 2, 0, 'preset-9']
-    ];
-    let center = null;
-    for (const z of [25, 275, -225, 525, -475, 775, -725]) {
-        for (const x of [25, 275, -225, 525, -475, 775, -725]) {
-            const occupied = objects.some(block => block !== state.plane
-                && Math.abs(block.position.x - x) < 150 && Math.abs(block.position.z - z) < 100);
-            if (!occupied) { center = new THREE.Vector3(x, 25, z); break; }
-        }
-        if (center) break;
-    }
-    if (!center) { state.onToyNotice?.('블록 친구가 태어날 작은 빈자리를 만들어줘!'); return false; }
-    for (const [x, y, z, slot] of pattern) {
-        placeVoxel(center.clone().add(new THREE.Vector3(x, y, z).multiplyScalar(voxelSize)), slot, true);
-    }
-    pushHistory();
-    const target = center.clone().add(new THREE.Vector3(0, voxelSize, 0));
-    const portraitDistance = Math.max(1, 0.72 / state.camera.aspect);
-    state.camera.position.copy(target).add(new THREE.Vector3(320, 250, 600).multiplyScalar(portraitDistance));
-    state.controls.target.copy(target);
-    state.velocity.set(0, 0, 0);
-    state.controls.update();
-    state.camera.updateMatrixWorld(true);
-    state.onToyNotice?.('분홍색 머리에 눈을 붙여봐! 👀');
-    return true;
 }
 
 function initPreview() {

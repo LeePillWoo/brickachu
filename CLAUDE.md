@@ -32,14 +32,14 @@ js/
   camera.js         — 3D 프리뷰 카메라 업데이트, 스냅 방향
   input.js          — 포인터/키보드 입력 처리, 동물 잡기 로직
   ui.js             — 팔레트, 모드 버튼, lil-gui, 스냅 컨트롤
-  toy-ui.js         — 눈 붙이기/간식 실험실 카드, 재료 선택, 놀이 알림
+  toy-ui.js         — 눈/간식 툴바 상태, 간식 순환, 놀이 알림
 serve.mjs           — 로컬 정적 HTTP 서버
 tests/
   run.mjs           — Node 회귀 테스트 실행 및 고정 CDN 의존성 캐시 준비
   register.mjs      — Node에서 브라우저 importmap 의존성을 로컬 캐시로 연결
   *-test.mjs        — 동물/씬/입력/효과음/먹이/블록 친구/변신 단위 회귀
   browser.cjs       — 기존 게임의 실제 데스크톱/모바일 브라우저 검증
-  toys-browser.cjs  — 눈 붙이기/간식 단일 선택/모바일 패널의 실제 브라우저 검증
+  toys-browser.cjs  — 눈 붙이기/간식 툴바 순환/모바일 조작의 실제 브라우저 검증
 pikachu_reference.png
 ```
 
@@ -64,7 +64,6 @@ pikachu_reference.png
 state.currentMode   // 'add' | 'remove' | 'food' | 'eyes'
 state.snackIngredients // UI에서는 [] 또는 balloon/jelly/rainbow 중 한 종류
 state.onToyNotice   // toy-ui.js가 등록하는 클릭을 막지 않는 알림 함수
-state.createToyStarter // main.js가 등록하는 예제 여섯 블록 생성/카메라 맞춤 함수
 state.gameSpeed     // 1 | 2 | 3 (배속)
 state.world         // CANNON.World 인스턴스
 state.scene         // THREE.Scene
@@ -104,9 +103,9 @@ HEAVY 동물 클릭 시 화면 흔들림 + 블록 파괴 (`explodeBlockHeavy`)
 
 ## 살아나는 블록 친구 (living.js)
 
-- 👀 또는 놀이 카드의 **눈 붙이기**로 `eyes` 모드 진입. 클릭한 블록과 면으로 연결된 덩어리가 한 친구가 됨.
+- 툴바의 👀를 누를 때마다 즉시 `eyes` 모드 활성화. 다시 눌러도 모드를 해제하지 않음. 클릭한 블록과 면으로 연결된 덩어리가 한 친구가 됨.
 - `collectConnectedBlocks(seed)`는 6방향으로 연결된 블록을 수집. `awakenBlocks(seed, normal)`은 크기/수량 제한을 검사하고 눈을 붙인 뒤 `{ ok, animal, reason }` 반환.
-- **작은 블록부터 만들기**는 `state.createToyStarter()`를 명시적으로 호출. 예제 여섯 블록을 빈자리에 만들고 카메라를 맞추며, 자동으로 블록을 생성하지 않음.
+- 친구가 될 블록은 사용자가 ✏️ 블록 편집 도구로 직접 만듦.
 - 만들어진 친구는 `registerCustomAnimal()`로 기존 `animals` 배열에 등록되어 이동, 클릭 액션, 길게 잡기, 먹이 섭취, 제거 흐름을 공유. `livingId`/`livingDescriptor`로 일반 동물과 구분.
 - 생성된 친구를 눈 모드에서 다시 누르면 클릭 액션과 능력 설명 표시. 간식 모드의 클릭은 즉시 먹이기.
 - `classifyLivingShape(size, blockCount)`는 아래 순서로 형태를 판정. `span = max(size.x, size.z)`.
@@ -122,8 +121,9 @@ HEAVY 동물 클릭 시 화면 흔들림 + 블록 파괴 (`explodeBlockHeavy`)
 
 ## 먹이와 변신 간식 (food.js, magic.js)
 
-- 🍎 또는 놀이 카드의 **간식 실험실**로 `food` 모드 진입. `toy-ui.js`에서는 간식을 한 종류만 선택하며, 새 간식 클릭은 기존 선택을 교체하고 같은 간식 재클릭은 선택을 유지함.
-- **🍎 원래대로** 버튼만 선택을 빈 배열 `[]`로 바꾸어 일반 사과를 선택함. 같은 간식을 재클릭해서 선택을 해제하지 않음.
+- 툴바의 `btn-food`를 누를 때마다 🍎 일반 사과 → 🎈 풍선 → 🍮 젤리 → 🌈 무지개 → 🍎 일반 사과 순서로 순환하고 `food` 모드를 활성화함. 각 단계에서 한 종류의 간식을 사용함.
+- 다른 도구로 전환해도 간식 순서는 유지됨. 간식 버튼을 다시 누르면 저장된 순서의 다음 간식으로 넘어가며, 기존 간식을 그대로 다시 활성화하는 동작이 아님.
+- 일반 사과 단계에서는 `state.snackIngredients = []`, 나머지 단계에서는 해당 재료 ID 하나가 담긴 배열을 사용함.
 - 동물이나 블록 친구 클릭은 `applySnack(animal, state.snackIngredients)`로 바로 먹이기. 바닥/블록 윗면 클릭은 `spawnFood(worldPosition, ingredients)`로 간식 배치.
 - 배치한 간식은 생성 시 재료를 보관하므로 이후 UI 선택이 바뀌어도 해당 간식은 유지됨.
 - 동물이 `EAT_RADIUS` (voxelSize × 1.8) 내에 오면 먹음
@@ -138,9 +138,9 @@ HEAVY 동물 클릭 시 화면 흔들림 + 블록 파괴 (`explodeBlockHeavy`)
 | jelly | 🍮 젤리 | 말랑한 모양과 바닥/벽 튕기기 |
 | rainbow | 🌈 무지개 | 일시적인 무지개 발자국 |
 
-`updateMagicEffects(animals, dt)`가 배속이 적용된 게임 시간 20초를 세고 만료 시 복원. 재료가 없는 일반 사과(`[]`)는 기존 변신을 즉시 해제하며, UI의 **🍎 원래대로**는 이 사과를 선택하는 버튼임. 다른 간식을 먹으면 이전 변신을 정리하고 새 간식의 효과를 적용함. `clearMagicEffect(animal)`은 복사 재질·장식·충돌 리스너·무지개 흔적을 정리하므로 친구 제거 시에도 호출해야 함.
+`updateMagicEffects(animals, dt)`가 배속이 적용된 게임 시간 20초를 세고 만료 시 복원. 간식 버튼을 일반 사과(`[]`) 단계로 순환시킨 뒤 먹이면 기존 변신을 즉시 해제함. 다른 간식을 먹으면 이전 변신을 정리하고 새 간식의 효과를 적용함. `clearMagicEffect(animal)`은 복사 재질·장식·충돌 리스너·무지개 흔적을 정리하므로 친구 제거 시에도 호출해야 함.
 
-풍선은 원본 `animal.speed`를 변경하지 않고 AI 이후에 수평 속도를 제한하며 가감속을 부드럽게 처리함. `toy-ui.js`가 간식 선택에 맞춰 오른쪽 `btn-food`의 아이콘·툴팁·접근성 이름을 동기화하고, 다른 모드에서도 선택한 아이콘을 유지함.
+풍선은 원본 `animal.speed`를 변경하지 않고 AI 이후에 수평 속도를 제한하며 가감속을 부드럽게 처리함. `toy-ui.js`가 현재 간식에 맞춰 오른쪽 `btn-food`의 아이콘·툴팁·접근성 이름을 동기화하고, 다른 모드에서도 현재 아이콘을 유지함.
 
 ## 폭탄과 복원 (scene.js, entities.js)
 
@@ -213,16 +213,16 @@ THREE.WebGLRenderer
 
 | 버튼 | ID | 기능 |
 |------|-----|------|
-| ✏️ | btn-add | 블록 추가/제거 토글 |
+| ✏️ | btn-add | 블록 편집 복귀 또는 추가/제거 토글 |
 | 💣 | btn-explode | 블록·블록 친구·일반 동물 물리 폭발 |
 | ↻ | btn-restore | 카운트다운 취소 또는 블록·블록 친구 복원 |
 | 🐾 | add-dog-btn | 동물 스폰, 길게 누르면 그룹 선택 |
-| 👀 | btn-eyes | 눈 붙이기 모드 |
-| 🍎 | btn-food | 간식 실험실, 직접 먹이기/배치 |
+| 👀 | btn-eyes | 매번 눈 붙이기 모드 활성화, 재클릭 시 유지 |
+| 🍎/🎈/🍮/🌈 | btn-food | 매번 다음 간식으로 순환하고 먹이기/배치 모드 활성화 |
 | 🧹 | btn-clear-all | 친구/먹이 개별 제거 모드, 2초 누름은 전체 제거 |
 | ×1 | btn-game-speed | 배속 토글 (x1→x2→x3→x1) |
 
-눈 붙이기/간식/블록 편집/개별 제거 모드는 상호 배타적. 모드 변경 시 `onPointerCancel()`로 진행 중인 입력을 취소하고 `toy-ui.js`의 패널/활성 버튼을 동기화함. `#snack-panel`은 화면을 막는 모달이 아니며, 모바일에서는 화면 중앙에 있는 친구를 직접 누를 수 있도록 작은 놀이 버튼과 하단 패널을 사용함. 공통 **×** 닫기 버튼(`toy-panel-close`)은 진행 중인 입력을 취소하고 블록 편집 모드로 돌아가며, 👀/🍎로 패널을 다시 열 수 있음.
+눈 붙이기/간식/블록 편집/개별 제거 모드는 상호 배타적. 모드 변경 시 `onPointerCancel()`로 진행 중인 입력을 취소하고 툴바의 활성 상태를 동기화함. 눈 붙이기와 간식 조작은 데스크톱·모바일 모두 툴바에서 바로 수행하며, 블록 편집 복귀는 ✏️를 사용함. 네이티브 버튼의 키보드 활성화도 클릭·터치와 같은 모드 및 간식 순환 동작을 수행해야 함.
 
 ## 회귀 검증
 

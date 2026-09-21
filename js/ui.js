@@ -150,14 +150,13 @@ export function setupModeButtons() {
         btnFood.classList.toggle('active', mode === 'food');
         btnEyes.classList.toggle('active', mode === 'eyes');
         document.getElementById('palette-panel').classList.remove('mobile-open');
-        document.getElementById('toy-dock').classList.remove('palette-obscured');
         toyUI?.sync();
     }
 
     btnEyes.addEventListener('click', e => {
         e.stopPropagation();
-        if (state.currentMode === 'eyes' && state.animalMode !== 'remove') applyBlockState(blockState);
-        else activateToyMode('eyes');
+        activateToyMode('eyes');
+        state.onToyNotice?.('눈 붙일 블록을 콕 눌러줘! 👀');
     });
 
     btnBlock.addEventListener('click', (e) => {
@@ -316,12 +315,13 @@ export function setupModeButtons() {
         selectAnimalGroup('all'); // 초기 아이콘 및 타이틀 설정
     }
 
-    // ── 먹이 버튼 (단일 클릭 → food 모드 토글) ──
+    // ── 간식 버튼: 누를 때마다 다음 간식을 선택하고 바로 먹이기 ──
     if (btnFood) {
         btnFood.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (state.currentMode === 'food' && state.animalMode !== 'remove') applyBlockState(blockState);
-            else activateToyMode('food');
+            const recipeName = toyUI.cycleSnack();
+            activateToyMode('food');
+            state.onToyNotice?.(`${recipeName} · 친구에게 콕, 바닥에 톡!`);
         });
     }
 
@@ -437,7 +437,7 @@ export function setupModeButtons() {
         applyClearMode(false);
     }
 
-    toyUI = setupToyUI(activateToyMode, () => applyBlockState(blockState));
+    toyUI = setupToyUI();
 
     // ── 폭발 ──
     let explosionInProgress = false;
@@ -505,8 +505,7 @@ export function setupModeButtons() {
     const palettePanel = document.getElementById('palette-panel');
     if (paletteToggle) {
         paletteToggle.addEventListener('click', () => {
-            const open = palettePanel.classList.toggle('mobile-open');
-            document.getElementById('toy-dock').classList.toggle('palette-obscured', open);
+            palettePanel.classList.toggle('mobile-open');
         });
     }
 
