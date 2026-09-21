@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { state, objects, voxelSize } from './state.js';
+import { detachTrainFollower } from './train.js';
 
 export const SNACK_INGREDIENTS = Object.freeze([
     Object.freeze({ id: 'balloon', icon: '🎈', label: '풍선', color: '#ff83b5', description: '동글동글 부풀어서 둥실 떠올라요' }),
@@ -186,6 +187,15 @@ export function applySnack(animal, ids) {
     activeEffects.add(animal);
     tintAnimal(animal, effect);
     if (ingredients.includes('balloon')) {
+        // Floating starts immediately, including mixed recipes and a friend
+        // that was following a snack or riding the train a moment ago.
+        detachTrainFollower(animal);
+        animal.isEating = false;
+        animal.eatTimer = 0;
+        animal.isClimbing = false;
+        animal.climbMeshRotX = 0;
+        animal.state = 'idle';
+        animal.timer = 0;
         addBalloonShell(animal, effect);
         if (animal.body && !animal.grabbed) {
             readHorizontalVelocity(animal.body, effect.floatVelocity).clampLength(0, balloonSpeedLimit(animal));

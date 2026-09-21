@@ -312,7 +312,9 @@ function steerAround(animalPos, desiredDir, groundY, halfHeight) {
 
 // ── 가장 가까운 먹이 찾기 (도달 가능 높이 필터 포함) ──
 function findNearestFood(animal) {
-    if (foods.length === 0 || !animal.body) return null;
+    // Floating friends cannot reach floor snacks; chasing them would keep
+    // reversing direction directly above the food. Direct feeding stays in input.js.
+    if (foods.length === 0 || !animal.body || animal.magicEffect?.ingredients.includes('balloon')) return null;
     let nearest = null;
     let minDist = Infinity;
 
@@ -1154,6 +1156,15 @@ export function updateDogs(dt) {
             return;
         }
 
+        // A direct feed can request its eating animation after applySnack has
+        // started floating. Resume wandering instead of holding over the food.
+        if (animal.magicEffect?.ingredients.includes('balloon') && animal.isEating) {
+            animal.isEating = false;
+            animal.eatTimer = 0;
+            animal.state = 'idle';
+            animal.timer = 0;
+        }
+
         // ── 착지 감지 ──
         if (animal.trainRide) {
             // The train owns travel, including joining: friends keep their usual
@@ -1264,11 +1275,12 @@ export function updateDogs(dt) {
                         targetFood.consumeTimer = 2.0;
                         applySnack(animal, targetFood.ingredients);
                     }
-                    animal.isEating = true;
-                    animal.eatTimer = 1.2;
-                    animal.state = 'idle';
+                    const floating = animal.magicEffect?.ingredients.includes('balloon');
+                    animal.isEating = !floating;
+                    animal.eatTimer = floating ? 0 : 1.2;
+                    if (!floating) animal.state = 'idle';
                     playSound('food-eat');
-                    if (animal.body) { animal.body.velocity.x = 0; animal.body.velocity.z = 0; }
+                    if (animal.body && !floating) { animal.body.velocity.x = 0; animal.body.velocity.z = 0; }
                 } else {
                     // 먹이 방향으로 이동
                     const desiredDir = new THREE.Vector3(dx, 0, dz).normalize();

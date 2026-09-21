@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { state, objects, voxelSize } from './state.js';
 import { animals } from './entities.js';
 import { playSound } from './sound.js';
+import { explodeBlockHeavy } from './scene.js';
 
 export const TRAIN_SPEED = 110;
 export const TRAIN_JOIN_RADIUS = 300;
@@ -9,9 +10,11 @@ export const MAX_TRAIN_ROUTE_POINTS = 160;
 export const MAX_TRAIN_ROUTE_LENGTH = 8000;
 const TRAIN_RADIUS = 68, TRAIN_HEIGHT = 110;
 const BOARD_LIMIT = 900, JOIN_INTERVAL = 0.65, MAX_TRAIL_POINTS = 4096;
-const ROPE_SEGMENTS = 8;
+const ROPE_SEGMENTS = 8, ROPE_RADIUS = 6, ROPE_MIN_PIXELS = 4;
 const DRIVE_BEATS = ['train-chuff', 'train-chuff', 'train-puff', 'train-puff'];
 const isLivingBlock = animal => Boolean(animal?.livingId) || animal?.animalType === 'living-block';
+const cannotRide = animal => isLivingBlock(animal) || Boolean(animal?.magicEffect?.ingredients.includes('balloon'));
+const followerBounds = new WeakMap();
 
 function disposeTree(root) {
     if (!root) return;
@@ -69,15 +72,16 @@ function buildEngine() {
 
 function obstacles() {
     return objects.filter(block => block !== state.plane).map(block => ({
+        object: block,
         minX: block.position.x - voxelSize / 2, maxX: block.position.x + voxelSize / 2,
         minY: block.position.y - voxelSize / 2, maxY: block.position.y + voxelSize / 2,
         minZ: block.position.z - voxelSize / 2, maxZ: block.position.z + voxelSize / 2
     }));
 }
 
-// Sweep the whole footprint, not just the next center point, so fast movement
-// and sparse pointer samples cannot tunnel through a one-block wall.
-function clearSegment(from, to, radius, height, blocks, allowEscape = false) {
+// Routes may cross blocks. Only the board limits constrain route planning;
+// blocks are broken later, along the small segment actually traveled.
+function clearSegment(from, to, radius, allowEscape = false) {
     const limit = BOARD_LIMIT - radius;
     for (const axis of ['x', 'z']) {
         if (!Number.isFinite(from[axis]) || !Number.isFinite(to[axis])) return false;
@@ -85,32 +89,31 @@ function clearSegment(from, to, radius, height, blocks, allowEscape = false) {
             if (!allowEscape || Math.abs(to[axis]) >= Math.abs(from[axis]) - 1e-8) return false;
         } else if (Math.abs(to[axis]) > limit + 1e-6) return false;
     }
-    for (const block of blocks) {
-        if (block.maxY <= 0.1 || block.minY >= height) continue;
-        const minX = block.minX - radius, maxX = block.maxX + radius;
-        const minZ = block.minZ - radius, maxZ = block.maxZ + radius;
-        if (allowEscape && from.x > minX && from.x < maxX && from.z > minZ && from.z < maxZ) {
-            // A passenger can grow after joining. Move only toward a nearest
-            // exit face so the enlarged footprint never penetrates more deeply.
-            const depths = [from.x - minX, maxX - from.x, from.z - minZ, maxZ - from.z];
-            const nextDepths = [to.x - minX, maxX - to.x, to.z - minZ, maxZ - to.z];
-            const nearest = Math.min(...depths);
-            if (depths.some((depth, index) => depth <= nearest + 1e-6 && nextDepths[index] < depth - 1e-8)) continue;
-            return false;
-        }
-        let enter = 0, leave = 1;
-        for (const [axis, min, max] of [['x', block.minX - radius, block.maxX + radius], ['z', block.minZ - radius, block.maxZ + radius]]) {
-            const delta = to[axis] - from[axis];
-            if (Math.abs(delta) < 1e-9) {
-                if (from[axis] <= min || from[axis] >= max) { enter = 2; break; }
-            } else {
-                const a = (min - from[axis]) / delta, b = (max - from[axis]) / delta;
-                enter = Math.max(enter, Math.min(a, b)); leave = Math.min(leave, Math.max(a, b));
-            }
-        }
-        if (enter <= leave && enter <= 1 && leave >= 0) return false;
-    }
     return true;
+}
+
+function touchesBlock(from, to, radius, height, block) {
+    if (block.maxY <= 0.1 || block.minY >= height) return false;
+    let enter = 0, leave = 1;
+    for (const [axis, min, max] of [['x', block.minX - radius, block.maxX + radius], ['z', block.minZ - radius, block.maxZ + radius]]) {
+        const delta = to[axis] - from[axis];
+        if (Math.abs(delta) < 1e-9) {
+            if (from[axis] <= min || from[axis] >= max) return false;
+        } else {
+            const a = (min - from[axis]) / delta, b = (max - from[axis]) / delta;
+            enter = Math.max(enter, Math.min(a, b)); leave = Math.min(leave, Math.max(a, b));
+        }
+    }
+    return enter <= leave && enter <= 1 && leave >= 0;
+}
+
+function breakTravelBlocks(from, to, size, blocks) {
+    const direction = to.clone().sub(from);
+    if (direction.lengthSq() < 1e-10) return;
+    direction.normalize();
+    for (const block of blocks) {
+        if (touchesBlock(from, to, size.radius, size.height, block)) explodeBlockHeavy(block.object, direction);
+    }
 }
 
 function followerSize(animal) {
@@ -121,8 +124,24 @@ function followerSize(animal) {
         const half = shape.halfExtents;
         if (half) radius = Math.max(radius, Math.hypot(Math.abs(offset.x) + half.x, Math.abs(offset.z) + half.z));
     });
+    let bounds = followerBounds.get(animal);
+    if (!bounds) {
+        // Animal physics boxes cover their torsos; noses, ears and tails can
+        // extend farther. Cache model-local bounds once, independent of yaw.
+        animal.mesh.updateWorldMatrix(true, true);
+        const inverse = animal.mesh.matrixWorld.clone().invert();
+        bounds = new THREE.Box3();
+        animal.mesh.traverse(child => {
+            if (!child.geometry) return;
+            child.geometry.computeBoundingBox();
+            bounds.union(child.geometry.boundingBox.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, child.matrixWorld)));
+        });
+        followerBounds.set(animal, bounds);
+    }
+    if (!bounds.isEmpty()) radius = Math.max(radius, Math.hypot(Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x)), Math.max(Math.abs(bounds.min.z), Math.abs(bounds.max.z))));
     const magicScale = Math.max(1, animal.mesh.scale.x, animal.mesh.scale.z);
-    return { radius: radius * magicScale + 7, height: halfHeight * 2 + (animal.magicEffect?.ingredients.includes('balloon') ? 240 : 0) };
+    const footHeight = Math.max(0, animal.body.position.y - halfHeight);
+    return { radius: radius * magicScale + 7, height: footHeight + Math.max(halfHeight * 2, bounds.max.y) * Math.max(1, animal.mesh.scale.y) };
 }
 
 function convoySize(train) {
@@ -164,7 +183,7 @@ export function spawnTrain(point) {
     if (!state.scene || !point || ![point.x, point.y, point.z].every(Number.isFinite)) return null;
     const limit = BOARD_LIMIT - TRAIN_RADIUS;
     const position = new THREE.Vector3(THREE.MathUtils.clamp(point.x, -limit, limit), 0, THREE.MathUtils.clamp(point.z, -limit, limit));
-    if (point.y > 5 || !clearSegment(position, position, TRAIN_RADIUS, TRAIN_HEIGHT, obstacles())) {
+    if (point.y > 5 || obstacles().some(block => touchesBlock(position, position, TRAIN_RADIUS, TRAIN_HEIGHT, block))) {
         state.onToyNotice?.('기차가 달릴 빈 바닥을 골라줘! 🚂'); return null;
     }
     clearTrain();
@@ -230,10 +249,7 @@ export function appendTrainRoutePoint(point) {
     const next = new THREE.Vector3(THREE.MathUtils.clamp(point.x, -limit, limit), 0, THREE.MathUtils.clamp(point.z, -limit, limit));
     const last = train.route.at(-1), length = next.distanceTo(last);
     if (length < 18 || train.draftLength + length > MAX_TRAIN_ROUTE_LENGTH) return false;
-    if (!clearSegment(last, next, size.radius, size.height, obstacles(), true)) {
-        if (!train.blockedNotice) state.onToyNotice?.('블록을 피해서 길을 이어 그려줘! ✨');
-        train.blockedNotice = true; return false;
-    }
+    if (!clearSegment(last, next, size.radius, true)) return false;
     train.route.push(next); train.draftLength += length; showPath(train); return true;
 }
 
@@ -280,19 +296,19 @@ function recordTrail(train, position) {
     while (train.trail.length > MAX_TRAIL_POINTS) train.trail.shift();
 }
 
-function recruit(train, blocks) {
+function recruit(train) {
     const tail = train.followers.at(-1);
     const meeting = tail?.trainRide?.lastPosition || train.position;
-    const candidates = animals.filter(animal => animal.body && !isLivingBlock(animal) && !animal.grabbed && !animal.trainRide && !(animal.trainJoinCooldown > 0)
+    const candidates = animals.filter(animal => animal.body && !cannotRide(animal) && !animal.grabbed && !animal.trainRide && !(animal.trainJoinCooldown > 0)
         && animal.body.position.y - animal.heightOffset * (voxelSize / 20) < 260)
         .map(animal => ({ animal, distance: Math.hypot(animal.body.position.x - meeting.x, animal.body.position.z - meeting.z) }))
         .filter(candidate => candidate.distance <= TRAIN_JOIN_RADIUS).sort((a, b) => a.distance - b.distance);
     for (const { animal } of candidates) {
         const from = new THREE.Vector3(animal.body.position.x, 0, animal.body.position.z), size = followerSize(animal);
         const convoy = convoySize(train);
-        if (!clearSegment(train.position, train.position, Math.max(convoy.radius, size.radius), Math.max(convoy.height, size.height), blocks)) continue;
+        if (!clearSegment(train.position, train.position, Math.max(convoy.radius, size.radius))) continue;
         // Admission is friendly immediately, including while waiting for room.
-        if (!clearSegment(from, meeting, size.radius, size.height, blocks)) continue;
+        if (!clearSegment(from, meeting, size.radius)) continue;
         const forward = new THREE.Vector3(Math.sin(train.heading), 0, Math.cos(train.heading));
         const side = new THREE.Vector3(forward.z, 0, -forward.x);
         const relative = from.clone().sub(train.position);
@@ -302,7 +318,7 @@ function recruit(train, blocks) {
             for (const sign of [Math.sign(relative.dot(side)) || 1, -(Math.sign(relative.dot(side)) || 1)]) {
                 const candidate = from.clone().addScaledVector(side, sign * safeGap - relative.dot(side));
                 const behind = train.position.clone().addScaledVector(side, sign * safeGap).addScaledVector(forward, -safeGap);
-                if (clearSegment(from, candidate, size.radius, size.height, blocks) && clearSegment(candidate, behind, size.radius, size.height, blocks)) {
+                if (clearSegment(from, candidate, size.radius) && clearSegment(candidate, behind, size.radius)) {
                     approach = [candidate, behind]; break;
                 }
             }
@@ -322,7 +338,7 @@ function followerSpeed(animal) {
 function updateFollowers(train, dt, blocks) {
     let spacing = TRAIN_RADIUS + 20;
     for (const animal of [...train.followers]) {
-        if (!animals.includes(animal) || isLivingBlock(animal) || animal.grabbed || !animal.body) { detachTrainFollower(animal); continue; }
+        if (!animals.includes(animal) || cannotRide(animal) || animal.grabbed || !animal.body) { detachTrainFollower(animal); continue; }
         const ride = animal.trainRide, size = followerSize(animal);
         spacing += size.radius;
         ride.followDistance = spacing;
@@ -356,15 +372,20 @@ function updateFollowers(train, dt, blocks) {
                 points.push(sampleTrail(train, desired));
                 let safe = true;
                 for (const point of points) {
-                    if (!clearSegment(cursor, point, size.radius, size.height, blocks, true)) { safe = false; break; }
+                    if (!clearSegment(cursor, point, size.radius, true)) { safe = false; break; }
                     cursor = point;
                 }
-                if (safe) { next.copy(cursor); nextDistance = desired; }
+                if (safe) {
+                    cursor = old;
+                    for (const point of points) { breakTravelBlocks(cursor, point, size, blocks); cursor = point; }
+                    next.copy(cursor); nextDistance = desired;
+                }
                 else joining = true;
             }
-            if (ride.joining && !clearSegment(old, next, size.radius, size.height, blocks, true)) {
+            if (ride.joining && !clearSegment(old, next, size.radius, true)) {
                 next.copy(old); nextDistance = ride.distance; joining = ride.joining;
             }
+            if (ride.joining) breakTravelBlocks(old, next, size, blocks);
             moved = old.distanceTo(next);
         }
         ride.distance = nextDistance; ride.joining = joining;
@@ -381,12 +402,12 @@ function updateFollowers(train, dt, blocks) {
     }
 }
 
-function chooseAutoGoal(train, size, blocks) {
+function chooseAutoGoal(train, size) {
     const start = train.heading + (Math.random() - 0.5) * 0.7;
     for (const turn of [0, 0.5, -0.5, 1, -1, 1.6, -1.6, Math.PI]) {
         const angle = start + turn;
         const goal = train.position.clone().add(new THREE.Vector3(Math.sin(angle), 0, Math.cos(angle)).multiplyScalar(140 + Math.random() * 130));
-        if (clearSegment(train.position, goal, size.radius, size.height, blocks, true)) return goal;
+        if (clearSegment(train.position, goal, size.radius, true)) return goal;
     }
     return null;
 }
@@ -401,15 +422,28 @@ function animalRopeAnchor(animal, front) {
     return animal.mesh.localToWorld(new THREE.Vector3(0, Math.max(12, Math.min(halfHeight * 0.9, 38)), depth * 0.7 * front));
 }
 
+function visibleRopeRadius(position) {
+    const camera = state.camera;
+    const viewportHeight = state.renderer?.domElement?.clientHeight || window.innerHeight;
+    if (!camera || !(viewportHeight > 0)) return ROPE_RADIUS;
+    const projectionScale = Math.abs(camera.projectionMatrix.elements[5]);
+    if (!(projectionScale > 0)) return ROPE_RADIUS;
+    const depth = camera.isPerspectiveCamera ? Math.abs(position.clone().applyMatrix4(camera.matrixWorldInverse).z) : 1;
+    // Use CSS pixels, so the rope stays legible on small screens regardless of
+    // device pixel ratio or zoom. Keep the longitudinal segment length exact.
+    return Math.max(ROPE_RADIUS, ROPE_MIN_PIXELS * depth / (projectionScale * viewportHeight));
+}
+
 function updateRopes(train) {
     if (!train.ropeGroup || train.clearing) return;
     while (train.ropes.length > train.followers.length) {
         const rope = train.ropes.pop(); rope.mesh.removeFromParent(); rope.mesh.clear();
     }
     if (train.followers.length && !train.ropeGeometry) {
-        train.ropeGeometry = new THREE.CylinderGeometry(2.2, 2.2, 1, 6);
-        train.ropeMaterial = new THREE.MeshStandardMaterial({ color: 0xcda473, roughness: 1 });
+        train.ropeGeometry = new THREE.CylinderGeometry(ROPE_RADIUS, ROPE_RADIUS, 1, 8);
+        train.ropeMaterial = new THREE.MeshStandardMaterial({ color: 0xffad22, emissive: 0x7a3b04, emissiveIntensity: 0.35, roughness: 0.6 });
     }
+    state.camera?.updateMatrixWorld();
     const cylinderAxis = new THREE.Vector3(0, 1, 0);
     for (let index = 0; index < train.followers.length; index++) {
         const animal = train.followers[index];
@@ -430,7 +464,7 @@ function updateRopes(train) {
         const sag = Math.min(18, rope.start.distanceTo(rope.end) * 0.1);
         const sample = t => {
             const p = rope.start.clone().lerp(rope.end, t);
-            p.y = Math.max(3, p.y - sag * 4 * t * (1 - t)); return p;
+            p.y = Math.max(ROPE_RADIUS + 1, p.y - sag * 4 * t * (1 - t)); return p;
         };
         let previous = sample(0);
         for (let part = 0; part < ROPE_SEGMENTS; part++) {
@@ -438,7 +472,8 @@ function updateRopes(train) {
             const segment = rope.segments[part], length = direction.length();
             segment.visible = length > 0.001;
             segment.position.copy(previous).add(next).multiplyScalar(0.5);
-            segment.scale.y = Math.max(length, 0.001);
+            const thickness = visibleRopeRadius(segment.position) / ROPE_RADIUS;
+            segment.scale.set(thickness, Math.max(length, 0.001), thickness);
             if (length > 0.001) segment.quaternion.setFromUnitVectors(cylinderAxis, direction.normalize());
             previous = next;
         }
@@ -446,7 +481,7 @@ function updateRopes(train) {
     train.ropeGroup.updateMatrixWorld(true);
 }
 
-// Balloon drift changes heading/scale after AI. Call once after snack updates
+// Animation and snacks change heading/scale after AI. Call after snack updates
 // (or just before rendering) so ropes use the final visible attachment points.
 export function syncTrainRopes() {
     if (state.train) updateRopes(state.train);
@@ -504,23 +539,24 @@ export function updateTrain(dt) {
     if (!train) return;
     dt = Math.min(dt, 0.1);
     const blocks = obstacles();
-    for (const animal of [...train.followers]) if (!animals.includes(animal) || isLivingBlock(animal) || animal.grabbed) detachTrainFollower(animal);
+    for (const animal of [...train.followers]) if (!animals.includes(animal) || cannotRide(animal) || animal.grabbed || !animal.body) detachTrainFollower(animal);
     train.elapsed += dt; train.recruitTimer -= dt;
-    if (!train.drawing && train.recruitTimer <= 0) { recruit(train, blocks); train.recruitTimer = JOIN_INTERVAL; }
+    if (!train.drawing && train.recruitTimer <= 0) { recruit(train); train.recruitTimer = JOIN_INTERVAL; }
     const size = convoySize(train);
     train.speed = Math.min(TRAIN_SPEED, ...train.followers.map(animal => followerSpeed(animal) * 0.8));
     const before = train.position.clone();
     if (!train.drawing) {
         let target = train.route[train.routeIndex];
         if (!target) {
-            if (!train.autoGoal || train.position.distanceTo(train.autoGoal) < 2) train.autoGoal = chooseAutoGoal(train, size, blocks);
+            if (!train.autoGoal || train.position.distanceTo(train.autoGoal) < 2) train.autoGoal = chooseAutoGoal(train, size);
             target = train.autoGoal;
         }
         if (target) {
             const delta = target.clone().sub(train.position), distance = delta.length();
             const step = Math.min(distance, train.speed * dt);
             const next = train.position.clone().addScaledVector(delta, step / Math.max(distance, 1e-8));
-            if (clearSegment(train.position, next, size.radius, size.height, blocks, true)) {
+            if (clearSegment(train.position, next, size.radius, true)) {
+                breakTravelBlocks(train.position, next, size, blocks);
                 if (step > 0.001) train.heading = Math.atan2(delta.x, delta.z);
                 recordTrail(train, next);
                 if (distance <= step + 0.01) {

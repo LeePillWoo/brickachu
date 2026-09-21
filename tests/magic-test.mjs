@@ -5,10 +5,12 @@ import { state, objects } from '../js/state.js';
 import { SNACK_INGREDIENTS, normalizeIngredients, describeRecipe, applySnack, updateMagicEffects, clearMagicEffect } from '../js/magic.js';
 import { spawnFood, clearAllFood, initFoodGhost, showFoodGhost, hideFoodGhost } from '../js/food.js';
 import { animals, GROUP_ANIMALS, spawnDog, clearAllAnimals, updateDogs } from '../js/entities.js';
+import { spawnTrain, clearTrain, updateTrain } from '../js/train.js';
 
 const created = [];
 function reset() {
     created.splice(0).forEach(clearMagicEffect);
+    clearTrain();
     clearAllAnimals();
     clearAllFood();
     objects.length = 0;
@@ -151,6 +153,34 @@ test('feeding again refreshes the timer without accumulating scale or listeners'
     assert.equal(pet.mesh.children.length, 1);
 });
 
+test('balloon and mixed recipes immediately release train ropes and reset eating or pursuit before the next tick', () => {
+    for (const recipe of [['balloon'], ['balloon', 'rainbow'], ['jelly', 'balloon']]) {
+        clearTrain(); clearAllAnimals();
+        GROUP_ANIMALS.magicTest = ['dog'];
+        const pet = spawnDog('magicTest'); delete GROUP_ANIMALS.magicTest;
+        pet.body.position.set(0, pet.heightOffset * 2.5, -80);
+        pet.mesh.position.set(0, 0, -80); pet.state = 'idle'; pet.timer = 1000;
+        const train = spawnTrain(new THREE.Vector3());
+        updateTrain(1 / 60);
+        assert.equal(pet.trainRide?.train, train);
+        assert.equal(train.ropes.length, 1);
+        pet.isEating = true; pet.eatTimer = 10; pet.isClimbing = true;
+        pet.state = 'walking'; pet.timer = 10;
+        assert.equal(applySnack(pet, recipe), true);
+        assert.equal(pet.trainRide, undefined, `${recipe}: detach in applySnack, before updateTrain`);
+        assert.equal(train.followers.length, 0);
+        assert.equal(train.ropes.length, 0);
+        assert.equal(train.ropeGroup.children.length, 0);
+        assert.equal(pet.isEating, false);
+        assert.equal(pet.eatTimer, 0);
+        assert.equal(pet.isClimbing, false);
+        assert.equal(pet.state, 'idle');
+        assert.equal(pet.timer, 0);
+        assert.equal(applySnack(pet, []), true, 'direct apple feeding remains available while floating');
+        assert.equal(pet.magicEffect, undefined);
+    }
+});
+
 test('balloon floats near a 160-unit foot height using the real Cannon world', () => {
     const pet = animal();
     applySnack(pet, ['balloon']);
@@ -261,7 +291,7 @@ test('held pets keep the grab position while their game-time duration still elap
     assert.equal(pet.magicEffect.remaining, 17);
 });
 
-test('all 33 real animal models obey the 40 percent horizontal cap during AI, food pursuit and click dash', () => {
+test('all 33 real animal models obey the 40 percent horizontal cap during AI, nearby food and click dash', () => {
     for (const type of GROUP_ANIMALS.all) {
         clearAllAnimals();
         clearAllFood();

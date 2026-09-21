@@ -129,6 +129,7 @@ HEAVY 동물 클릭 시 화면 흔들림 + 블록 파괴 (`explodeBlockHeavy`)
 - 일반 사과 단계에서는 `state.snackIngredients = []`, 나머지 단계에서는 해당 재료 ID 하나가 담긴 배열을 사용함.
 - 동물이나 블록 친구 클릭은 `applySnack(animal, state.snackIngredients)`로 바로 먹이기. 바닥/블록 윗면 클릭은 `spawnFood(worldPosition, ingredients)`로 간식 배치.
 - 배치한 간식은 생성 시 재료를 보관하므로 이후 UI 선택이 바뀌어도 해당 간식은 유지됨.
+- `balloon`이 포함된 변신 중에는 바닥/블록 위 먹이 탐색·추적·자동 섭취를 중지함. 클릭으로 직접 먹이기는 허용하며 일반 사과나 다른 간식으로 풍선이 해제되면 기존 먹이 AI를 재개함.
 - 동물이 `EAT_RADIUS` (voxelSize × 1.8) 내에 오면 먹음
 - HEAVY 동물이 먹이 위 블록 파괴 시 `triggerFoodFall()` 호출 → 낙하 물리
 - `FOOD_GRAVITY = -980`
@@ -151,12 +152,14 @@ HEAVY 동물 클릭 시 화면 흔들림 + 블록 파괴 (`explodeBlockHeavy`)
 
 - 🚂(`btn-train`)는 매번 `train` 모드를 활성화하며 다시 눌러도 유지함. 빈 바닥 클릭은 `spawnTrain(position)`으로 한 대만 배치/재배치.
 - `state.train.position`은 바닥 기준 위치. `followers`에는 가까운 일반 동물부터 순차 등록하고 `animal.trainRide`로 참여 상태를 표시함. `livingId`가 있는 블록 친구는 가장 가까이 있어도 합류 대상에서 제외함.
+- `balloon`이 포함된 변신 중인 동물은 합류 대상에서 제외함. 참여 중 풍선을 먹으면 `applySnack()`이 즉시 `detachTrainFollower()`를 호출하여 대열과 밧줄을 갱신함. 해제 후에는 기존 합류 대기 시간과 거리 조건을 다시 적용함.
 - 기관차 → 첫 동물 → 다음 동물 사이에 밧줄을 표시하며 이동/대열 변경에 맞춰 연결 위치를 갱신함. 동물 이탈·기차 재배치·삭제 시 밧줄 참조와 소유 자원도 정리함.
 - `ropeGroup`은 씬 직속 그룹. `ropes`의 각 항목은 `{ from, to, mesh, start, end, segments }`이며 `start`/`end`는 월드 좌표. 대기 중인 동물을 포함해 참여 동물당 한 연결을 표시하고, 공유 geometry/material은 기차가 소유하여 정리 시 각각 한 번 해제함.
-- 고정 스텝에서 `updateMagicEffects()` 직후 `syncTrainRopes()`를 호출하여 풍선 변신의 방향·크기 보정까지 밧줄 끝 위치에 반영함.
+- 고정 스텝에서 `updateMagicEffects()` 직후 `syncTrainRopes()`를 호출하여 동물의 최종 방향·크기와 간식 변신 보정까지 밧줄 끝 위치에 반영함.
 - 이동 중 칙칙폭폭 효과음을 반복하고 간헐적으로 핑핑 소리와 연기를 냄. 멈추거나 경로를 그리는 동안에는 운행 효과를 멈추며, Web Audio API로 소리를 생성함.
 - 기차놀이 중에는 육식/초식의 포식·도주·회피 행동보다 대열을 우선함. `state.train`이 있는 동안에는 합류 전 동물도 포식자 회피를 하지 않음. 기차가 제거되면 참여 상태를 해제하고 기존 동물 AI로 돌아감.
 - 기차를 실제 포인터로 누른 뒤 끌면 `beginTrainRoute()` → `appendTrainRoutePoint(position)` → `finishTrainRoute()` 흐름으로 길을 그림. 그리는 동안 기차는 멈추고 OrbitControls를 잠금.
+- 경로 입력은 블록 벽을 가로질러 허용하며 그리기만으로는 블록을 제거하지 않음. 실제 운행 구간에서 기관차/대열의 크기와 겹치는 블록을 `explodeBlockHeavy()`로 파괴하고, 승객의 이동 구간도 정리하여 뒤에 새로 놓인 블록을 통과함. 기차는 빈 바닥에 배치하며 보드 경계는 유지함.
 - ESC, 두 번째 손가락, 모드 전환은 `cancelTrainRoute()`로 그리기를 취소하고 카메라 입력을 복구. `pathVisual`은 그리기 후 잠시 표시한 뒤 페이드하여 정리함.
 - `updateTrain(dt)`에는 배속을 적용한 고정 시뮬레이션 시간을 전달. 🧹 개별 삭제/길게 눌러 전체 삭제, 폭탄은 `clearTrain()`으로 기차 메시·경로 표시·친구의 참여 참조를 정리함. 기차는 편집 히스토리 복원 대상이 아님.
 

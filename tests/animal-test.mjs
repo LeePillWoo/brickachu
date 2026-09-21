@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, objects, explodingBricks, materials } from '../js/state.js';
 import * as entities from '../js/entities.js';
-import { foods } from '../js/food.js';
+import { foods, spawnFood, clearAllFood } from '../js/food.js';
+import { applySnack, updateMagicEffects } from '../js/magic.js';
 
 const raf = [];
 globalThis.requestAnimationFrame = callback => { raf.push(callback); return raf.length; };
@@ -146,6 +147,104 @@ test('animals cannot consume nearby food through a blocking wall', () => {
     entities.updateDogs(1 / 60);
     assert.equal(food.eaten, false);
     assert.equal(animal.isEating, false);
+});
+
+test('balloon recipes ignore reachable food and keep their wandering direction above nearby snacks', () => {
+    for (const recipe of [['balloon'], ['balloon', 'rainbow'], ['jelly', 'balloon']]) {
+        entities.clearAllAnimals();
+        const animal = standing('dog');
+        const pursued = spawnFood(new THREE.Vector3(300, 0, 0), []);
+        entities.updateDogs(1 / 60);
+        assert.equal(animal.state, 'walking');
+        assert.ok(animal.body.velocity.x > 0, 'ordinary animal first pursues the placed food');
+        applySnack(animal, recipe);
+        assert.equal(animal.state, 'idle', `${recipe}: reset the old pursuit immediately`);
+        assert.equal(animal.timer, 0);
+        animal.body.velocity.set(0, 0, 0);
+        animal.magicEffect.floatVelocity.set(0, 0, 0);
+        const food = spawnFood(new THREE.Vector3(30, 0, 0), []);
+        animal.state = 'idle'; animal.timer = 1000;
+        entities.updateDogs(1 / 60);
+        assert.equal(food.eaten, false, `${recipe}: floating must not auto-eat during takeoff`);
+        assert.equal(animal.isEating, false);
+
+        animal.body.position.set(-200, animal.heightOffset * 2.5 + 160, 0);
+        animal.body.velocity.set(0, 0, 0);
+        animal.mesh.position.set(-200, 160, 0);
+        animal.state = 'walking'; animal.timer = 1000; animal.targetDir.set(0, 0, 1);
+        animal.speed = 300;
+        for (let i = 0; i < 180; i++) {
+            state.world.step(1 / 60);
+            entities.updateDogs(1 / 60);
+            updateMagicEffects(entities.animals, 1 / 60);
+            assert.ok(Math.abs(animal.body.position.x + 200) < 1e-6, `${recipe}: no turn toward nearby food`);
+            assert.ok(Math.hypot(animal.body.velocity.x, animal.body.velocity.z) <= 120 + 1e-8);
+        }
+        assert.ok(animal.body.position.z > 100, `${recipe}: ordinary floating wander continues`);
+        assert.equal(food.eaten, false);
+        assert.equal(pursued.eaten, false);
+        clearAllFood();
+    }
+});
+
+test('a floating animal passes above real food without reversing over it or eating', () => {
+    const animal = standing('dog', 1, 0);
+    const food = spawnFood(new THREE.Vector3(0, 0, 0), []);
+    animal.body.position.y += 160; animal.mesh.position.y = 160;
+    applySnack(animal, ['balloon']);
+    animal.speed = 300; animal.state = 'walking'; animal.timer = 1000; animal.targetDir.set(1, 0, 0);
+    let previousX = animal.body.position.x;
+    for (let i = 0; i < 240; i++) {
+        state.world.step(1 / 60);
+        entities.updateDogs(1 / 60);
+        updateMagicEffects(entities.animals, 1 / 60);
+        assert.ok(animal.body.position.x >= previousX - 1e-6, `food must not reverse drift at frame ${i}`);
+        assert.equal(animal.isEating, false);
+        previousX = animal.body.position.x;
+    }
+    assert.ok(animal.body.position.x > 300, 'leave the food behind instead of hovering and shaking over it');
+    assert.equal(food.eaten, false);
+    clearAllFood();
+});
+
+test('direct apple feeding and balloon expiry restore ordinary pursuit and automatic eating after landing', () => {
+    for (const restore of ['apple', 'expiry']) {
+        entities.clearAllAnimals();
+        const animal = standing('dog');
+        const food = spawnFood(new THREE.Vector3(70, 0, 0), []);
+        applySnack(animal, ['balloon', 'rainbow']);
+        animal.state = 'idle'; animal.timer = 1000;
+        const floatingFrames = restore === 'expiry' ? 1200 : 180;
+        for (let i = 0; i < floatingFrames; i++) {
+            state.world.step(1 / 60);
+            entities.updateDogs(1 / 60);
+            updateMagicEffects(entities.animals, 1 / 60);
+            assert.equal(food.eaten, false, `${restore}: ignore placed food while floating`);
+        }
+        assert.ok(animal.body.position.y > animal.heightOffset * 2.5 + 100);
+        if (restore === 'apple') assert.equal(applySnack(animal, []), true);
+        assert.equal(animal.magicEffect, undefined);
+        entities.updateDogs(1 / 60);
+        assert.ok(animal.body.velocity.x > 0, `${restore}: pursue food again immediately`);
+        for (let i = 0; i < 180 && !food.eaten; i++) {
+            state.world.step(1 / 60);
+            entities.updateDogs(1 / 60);
+            updateMagicEffects(entities.animals, 1 / 60);
+        }
+        assert.equal(food.eaten, true, `${restore}: eat again after descending within reach`);
+        clearAllFood();
+    }
+});
+
+test('automatically eating a balloon snack starts floating without retaining the eating state', () => {
+    const animal = standing('dog');
+    const snack = spawnFood(new THREE.Vector3(30, 0, 0), ['balloon']);
+    entities.updateDogs(1 / 60);
+    assert.equal(snack.eaten, true);
+    assert.ok(animal.magicEffect?.ingredients.includes('balloon'));
+    assert.equal(animal.isEating, false);
+    assert.equal(animal.eatTimer, 0);
+    clearAllFood();
 });
 test('HEAVY can break a tall wall while wandering', () => {
     const animal = standing('elephant');

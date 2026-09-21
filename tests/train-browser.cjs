@@ -123,7 +123,7 @@ async function checkRopeMovement(page, before, label) {
 async function touchEvent(session, type, points) {
     await session.send('Input.dispatchTouchEvent', { type, touchPoints: points.map((point, id) => ({ x: point.x, y: point.y, id, radiusX: 1, radiusY: 1, force: 1 })) });
 }
-async function startDrawing(page, touchSession) {
+async function startDrawing(page, touchSession, routeTarget) {
     await page.evaluate(() => {
         const target = qa.state.train.position, distance = Math.max(1, 0.78 / qa.state.camera.aspect);
         qa.state.camera.position.copy(target).add(new qa.THREE.Vector3(560, 720, 950).multiplyScalar(distance));
@@ -131,7 +131,7 @@ async function startDrawing(page, touchSession) {
     });
     const start = await trainPoint(page);
     const target = await page.evaluate(() => qa.state.train.position.toArray());
-    const end = await project(page, [target[0] + 190, 0, target[2] - 140]);
+    const end = await project(page, routeTarget || [target[0] + 190, 0, target[2] - 140]);
     const before = await cameraState(page);
     if (touchSession) await touchEvent(touchSession, 'touchStart', [start]);
     else { await page.mouse.move(start.x, start.y); await page.mouse.down(); }
@@ -168,6 +168,90 @@ async function checkFinishedRoute(page, label) {
     }, before));
     await advance(page, 5);
     check(`${label} route light fades after drawing`, await page.evaluate(() => !qa.state.train.pathVisual || !qa.state.train.pathVisual.parent || !qa.state.train.pathVisual.visible));
+}
+async function checkBalloonDeparture(page, touch = false) {
+    const label = touch ? 'Mobile' : 'Desktop';
+    for (let i = 0; i < 4; i++) {
+        if (await page.evaluate(() => qa.state.currentMode === 'food' && qa.state.snackIngredients.length === 1 && qa.state.snackIngredients[0] === 'balloon')) break;
+        await page.locator('#btn-food')[touch ? 'tap' : 'click']();
+    }
+    const previousSpeed = await page.evaluate(() => {
+        const speed = qa.state.gameSpeed; qa.state.gameSpeed = 0;
+        const target = new qa.THREE.Box3().setFromObject(qa.near.mesh).getCenter(new qa.THREE.Vector3());
+        const distance = Math.max(1, 0.78 / qa.state.camera.aspect);
+        qa.state.camera.position.copy(target).add(new qa.THREE.Vector3(350, 400, 550).multiplyScalar(distance));
+        qa.state.controls.target.copy(target); qa.state.velocity.set(0, 0, 0); qa.state.controls.update();
+        return speed;
+    });
+    try {
+        const point = await page.evaluate(() => {
+            qa.state.scene.updateMatrixWorld(true); qa.state.camera.updateMatrixWorld(true);
+            const candidates = [], ray = new qa.THREE.Raycaster();
+            const targets = [...qa.objects, qa.state.train.mesh, ...qa.animals.map(animal => animal.mesh), ...qa.foods.filter(food => !food.eaten && food.consumeTimer < 0).map(food => food.mesh)];
+            qa.near.mesh.traverse(part => {
+                if (!part.isMesh || !part.visible) return;
+                const bounds = new qa.THREE.Box3().setFromObject(part), p = bounds.getCenter(new qa.THREE.Vector3()).project(qa.state.camera);
+                const x = (p.x + 1) * innerWidth / 2, y = (1 - p.y) * innerHeight / 2;
+                if (p.z <= -1 || p.z >= 1 || document.elementFromPoint(x, y) !== qa.state.renderer.domElement) return;
+                ray.setFromCamera(new qa.THREE.Vector2(p.x, p.y), qa.state.camera);
+                let hit = ray.intersectObjects(targets, true)[0]?.object;
+                while (hit && !hit.userData.animalRef && !hit.userData.trainRef && !hit.userData.foodRef) hit = hit.parent;
+                if (hit?.userData.animalRef === qa.near) candidates.push({ x, y, size: bounds.getSize(new qa.THREE.Vector3()).lengthSq() });
+            });
+            candidates.sort((a, b) => b.size - a.size);
+            if (!candidates.length) throw new Error(`No visible passenger surface: ${qa.near.animalType}, mode=${qa.state.currentMode}, foods=${qa.foods.length}`);
+            return candidates[0];
+        });
+        if (touch) await page.touchscreen.tap(point.x, point.y);
+        else await page.mouse.click(point.x, point.y);
+        const result = await page.evaluate(point => {
+            const train = qa.state.train;
+            const passed = Boolean(qa.near.magicEffect?.ingredients.includes('balloon') && !qa.near.trainRide && train.followers.length === 1 && train.followers[0] === qa.far && train.ropes.length === 1 && train.ropes[0].from === train && train.ropes[0].to === qa.far && qa.foods.length === 0);
+            return { passed, point, mode: qa.state.currentMode, foods: qa.foods.length, effect: qa.near.magicEffect?.ingredients || null, animal: qa.near.animalType, passenger: Boolean(qa.near.trainRide), followers: train.followers.length, ropes: train.ropes.length };
+        }, point);
+        check(`${label} directly feeding a passenger balloon immediately releases it and reconnects the rope`, result.passed, result.passed ? undefined : result);
+    } finally { await page.evaluate(speed => { qa.state.gameSpeed = speed; }, previousSpeed); }
+    await advance(page, 1);
+    check(`${label} a floating animal stays out of the train and its ropes`, await page.evaluate(() => qa.near.magicEffect?.ingredients.includes('balloon') && !qa.near.trainRide && !qa.state.train.followers.includes(qa.near) && qa.state.train.ropes.length === qa.state.train.followers.length && qa.state.train.ropes.every(rope => rope.from !== qa.near && rope.to !== qa.near)));
+}
+async function checkWallBreakthrough(page) {
+    await resetFixture(page);
+    await page.evaluate(() => {
+        qa.wallPassengers = [qa.spawnDog('hop'), qa.spawnDog('quad')];
+        qa.wallPassengers.forEach((animal, index) => {
+            const x = -380 - index * 120;
+            animal.mesh.position.set(x, 0, -40); animal.body.position.set(x, animal.heightOffset * (qa.voxelSize / 20), -40);
+            animal.body.velocity.set(0, 0, 0); animal.state = 'idle'; animal.timer = 100; animal.isCarnivore = false;
+        });
+    });
+    await placeTrain(page, [-250, 0, 0]); await advance(page, 1.5);
+    await page.evaluate(() => {
+        const start = qa.state.train.position.clone();
+        qa.wallX = Math.round((start.x + 225 - 25) / 50) * 50 + 25;
+        const centerZ = Math.round((start.z - 25) / 50) * 50 + 25;
+        qa.wallBlocks = [];
+        for (let z = -250; z <= 250; z += 50) for (const y of [25, 75]) {
+            const position = new qa.THREE.Vector3(qa.wallX, y, centerZ + z);
+            qa.placeVoxel(position, 'preset-9', true);
+            qa.wallBlocks.push(qa.objects.find(block => block !== qa.state.plane && block.position.equals(position)));
+        }
+        qa.wallGoal = start.add(new qa.THREE.Vector3(650, 0, 0)).toArray();
+    });
+    const goal = await page.evaluate(() => qa.wallGoal);
+    await startDrawing(page, undefined, goal);
+    check('A real train drag accepts a route beyond the block wall', await page.evaluate(() => qa.state.train.route.at(-1).x > qa.wallX + 250));
+    check('Drawing across a wall leaves every block intact until the train drives into it', await page.evaluate(() => qa.wallBlocks.every(block => block && qa.objects.includes(block))));
+    await page.mouse.up();
+    const crossing = await page.evaluate(() => {
+        let passed = false;
+        for (let i = 0; i < 60 * 25; i++) {
+            qa.state.world.step(1 / 60); qa.updateTrain(1 / 60); qa.updateDogs(1 / 60); qa.updateFoods(1 / 60); qa.updateMagicEffects(qa.animals, 1 / 60); qa.syncTrainRopes();
+            if (qa.state.train.position.x > qa.wallX + 80 && qa.wallPassengers.every(animal => animal.body.position.x > qa.wallX + 60)) { passed = true; break; }
+        }
+        return { passed, removed: qa.wallBlocks.filter(block => !qa.objects.includes(block)).length, wallX: qa.wallX, trainX: qa.state.train.position.x, passengerX: qa.wallPassengers.map(animal => animal.body.position.x), passengers: qa.state.train.followers.length, ropes: qa.state.train.ropes.length };
+    });
+    check('The moving train destroys blocks when it contacts the wall', crossing.removed > 0, crossing);
+    check('The locomotive and both animals pass through the broken wall together', crossing.passed && crossing.passengers === 2 && crossing.ropes === 2, crossing);
 }
 (async () => {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -208,6 +292,7 @@ async function checkFinishedRoute(page, label) {
             check('Escape cancels route drawing and releases camera controls', await page.evaluate(() => !qa.state.train.drawing && qa.state.controls.enabled));
             await startDrawing(page); await page.locator('#btn-food').click(); await page.mouse.up();
             check('Changing tools cancels route drawing', await page.evaluate(() => !qa.state.train.drawing && qa.state.controls.enabled && qa.state.currentMode === 'food'));
+            await checkBalloonDeparture(page);
             await page.evaluate(() => {
                 qa.oldTrainMesh = qa.state.train.mesh; qa.oldRopeGroup = qa.state.train.ropeGroup; qa.oldRopes = qa.state.train.ropes;
                 const geometries = new Set(), materials = new Set();
@@ -233,6 +318,7 @@ async function checkFinishedRoute(page, label) {
             await placeTrain(page, [0, 0, 0]); await page.locator('#btn-explode').click();
             await page.waitForFunction(() => !qa.state.train, null, { polling: 50 });
             check('The bomb clears a train even when no blocks or animals remain', await page.evaluate(() => !qa.state.train && qa.objects.length === 1 && qa.animals.length === 0));
+            await checkWallBreakthrough(page);
             check('No desktop train runtime exceptions', errors.length === 0, errors); await page.close();
         }
         const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
@@ -256,6 +342,7 @@ async function checkFinishedRoute(page, label) {
         await touchEvent(touch, 'touchStart', [drawing.end, { x: drawing.end.x - 35, y: drawing.end.y + 35 }]);
         await touchEvent(touch, 'touchEnd', []);
         check('A second finger cancels train drawing and unlocks camera controls', await mobile.evaluate(() => !qa.state.train.drawing && qa.state.controls.enabled));
+        await checkBalloonDeparture(mobile, true);
         for (const viewport of [{ width: 320, height: 568 }, { width: 360, height: 640 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 844, height: 390 }]) {
             await mobile.setViewportSize(viewport); await mobile.locator('#btn-train').tap(); await mobile.locator('#btn-train').tap();
             const layout = await mobile.evaluate(() => {
