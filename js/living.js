@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createSteppedBoxGeometry } from './model-utils.js';
+import { createSoftBoxGeometry } from './model-utils.js';
 import { state, objects, voxelSize } from './state.js';
 import { animals, MAX_ANIMALS, registerCustomAnimal, removeAnimalImmediately } from './entities.js';
 import { detachVoxelsForLiving, pushHistory } from './scene.js';
@@ -100,9 +100,9 @@ function makeEyes(descriptor) {
     eyes.name = 'living-eyes';
     eyes.position.fromArray(descriptor.eyePosition);
     eyes.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...descriptor.eyeNormal).normalize());
-    const eyeGeometry = createSteppedBoxGeometry(17.6, 21, 10, 3);
-    const pupilGeometry = createSteppedBoxGeometry(8.2, 10.4, 3, 1.5);
-    const glintGeometry = new THREE.BoxGeometry(2.5, 2.5, 0.8);
+    const eyeGeometry = createSoftBoxGeometry(17.6, 21, 10, 5);
+    const pupilGeometry = createSoftBoxGeometry(8.2, 10.4, 3, 2.5);
+    const glintGeometry = createSoftBoxGeometry(2.5, 2.5, 0.8, 0.7);
     const white = new THREE.MeshStandardMaterial({ color: 0xfff9ee, roughness: 0.35 });
     const black = new THREE.MeshStandardMaterial({ color: 0x172133, roughness: 0.3 });
     const shine = new THREE.MeshBasicMaterial({ color: 0xffffff });

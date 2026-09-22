@@ -342,21 +342,23 @@ test('ropes connect consecutive members with shared triangle geometry and natura
     const before = train.ropes[0].end.clone(); step(30); assert.ok(train.ropes[0].end.distanceTo(before) > 10);
 });
 
-test('gold ropes keep a four CSS pixel minimum when the mobile camera zooms far away', () => {
+test('thin linen ropes keep a two CSS pixel minimum when the mobile camera zooms far away', () => {
     pet('dog',-70,0);
     const train = spawnTrain(point(0,0)); route(point(0,600)); step(120);
     state.renderer = { domElement: { clientHeight: 844 } };
     state.camera = new THREE.PerspectiveCamera(45,390 / 844,1,100000);
     const start = train.ropes[0].start.clone(), end = train.ropes[0].end.clone();
     const geometry = train.ropeGeometry, material = train.ropeMaterial;
-    assert.equal(geometry.parameters.radiusTop,6); assert.equal(material.color.getHex(),0xffad22);
+    assert.equal(geometry.parameters.radiusTop,3); assert.equal(material.color.getHex(),0x9c8f7d);
+    assert.equal(material.emissive.getHex(),0);
     for (const distanceScale of [1,1.7,8]) {
         state.camera.position.set(500,800,1300).multiplyScalar(distanceScale);
         state.camera.lookAt(0,0,0); syncTrainRopes();
         for (const segment of train.ropes[0].segments) {
             const depth = -segment.position.clone().applyMatrix4(state.camera.matrixWorldInverse).z;
-            const projectedWidth = 12 * segment.scale.x * state.camera.projectionMatrix.elements[5] * 844 / (2 * depth);
-            assert.ok(projectedWidth >= 4 - 1e-6, `thin rope at zoom ${distanceScale}: ${projectedWidth}px`);
+            const projectedWidth = geometry.parameters.radiusTop * segment.scale.x * state.camera.projectionMatrix.elements[5] * 844 / depth;
+            assert.ok(projectedWidth >= 2 - 1e-6, `thin rope at zoom ${distanceScale}: ${projectedWidth}px`);
+            if (distanceScale === 8) assert.ok(projectedWidth <= 2 + 1e-6, `oversized rope at zoom ${distanceScale}: ${projectedWidth}px`);
             assert.ok(segment.scale.x >= 1); assert.equal(segment.scale.x,segment.scale.z);
             assert.equal(segment.geometry,geometry); assert.equal(segment.material,material);
         }

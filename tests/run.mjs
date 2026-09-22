@@ -17,7 +17,7 @@ async function prepareDependencies() {
     catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
 
     const sources = {};
-    for (const [name, fileName] of [['three', 'three.mjs'], ['cannon-es', 'cannon.mjs'], ['three/addons/utils/BufferGeometryUtils.js', 'BufferGeometryUtils.mjs']]) {
+    for (const [name, fileName] of [['three', 'three.mjs'], ['cannon-es', 'cannon.mjs'], ['three/addons/utils/BufferGeometryUtils.js', 'BufferGeometryUtils.mjs'], ['three/addons/geometries/RoundedBoxGeometry.js', 'RoundedBoxGeometry.mjs']]) {
         const sourceURL = imports[name] || (name.startsWith('three/addons/') && imports['three/addons/'] + name.slice('three/addons/'.length));
         if (typeof sourceURL !== 'string' || !sourceURL.startsWith('https://')) throw new Error(`${name}의 고정 CDN URL이 없습니다.`);
         sources[name] = sourceURL;

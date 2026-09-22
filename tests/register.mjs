@@ -6,6 +6,7 @@ registerHooks({
         if (specifier === 'three') return { url: new URL('../.tmp/qa/three.mjs', import.meta.url).href, shortCircuit: true };
         if (specifier === 'cannon-es') return { url: new URL('../.tmp/qa/cannon.mjs', import.meta.url).href, shortCircuit: true };
         if (specifier === 'three/addons/utils/BufferGeometryUtils.js') return { url: new URL('../.tmp/qa/BufferGeometryUtils.mjs', import.meta.url).href, shortCircuit: true };
+        if (specifier === 'three/addons/geometries/RoundedBoxGeometry.js') return { url: new URL('../.tmp/qa/RoundedBoxGeometry.mjs', import.meta.url).href, shortCircuit: true };
         return nextResolve(specifier, context);
     }
 });

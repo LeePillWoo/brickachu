@@ -1,36 +1,45 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
-import { createSteppedBoxGeometry, mergeStaticParts } from '../js/model-utils.js';
+import { createSoftBoxGeometry, mergeStaticParts } from '../js/model-utils.js';
 import { state } from '../js/state.js';
 import { GROUP_ANIMALS, spawnDog, clearAllAnimals, updateDogs } from '../js/entities.js';
 
 const checks = [];
 function test(name, fn) { fn(); checks.push(name); console.log('PASS', name); }
 
-test('stepped parts keep exact dimensions and raycast their real cut silhouette', () => {
-    const geometry = createSteppedBoxGeometry(20, 24, 12, 3);
+test('soft parts retain dimensions, smooth corners and the real rounded silhouette', () => {
+    const geometry = createSoftBoxGeometry(20, 24, 12, 3);
     geometry.computeBoundingBox();
     assert.deepEqual(geometry.boundingBox.getSize(new THREE.Vector3()).toArray(), [20, 24, 12]);
     const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
     const ray = new THREE.Raycaster(new THREE.Vector3(0, 0, 30), new THREE.Vector3(0, 0, -1));
     assert.ok(ray.intersectObject(mesh).length > 0);
     ray.ray.origin.set(9, 11, 30);
+    assert.ok(ray.intersectObject(mesh).length > 0, 'old stair notch is filled by the rounded edge');
+    ray.ray.origin.set(9.8, 11.8, 30);
     assert.equal(ray.intersectObject(mesh).length, 0);
     assert.ok([...geometry.attributes.normal.array].every(Number.isFinite));
+    assert.ok([...geometry.attributes.normal.array].some(value => Math.abs(value) > 0.1 && Math.abs(value) < 0.9));
     geometry.dispose(); mesh.material.dispose();
+    const patch = createSoftBoxGeometry(20, 24, 0.3, 3);
+    patch.computeBoundingBox();
+    assert.ok(patch.boundingBox.getSize(new THREE.Vector3()).distanceTo(new THREE.Vector3(20, 24, 0.3)) < 1e-5);
+    const patchMesh = new THREE.Mesh(patch, new THREE.MeshBasicMaterial());
+    assert.equal(ray.intersectObject(patchMesh).length, 0, 'thin belly patches keep rounded outlines');
+    patch.dispose(); patchMesh.material.dispose();
 });
 
 test('batching preserves rotated silhouettes, picking and owned-resource cleanup', () => {
     const group = new THREE.Group(), material = new THREE.MeshBasicMaterial();
     const shared = new THREE.BoxGeometry(4, 8, 6);
-    const a = new THREE.Mesh(shared, material), b = new THREE.Mesh(createSteppedBoxGeometry(8, 12, 6), material);
+    const a = new THREE.Mesh(shared, material), b = new THREE.Mesh(createSoftBoxGeometry(8, 12, 6), material);
     a.position.set(-7, 4, 0); a.rotation.z = 0.4;
     b.position.set(6, 7, 0); b.rotation.y = 0.3;
     a.userData.isAnimalPart = b.userData.isAnimalPart = true;
     group.add(a, b);
     const wheel = new THREE.Group(); wheel.add(new THREE.Mesh(shared, material)); group.add(wheel);
-    const before = new THREE.Box3().setFromObject(group);
+    const before = new THREE.Box3().setFromObject(group, true);
     const ray = new THREE.Raycaster(new THREE.Vector3(6, 7, 40), new THREE.Vector3(0, 0, -1));
     const distance = ray.intersectObject(group)[0].distance;
     let sharedDisposals = 0, bDisposals = 0;
@@ -39,7 +48,7 @@ test('batching preserves rotated silhouettes, picking and owned-resource cleanup
     mergeStaticParts(group);
     assert.equal(group.children.length, 2);
     assert.equal(group.children.find(child => child.isMesh).userData.isAnimalPart, true);
-    const after = new THREE.Box3().setFromObject(group);
+    const after = new THREE.Box3().setFromObject(group, true);
     assert.ok(before.min.distanceTo(after.min) < 1e-5 && before.max.distanceTo(after.max) < 1e-5);
     assert.ok(Math.abs(ray.intersectObject(group)[0].distance - distance) < 1e-5);
     assert.equal(sharedDisposals, 0, 'animated wheel still owns the shared geometry');

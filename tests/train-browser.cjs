@@ -311,9 +311,13 @@ async function checkWallBreakthrough(page) {
             await page.locator('#btn-clear-all').click(); const removePoint = await trainPoint(page); await page.mouse.click(removePoint.x, removePoint.y);
             check('The broom removes an individual train, its ropes and all passenger references', await page.evaluate(() => !qa.state.train && qa.animals.every(animal => !animal.trainRide) && !qa.state.scene.children.some(child => child.name === 'train-friend-ropes')));
             await placeTrain(page, [0, 0, 0]);
+            await page.evaluate(() => document.getElementById('btn-clear-all').addEventListener('pointerdown', () => { qa.broomHoldStarted = performance.now(); }, { once: true }));
             const broom = await page.locator('#btn-clear-all').boundingBox(); await page.mouse.move(broom.x + broom.width / 2, broom.y + broom.height / 2); await page.mouse.down();
-            await page.waitForTimeout(2200); await page.mouse.up();
-            check('Holding the broom also clears the train', await page.evaluate(() => !qa.state.train));
+            try {
+                // Software rendering can delay the browser timer beyond a fixed Node-side sleep.
+                await page.waitForFunction(() => !qa.state.train, null, { polling: 50 });
+                check('Holding the broom for two seconds also clears the train', await page.evaluate(() => performance.now() - qa.broomHoldStarted >= 2000));
+            } finally { await page.mouse.up(); }
             await page.evaluate(() => { qa.clearAllAnimals(); qa.clearAllFood(); });
             await placeTrain(page, [0, 0, 0]); await page.locator('#btn-explode').click();
             await page.waitForFunction(() => !qa.state.train, null, { polling: 50 });

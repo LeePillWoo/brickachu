@@ -1,17 +1,13 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
-// Broad, flat block faces with one small step at each corner.
-export function createSteppedBoxGeometry(width, height, depth, corner = 1) {
-    const x = width / 2, y = height / 2;
-    const c = Math.min(corner, width / 4, height / 4);
-    const points = [
-        [-x + c, -y], [x - c, -y], [x - c, -y + c], [x, -y + c],
-        [x, y - c], [x - c, y - c], [x - c, y], [-x + c, y],
-        [-x + c, y - c], [-x, y - c], [-x, -y + c], [-x + c, -y + c]
-    ];
-    const shape = new THREE.Shape(points.map(([px, py]) => new THREE.Vector2(px, py)));
-    return new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: false, steps: 1 }).translate(0, 0, -depth / 2);
+// Broad toy faces with smooth edges, including thin face/belly patches.
+export function createSoftBoxGeometry(width, height, depth, corner = 1) {
+    const radius = Math.min(corner, width / 2, height / 2);
+    const roundedDepth = Math.max(depth, radius * 2);
+    const segments = Math.min(width, height) >= 24 ? 2 : 1;
+    return new RoundedBoxGeometry(width, height, roundedDepth, segments, radius).scale(1, 1, depth / roundedDepth);
 }
 
 // Only batch rigid parts with matching materials; animated children stay separate.

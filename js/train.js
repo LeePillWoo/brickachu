@@ -3,7 +3,7 @@ import { state, objects, voxelSize } from './state.js';
 import { animals } from './entities.js';
 import { playSound } from './sound.js';
 import { explodeBlockHeavy } from './scene.js';
-import { createSteppedBoxGeometry, mergeStaticParts } from './model-utils.js';
+import { createSoftBoxGeometry, mergeStaticParts } from './model-utils.js';
 
 export const TRAIN_SPEED = 110;
 export const TRAIN_JOIN_RADIUS = 300;
@@ -11,7 +11,7 @@ export const MAX_TRAIN_ROUTE_POINTS = 160;
 export const MAX_TRAIN_ROUTE_LENGTH = 8000;
 const TRAIN_RADIUS = 68, TRAIN_HEIGHT = 110;
 const BOARD_LIMIT = 900, JOIN_INTERVAL = 0.65, MAX_TRAIL_POINTS = 4096;
-const ROPE_SEGMENTS = 8, ROPE_RADIUS = 6, ROPE_MIN_PIXELS = 4;
+const ROPE_SEGMENTS = 8, ROPE_RADIUS = 3, ROPE_MIN_PIXELS = 2;
 const DRIVE_BEATS = ['train-chuff', 'train-chuff', 'train-puff', 'train-puff'];
 const isLivingBlock = animal => Boolean(animal?.livingId) || animal?.animalType === 'living-block';
 const cannotRide = animal => isLivingBlock(animal) || Boolean(animal?.magicEffect?.ingredients.includes('balloon'));
@@ -35,8 +35,8 @@ function buildEngine() {
     mesh.name = 'friend-train';
     const colors = { blue: 0x64bce7, teal: 0x5acbb4, red: 0xf77b82, gold: 0xffd66c, dark: 0x344763, white: 0xffffff };
     const materials = Object.fromEntries(Object.entries(colors).map(([key, color]) => [key, new THREE.MeshPhysicalMaterial({ color, roughness: 0.45 })]));
-    function box(w, h, d, x, y, z, color, corner = 0) {
-        const geometry = corner ? createSteppedBoxGeometry(w, h, d, corner) : new THREE.BoxGeometry(w, h, d);
+    function box(w, h, d, x, y, z, color, corner = Math.min(w, h, d) * 0.2) {
+        const geometry = createSoftBoxGeometry(w, h, d, corner);
         const part = new THREE.Mesh(geometry, materials[color]);
         part.position.set(x, y, z); part.castShadow = true; part.receiveShadow = true; mesh.add(part); return part;
     }
@@ -460,7 +460,7 @@ function updateRopes(train) {
     }
     if (train.followers.length && !train.ropeGeometry) {
         train.ropeGeometry = new THREE.CylinderGeometry(ROPE_RADIUS, ROPE_RADIUS, 1, 8);
-        train.ropeMaterial = new THREE.MeshStandardMaterial({ color: 0xffad22, emissive: 0x7a3b04, emissiveIntensity: 0.35, roughness: 0.6 });
+        train.ropeMaterial = new THREE.MeshStandardMaterial({ color: 0x9c8f7d, roughness: 0.9 });
     }
     state.camera?.updateMatrixWorld();
     const cylinderAxis = new THREE.Vector3(0, 1, 0);
