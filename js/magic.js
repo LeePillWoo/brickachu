@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createSteppedBoxGeometry } from './model-utils.js';
 import { state, objects, voxelSize } from './state.js';
 import { detachTrainFollower } from './train.js';
 
@@ -102,6 +103,16 @@ function addBalloonShell(animal, effect) {
     shell.scale.set(Math.max(size.x, 16) * 0.56, Math.max(size.y, 16) * 0.56, Math.max(size.z, 16) * 0.56);
     shell.userData.animalRef = animal;
     shell.userData.magicDecoration = true;
+    const ribbonMaterial = new THREE.MeshStandardMaterial({ color: 0xe788ad, roughness: 0.5 });
+    const ribbonGeometry = createSteppedBoxGeometry(0.26, 0.13, 0.1, 0.04);
+    for (const side of [-1, 1]) {
+        const ribbon = new THREE.Mesh(ribbonGeometry, ribbonMaterial);
+        ribbon.position.set(side * 0.12, -0.8, 0.48);
+        ribbon.rotation.z = side * 0.2;
+        ribbon.userData.magicDecoration = true;
+        ribbon.userData.animalRef = animal;
+        shell.add(ribbon);
+    }
     animal.mesh.add(shell);
     effect.decoration = shell;
     effect.localBounds.expandByPoint(shell.position.clone().sub(shell.scale));
@@ -318,7 +329,7 @@ function addTrail(animal, effect, position, footY) {
     if (trails.length >= MAX_TRAILS) removeTrail(0);
     const owned = trails.filter(trail => trail.animal === animal);
     if (owned.length >= 40) removeTrail(trails.indexOf(owned[0]));
-    trailGeometry ??= new THREE.BoxGeometry(13, 4, 18);
+    trailGeometry ??= createSteppedBoxGeometry(13, 18, 4, 3).rotateX(-Math.PI / 2);
     const material = new THREE.MeshBasicMaterial({ color: RAINBOW_COLORS[effect.trailIndex++ % RAINBOW_COLORS.length], transparent: true, opacity: 0.82, depthWrite: false });
     const mesh = new THREE.Mesh(trailGeometry, material);
     mesh.name = 'snack-rainbow-footprint';

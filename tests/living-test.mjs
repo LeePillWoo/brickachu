@@ -99,7 +99,7 @@ test('selected side owns real 3D eyes, and all blocks keep their world positions
         .map(child => child.getWorldPosition(new THREE.Vector3()).toArray().map(value => Math.round(value)).join(',')).sort();
     assert.deepEqual(actual, expected);
     assert.equal(animal.livingEyes.children.length, 2);
-    assert.ok(animal.livingEyes.children.every(eye => eye.children.length === 3 && eye.children.every(child => child.isMesh)));
+    assert.ok(animal.livingEyes.children.every(eye => eye.children.length === 4 && eye.children.every(child => child.isMesh)));
     const eyeCenter = animal.livingEyes.getWorldPosition(new THREE.Vector3());
     assert.ok(Math.abs(eyeCenter.x + 1) < 0.001);
     assert.equal(animal.mesh.children[0].material.color.getHex(), 0xffad22);

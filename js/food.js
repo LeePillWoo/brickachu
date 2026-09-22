@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { state, voxelSize, objects } from './state.js';
 import { playSound } from './sound.js';
 import { normalizeIngredients } from './magic.js';
+import { createSteppedBoxGeometry, mergeStaticParts } from './model-utils.js';
 
 // ── 낙하 물리 상수 ──
 const FOOD_GRAVITY = -980;
@@ -104,44 +105,66 @@ function createFoodMesh(ingredients, ghost = false) {
     function box(w, h, d, x, y, z, material, ingredient) {
         return add(new THREE.BoxGeometry(w * u, h * u, d * u), x, y, z, material, ingredient);
     }
+    function stepped(w, h, d, x, y, z, material, ingredient, corner = 1.5) {
+        return add(createSteppedBoxGeometry(w * u, h * u, d * u, corner * u), x, y, z, material, ingredient);
+    }
     const green = pudding ? null : mat(ingredients.length ? 0x50c96b : 0x22aa22);
     if (!ingredients.length) {
-        // Keep the original plain apple as the familiar food and undo snack.
-        box(12, 12, 12, 0, 6, 0, mat(0xff3030));
-        box(4, 4, 4, 0, 12, 0, mat(0xffaaaa));
-        box(2, 6, 2, 0, 16, 0, mat(0x6b3a2a));
-        box(7, 3, 3, 5, 14, 0, green);
-        box(5, 2, 2, -4, 13, 0, green);
+        // Broad color planes and a notched top keep the apple readable at toy scale.
+        const red = mat(0xf34b50), shine = mat(0xffc0b7);
+        stepped(14, 11, 12, 0, 5.5, 0, red, null, 2);
+        for (const side of [-1, 1]) stepped(6, 3, 10, side * 3.5, 10.5, 0, red, null, 0.8);
+        box(3, 4, 0.7, -3.5, 7.7, 6.15, shine);
+        box(1.5, 1.5, 0.7, -1.25, 9.7, 6.15, shine);
+        box(2, 6, 2, 0, 14, 0, mat(0x6b3a2a));
+        stepped(7, 2.5, 4, 4.2, 15.8, 0, green, null, 0.7).rotation.z = 0.18;
+        box(4.5, 0.6, 0.8, 4.3, 17.05, 0, mat(0x91de75));
     } else if (pudding) {
         // Custard with a caramel cap on a little plate, matching the 🍮 icon.
         group.name = 'snack-pudding';
         const custard = mat(0xffdf86, { flatShading: true });
         const caramel = mat(0xa94f27, { flatShading: true, roughness: 0.25 });
-        add(new THREE.CylinderGeometry(10 * u, 10 * u, 1.5 * u, 12), 0, 0.75, 0, mat(0xfffaf0), 'jelly');
+        const cream = mat(0xfffaf0), cherry = mat(0xf46479);
+        add(new THREE.CylinderGeometry(10 * u, 10 * u, 1.5 * u, 12), 0, 0.75, 0, cream, 'jelly');
+        add(new THREE.CylinderGeometry(8.6 * u, 9.4 * u, 0.8 * u, 12), 0, 1.65, 0, mat(0xffedc5), 'jelly');
         add(new THREE.CylinderGeometry(6 * u, 8 * u, 12 * u, 12), 0, 7.5, 0, custard, 'jelly');
         add(new THREE.CylinderGeometry(6 * u, 6.35 * u, 2 * u, 12), 0, 14.5, 0, caramel, 'jelly');
         box(2, 3, 1, -2.8, 12.8, 5.2, caramel, 'jelly');
         box(1.5, 2, 1, 3.4, 13.2, 4.8, caramel, 'jelly');
+        stepped(6, 2, 6, 0, 16.3, -1, cream, 'jelly', 1);
+        stepped(3.5, 2, 3.5, -0.5, 18, -1, cream, 'jelly', 0.6);
+        stepped(2.8, 2.8, 2.8, 1.6, 19.2, -1, cherry, 'jelly', 0.5);
+        box(1, 1, 0.4, 1.1, 19.8, 0.5, cream, 'jelly');
     } else if (rainbow) {
         const colors = [0xff728f, 0xffb85a, 0xffe76a, 0x7ee299, 0x79d8ff, 0xb19bff];
-        colors.forEach((color, i) => box(12, 2.5, 12, 0, 1.25 + i * 2.5, 0, mat(color), 'rainbow'));
+        const widths = [10, 12, 14, 14, 12, 10];
+        colors.forEach((color, i) => stepped(widths[i], 2.5, widths[i], 0, 1.25 + i * 2.5, 0, mat(color), 'rainbow', 0.65));
+        box(2.5, 2, 0.5, -3, 11.2, 6.15, mat(0xf1fbff), 'rainbow');
         box(2, 5, 2, 0, 17, 0, mat(0x80532f));
-        box(6, 2.5, 3, 3, 19, 0, green);
+        stepped(6, 2.5, 4, 3, 19, 0, green, null, 0.7).rotation.z = 0.18;
     } else {
-        add(new THREE.SphereGeometry(8 * u, 12, 10), 0, 8, 0, mat(0xff78ac), 'balloon');
+        const pink = mat(0xff78ac), shine = mat(0xffd7e8);
+        stepped(14, 16, 12, 0, 8, 0, pink, 'balloon', 3);
+        stepped(4, 5, 0.7, -3.5, 11, 6.1, shine, 'balloon', 0.8);
+        box(1.5, 1.5, 0.7, -1, 13, 6.1, shine, 'balloon');
         box(2, 5, 2, 0, 17, 0, mat(0x81552e));
-        box(6, 3, 3, 4, 17, 0, green);
+        stepped(6, 3, 4, 4, 17, 0, green, null, 0.7).rotation.z = 0.18;
     }
     if (balloon) {
         // A little tied balloon marks the ingredient in both single and mixed food.
-        box(0.7, 12, 0.7, -8, 17, 0, mat(0xfff5dc), 'balloon');
-        add(new THREE.SphereGeometry(5 * u, 10, 8), -8, 27, 0, mat(0xff88bd), 'balloon').scale.y = 1.15;
-        box(2, 2, 2, -8, 21.5, 0, mat(0xff88bd), 'balloon');
+        const pink = mat(0xff88bd), ivory = mat(0xfff5dc);
+        box(0.8, 12, 0.8, -8, 17, 0, ivory, 'balloon');
+        stepped(10, 12, 9, -8, 27, 0, pink, 'balloon', 2.5);
+        stepped(2.5, 3, 0.6, -10, 29, 4.6, ivory, 'balloon', 0.5);
+        box(2.5, 2, 2.5, -8, 21, 0, pink, 'balloon');
+        box(3.5, 1.5, 1.5, -9.5, 20.5, 0, pink, 'balloon').rotation.z = -0.35;
     }
     if (rainbow && pudding) {
         const colors = [0xff729f, 0xffdd6c, 0x83db99, 0x83ccff, 0xb69aff];
-        colors.forEach((color, i) => box(1.4, 0.6, 1.4, -3.2 + i * 1.6, 15.8, 1, mat(color), 'rainbow'));
+        colors.forEach((color, i) => box(1.4, 0.6, 1.4, -3.2 + i * 1.6, 15.8, 3.8, mat(color), 'rainbow'));
     }
+    // A reused material belongs to one ingredient; keep translucent previews sortable.
+    if (!ghost) mergeStaticParts(group);
     return group;
 }
 

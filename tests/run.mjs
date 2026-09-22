@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const rootURL = new URL('../', import.meta.url);
 const cacheURL = new URL('.tmp/qa/', rootURL);
-const suites = ['animal', 'scene', 'input', 'sound', 'food', 'living', 'magic', 'train'];
+const suites = ['animal', 'models', 'scene', 'input', 'sound', 'food', 'living', 'magic', 'train'];
 
 async function prepareDependencies() {
     const html = await readFile(new URL('index.html', rootURL), 'utf8');
@@ -17,8 +17,8 @@ async function prepareDependencies() {
     catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
 
     const sources = {};
-    for (const [name, fileName] of [['three', 'three.mjs'], ['cannon-es', 'cannon.mjs']]) {
-        const sourceURL = imports[name];
+    for (const [name, fileName] of [['three', 'three.mjs'], ['cannon-es', 'cannon.mjs'], ['three/addons/utils/BufferGeometryUtils.js', 'BufferGeometryUtils.mjs']]) {
+        const sourceURL = imports[name] || (name.startsWith('three/addons/') && imports['three/addons/'] + name.slice('three/addons/'.length));
         if (typeof sourceURL !== 'string' || !sourceURL.startsWith('https://')) throw new Error(`${name}의 고정 CDN URL이 없습니다.`);
         sources[name] = sourceURL;
         const localURL = new URL(fileName, cacheURL);

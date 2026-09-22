@@ -1,0 +1,83 @@
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { createSteppedBoxGeometry, mergeStaticParts } from '../js/model-utils.js';
+import { state } from '../js/state.js';
+import { GROUP_ANIMALS, spawnDog, clearAllAnimals, updateDogs } from '../js/entities.js';
+
+const checks = [];
+function test(name, fn) { fn(); checks.push(name); console.log('PASS', name); }
+
+test('stepped parts keep exact dimensions and raycast their real cut silhouette', () => {
+    const geometry = createSteppedBoxGeometry(20, 24, 12, 3);
+    geometry.computeBoundingBox();
+    assert.deepEqual(geometry.boundingBox.getSize(new THREE.Vector3()).toArray(), [20, 24, 12]);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    const ray = new THREE.Raycaster(new THREE.Vector3(0, 0, 30), new THREE.Vector3(0, 0, -1));
+    assert.ok(ray.intersectObject(mesh).length > 0);
+    ray.ray.origin.set(9, 11, 30);
+    assert.equal(ray.intersectObject(mesh).length, 0);
+    assert.ok([...geometry.attributes.normal.array].every(Number.isFinite));
+    geometry.dispose(); mesh.material.dispose();
+});
+
+test('batching preserves rotated silhouettes, picking and owned-resource cleanup', () => {
+    const group = new THREE.Group(), material = new THREE.MeshBasicMaterial();
+    const shared = new THREE.BoxGeometry(4, 8, 6);
+    const a = new THREE.Mesh(shared, material), b = new THREE.Mesh(createSteppedBoxGeometry(8, 12, 6), material);
+    a.position.set(-7, 4, 0); a.rotation.z = 0.4;
+    b.position.set(6, 7, 0); b.rotation.y = 0.3;
+    a.userData.isAnimalPart = b.userData.isAnimalPart = true;
+    group.add(a, b);
+    const wheel = new THREE.Group(); wheel.add(new THREE.Mesh(shared, material)); group.add(wheel);
+    const before = new THREE.Box3().setFromObject(group);
+    const ray = new THREE.Raycaster(new THREE.Vector3(6, 7, 40), new THREE.Vector3(0, 0, -1));
+    const distance = ray.intersectObject(group)[0].distance;
+    let sharedDisposals = 0, bDisposals = 0;
+    shared.addEventListener('dispose', () => sharedDisposals++);
+    b.geometry.addEventListener('dispose', () => bDisposals++);
+    mergeStaticParts(group);
+    assert.equal(group.children.length, 2);
+    assert.equal(group.children.find(child => child.isMesh).userData.isAnimalPart, true);
+    const after = new THREE.Box3().setFromObject(group);
+    assert.ok(before.min.distanceTo(after.min) < 1e-5 && before.max.distanceTo(after.max) < 1e-5);
+    assert.ok(Math.abs(ray.intersectObject(group)[0].distance - distance) < 1e-5);
+    assert.equal(sharedDisposals, 0, 'animated wheel still owns the shared geometry');
+    assert.equal(bDisposals, 1);
+    group.children.find(child => child.isMesh).geometry.dispose(); shared.dispose(); material.dispose();
+});
+
+test('all 38 animal models fit mobile draw budgets, retain picking and stand above ground', () => {
+    state.scene = new THREE.Scene();
+    state.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -1470, 0) });
+    const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
+    ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0); state.world.addBody(ground);
+    const types = [...GROUP_ANIMALS.all, 'horse', 'giraffe', 'vulpix', 'marill', 'kangaroo'];
+    assert.equal(new Set(types).size, 38);
+    for (const type of types) {
+        GROUP_ANIMALS.modelCheck = [type];
+        const animal = spawnDog('modelCheck');
+        animal.mesh.position.set(0, 0, 0); animal.mesh.updateMatrixWorld(true);
+        const bounds = new THREE.Box3().setFromObject(animal.mesh);
+        assert.ok(!bounds.isEmpty() && bounds.min.y >= -1e-5, type);
+        assert.ok(animal.mesh.children.length <= 8, `${type}: too many material batches`);
+        let triangles = 0;
+        for (const part of animal.mesh.children) {
+            assert.equal(part.userData.animalRef, animal, type);
+            assert.ok([...part.geometry.attributes.position.array].every(Number.isFinite), type);
+            triangles += (part.geometry.index?.count || part.geometry.attributes.position.count) / 3;
+        }
+        assert.ok(triangles < 5000, `${type}: excessive geometry`);
+        const center = bounds.getCenter(new THREE.Vector3());
+        const ray = new THREE.Raycaster(center.clone().add(new THREE.Vector3(0, 0, 500)), new THREE.Vector3(0, 0, -1));
+        assert.ok(ray.intersectObject(animal.mesh).length > 0, `${type}: cannot pick torso`);
+        for (let frame = 0; frame < 180; frame++) { state.world.step(1 / 60); updateDogs(1 / 60); }
+        assert.notEqual(animal.state, 'falling', type);
+        clearAllAnimals();
+        assert.equal(state.world.bodies.length, 1, type);
+        assert.equal(state.scene.children.length, 0, type);
+    }
+    delete GROUP_ANIMALS.modelCheck;
+});
+
+console.log(`${checks.length} model geometry checks passed`);

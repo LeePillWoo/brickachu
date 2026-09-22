@@ -3,6 +3,7 @@ import { state, objects, voxelSize } from './state.js';
 import { animals } from './entities.js';
 import { playSound } from './sound.js';
 import { explodeBlockHeavy } from './scene.js';
+import { createSteppedBoxGeometry, mergeStaticParts } from './model-utils.js';
 
 export const TRAIN_SPEED = 110;
 export const TRAIN_JOIN_RADIUS = 300;
@@ -34,34 +35,52 @@ function buildEngine() {
     mesh.name = 'friend-train';
     const colors = { blue: 0x64bce7, teal: 0x5acbb4, red: 0xf77b82, gold: 0xffd66c, dark: 0x344763, white: 0xffffff };
     const materials = Object.fromEntries(Object.entries(colors).map(([key, color]) => [key, new THREE.MeshPhysicalMaterial({ color, roughness: 0.45 })]));
-    function box(w, h, d, x, y, z, color) {
-        const part = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), materials[color]);
+    function box(w, h, d, x, y, z, color, corner = 0) {
+        const geometry = corner ? createSteppedBoxGeometry(w, h, d, corner) : new THREE.BoxGeometry(w, h, d);
+        const part = new THREE.Mesh(geometry, materials[color]);
         part.position.set(x, y, z); part.castShadow = true; part.receiveShadow = true; mesh.add(part); return part;
     }
-    box(60, 13, 91, 0, 20, 0, 'red');
-    box(50, 35, 68, 0, 42, 10, 'blue');
-    box(57, 48, 35, 0, 58, -26, 'teal');
-    box(65, 8, 44, 0, 85, -26, 'gold');
-    box(38, 23, 2, 0, 62, -44.5, 'dark');
-    for (const side of [-1, 1]) box(2, 22, 21, side * 29, 63, -26, 'white');
-    box(65, 10, 12, 0, 22, 50, 'gold');
+    box(60, 13, 91, 0, 20, 0, 'red', 3);
+    box(50, 35, 68, 0, 42, 10, 'blue', 6);
+    box(57, 48, 35, 0, 58, -26, 'teal', 4);
+    box(65, 8, 44, 0, 85, -26, 'gold', 2);
+    box(43, 28, 2, 0, 63, -44.5, 'white', 3);
+    box(35, 20, 2, 0, 63, -45.5, 'dark', 2);
+    for (const side of [-1, 1]) {
+        box(2, 24, 23, side * 29, 63, -26, 'white');
+        box(2, 16, 15, side * 30, 63, -26, 'dark');
+        box(2, 16, 2, side * 31, 63, -26, 'white');
+    }
+    box(65, 10, 12, 0, 22, 50, 'gold', 2);
+    box(20, 4, 20, 0, 59, 27, 'gold', 1);
     box(14, 25, 14, 0, 72, 27, 'dark');
-    box(22, 7, 22, 0, 87, 27, 'gold');
+    box(22, 7, 22, 0, 86.8, 27, 'gold', 2);
+    box(12, 0.3, 12, 0, 90.35, 27, 'dark');
+    for (const z of [-4, 19]) box(51, 4, 3, 0, 58, z, 'gold', 1);
+    box(37, 28, 3, 0, 44, 44, 'white', 5);
+    for (const side of [-1, 1]) {
+        box(5, 7, 3, side * 9, 48, 46.5, 'dark', 0.8);
+        box(2, 2, 0.8, side * 9 - 0.7, 50, 48.3, 'white');
+        box(5, 3, 1.5, side * 13, 39, 46, 'red', 0.6);
+        box(9, 8, 3, side * 24, 30, 47, 'dark', 1);
+        box(5, 5, 2, side * 24, 30, 49, 'gold', 0.8);
+    }
+    box(8, 2, 1.5, 0, 36, 46, 'dark');
+    for (const side of [-1, 1]) box(2, 3, 1.5, side * 4, 37, 46, 'dark');
+    // Only the body is static: keep wheels and steam separate for animation.
+    mergeStaticParts(mesh);
     const wheelGeometry = new THREE.CylinderGeometry(13, 13, 9, 12);
     const hubGeometry = new THREE.CylinderGeometry(5, 5, 10, 10);
+    const spokeGeometry = new THREE.BoxGeometry(0.6, 17, 3);
     const wheels = [];
     for (const side of [-1, 1]) for (const z of [-30, 0, 30]) {
         const wheel = new THREE.Group(); wheel.position.set(side * 32, 14, z);
         const tire = new THREE.Mesh(wheelGeometry, materials.dark); tire.rotation.z = Math.PI / 2; tire.castShadow = true; wheel.add(tire);
         const hub = new THREE.Mesh(hubGeometry, materials.gold); hub.rotation.z = Math.PI / 2; wheel.add(hub);
+        const spoke = new THREE.Mesh(spokeGeometry, materials.red); spoke.position.x = side * 4.7; wheel.add(spoke);
         mesh.add(wheel); wheels.push(wheel);
     }
     const sphere = new THREE.SphereGeometry(1, 12, 8);
-    for (const x of [-12, 12]) {
-        const white = new THREE.Mesh(sphere, materials.white); white.position.set(x, 49, 45); white.scale.set(8, 10, 4); mesh.add(white);
-        const pupil = new THREE.Mesh(sphere, materials.dark); pupil.position.set(x, 49, 48); pupil.scale.set(3.5, 5, 2.5); mesh.add(pupil);
-    }
-    box(11, 3, 3, 0, 35, 45, 'dark');
     const steam = [];
     for (let i = 0; i < 6; i++) {
         const puff = new THREE.Mesh(sphere, new THREE.MeshBasicMaterial({ color: 0xfff7e3, transparent: true, opacity: 0, depthWrite: false }));

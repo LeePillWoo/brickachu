@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createSteppedBoxGeometry } from './model-utils.js';
 import { state, objects, voxelSize } from './state.js';
 import { animals, MAX_ANIMALS, registerCustomAnimal, removeAnimalImmediately } from './entities.js';
 import { detachVoxelsForLiving, pushHistory } from './scene.js';
@@ -99,25 +100,28 @@ function makeEyes(descriptor) {
     eyes.name = 'living-eyes';
     eyes.position.fromArray(descriptor.eyePosition);
     eyes.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...descriptor.eyeNormal).normalize());
-    const sphere = new THREE.SphereGeometry(1, 16, 12);
-    const white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35 });
+    const eyeGeometry = createSteppedBoxGeometry(17.6, 21, 10, 3);
+    const pupilGeometry = createSteppedBoxGeometry(8.2, 10.4, 3, 1.5);
+    const glintGeometry = new THREE.BoxGeometry(2.5, 2.5, 0.8);
+    const white = new THREE.MeshStandardMaterial({ color: 0xfff9ee, roughness: 0.35 });
     const black = new THREE.MeshStandardMaterial({ color: 0x172133, roughness: 0.3 });
     const shine = new THREE.MeshBasicMaterial({ color: 0xffffff });
     for (const side of [-1, 1]) {
         const eye = new THREE.Group();
         eye.position.x = side * voxelSize * 0.205;
-        const sclera = new THREE.Mesh(sphere, white);
-        sclera.scale.set(8.8, 10.5, 6);
+        const sclera = new THREE.Mesh(eyeGeometry, white);
         sclera.castShadow = true;
         eye.add(sclera);
-        const pupil = new THREE.Mesh(sphere, black);
-        pupil.position.set(-side * 0.6, 0, 5.3);
-        pupil.scale.set(4.1, 5.2, 2.5);
+        const pupil = new THREE.Mesh(pupilGeometry, black);
+        pupil.position.set(-side * 0.6, 0, 5.4);
         eye.add(pupil);
-        const glint = new THREE.Mesh(sphere, shine);
-        glint.position.set(-side * 0.6 - 1.0, 1.8, 7.5);
-        glint.scale.setScalar(1.35);
+        const glint = new THREE.Mesh(glintGeometry, shine);
+        glint.position.set(-side * 0.6 - 1.1, 2.0, 7.05);
         eye.add(glint);
+        const sparkle = new THREE.Mesh(glintGeometry, shine);
+        sparkle.position.set(-side * 0.6 + 1.8, -2.1, 7.05);
+        sparkle.scale.setScalar(0.4);
+        eye.add(sparkle);
         eyes.add(eye);
     }
     return eyes;

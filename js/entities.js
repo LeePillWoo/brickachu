@@ -6,6 +6,7 @@ import { foods } from './food.js';
 import { playSound } from './sound.js';
 import { applySnack, clearMagicEffect } from './magic.js';
 import { detachTrainFollower } from './train.js';
+import { createSteppedBoxGeometry, mergeStaticParts } from './model-utils.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
@@ -99,10 +100,10 @@ export function removeAnimalWithEffect(animal) {
 
 // ── 연기 파티클 헬퍼 ──
 function _createSmokePoof(position) {
-    const geo = new THREE.SphereGeometry(voxelSize * 0.28, 5, 5);
+    const geo = createSteppedBoxGeometry(voxelSize * 0.48, voxelSize * 0.48, voxelSize * 0.38, voxelSize * 0.1);
     const particles = [];
     for (let i = 0; i < 10; i++) {
-        const mat = new THREE.MeshBasicMaterial({ color: 0xbbbbbb, transparent: true, opacity: 0.85 });
+        const mat = new THREE.MeshBasicMaterial({ color: [0xffe9c8, 0xd9ecf5, 0xf0ddef][i % 3], transparent: true, opacity: 0.85 });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.copy(position);
         state.scene.add(mesh);
@@ -413,12 +414,11 @@ export function triggerClickAction(animal) {
     animal.clickActionType = actionType;
 }
 
-function getRandomColor() {
-    const r = Math.floor(Math.random() * 200 + 55);
-    const g = Math.floor(Math.random() * 200 + 55);
-    const b = Math.floor(Math.random() * 200 + 55);
-    return (r << 16) | (g << 8) | b;
-}
+const ANIMAL_PALETTES = [
+    [0xe9bc8c, 0xffe7c2, 0xb87b60], [0xa7cfdf, 0xe1f3f5, 0x7395c4],
+    [0xd1b6e5, 0xf2e5f9, 0x9a80b9], [0xb7d7ac, 0xebf4d5, 0x7eac85],
+    [0xf0b6b9, 0xffe5dc, 0xcb8499]
+];
 
 export function spawnDog(group = 'all') {
     let pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
@@ -436,15 +436,13 @@ export function spawnDog(group = 'all') {
     const animalGroup = new THREE.Group();
     const u = voxelSize / 25;
 
-    const baseColor = getRandomColor();
-    const secondaryColor = getRandomColor();
-    const accentColor = getRandomColor();
+    const [baseColor, secondaryColor, accentColor] = ANIMAL_PALETTES[Math.floor(Math.random() * ANIMAL_PALETTES.length)];
 
     const matBase = new THREE.MeshPhysicalMaterial({ color: baseColor, roughness: 0.8 });
     const matSec  = new THREE.MeshPhysicalMaterial({ color: secondaryColor, roughness: 0.8 });
     const matAcc  = new THREE.MeshPhysicalMaterial({ color: accentColor, roughness: 0.8 });
-    const blackMat = new THREE.MeshPhysicalMaterial({ color: 0x222222, roughness: 0.9 });
-    const whiteMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.9 });
+    const blackMat = new THREE.MeshPhysicalMaterial({ color: 0x283044, roughness: 0.8 });
+    const whiteMat = new THREE.MeshPhysicalMaterial({ color: 0xfff9ee, roughness: 0.8 });
 
     function addPart(w, h, d, x, y, z, mat = matBase) {
         const geo = new THREE.BoxGeometry(w * u, h * u, d * u);
@@ -457,448 +455,857 @@ export function spawnDog(group = 'all') {
         return mesh;
     }
 
+    function addSoftPart(w, h, d, x, y, z, mat = matBase, corner = 1) {
+        const mesh = addPart(w, h, d, x, y, z, mat);
+        mesh.geometry.dispose();
+        mesh.geometry = createSteppedBoxGeometry(w * u, h * u, d * u, corner * u);
+        return mesh;
+    }
+
     let heightOffset = 20;
 
     if (type === 'dog') {
         heightOffset = 20;
-        addPart(20, 16, 32, 0, 16, 0);
-        addPart(16, 16, 16, 0, 32, 24);
-        addPart(8, 6, 8, 0, 28, 36, matSec);
-        addPart(2, 2, 2, 0, 31, 40, blackMat);
-        addPart(2, 2, 2, -5, 36, 32, blackMat); addPart(2, 2, 2, 5, 36, 32, blackMat);
-        addPart(4, 8, 4, -6, 44, 24, matSec); addPart(4, 8, 4, 6, 44, 24, matSec);
-        const tail = addPart(4, 12, 4, 0, 28, -16, matAcc); tail.rotation.x = -Math.PI / 4;
-        addPart(6, 12, 6, -6, 6, 10); addPart(6, 12, 6, 6, 6, 10);
-        addPart(6, 12, 6, -6, 6, -10); addPart(6, 12, 6, 6, 6, -10);
+        addSoftPart(20, 16, 32, 0, 16, 0, matBase, 2);
+        addSoftPart(18, 17, 16, 0, 32, 24, matBase, 2);
+        addSoftPart(12, 7, 8, 0, 28, 35, matSec);
+        addSoftPart(5, 3, 2, 0, 30, 39.5, blackMat, 0.5);
+        addPart(1, 2, 0.6, 0, 27.5, 39.3, blackMat);
+        addPart(7, 1, 0.6, 0, 26.5, 39.3, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 3, 1.5, side * 5, 35, 32.5, blackMat);
+            addPart(1, 1, 0.5, side * 5 - 0.5, 35.7, 33.4, whiteMat);
+            addSoftPart(5, 12, 5, side * 9, 35, 23, matSec);
+            addSoftPart(5, 7, 5, side * 8, 42, 23, matSec);
+            for (const z of [-10, 10]) {
+                addPart(6, 10, 6, side * 6, 7, z);
+                addSoftPart(7, 4, 8, side * 6, 2, z + 1, matSec);
+            }
+        }
+        addPart(12, 3, 4, 0, 23, 16, matAcc);
+        addPart(3, 4, 2, 0, 21, 19, whiteMat);
+        const tail = addPart(4, 12, 4, 0, 28, -17, matBase); tail.rotation.x = -Math.PI / 4;
+        addSoftPart(5, 5, 5, 0, 33, -21, matSec);
     } else if (type === 'cat') {
         heightOffset = 16;
-        addPart(16, 12, 24, 0, 12, 0);
-        addPart(12, 12, 12, 0, 24, 18);
-        addPart(2, 2, 2, 0, 22, 25, matSec);
-        addPart(2, 2, 2, -4, 26, 24, blackMat); addPart(2, 2, 2, 4, 26, 24, blackMat);
-        addPart(4, 6, 4, -4, 32, 20, matAcc); addPart(4, 6, 4, 4, 32, 20, matAcc);
-        const tail = addPart(4, 20, 4, 0, 24, -12, matSec); tail.rotation.x = Math.PI / 6;
-        addPart(4, 8, 4, -4, 4, 8); addPart(4, 8, 4, 4, 4, 8);
-        addPart(4, 8, 4, -4, 4, -8); addPart(4, 8, 4, 4, 4, -8);
+        addSoftPart(16, 12, 24, 0, 12, 0, matBase, 2);
+        addSoftPart(15, 13, 12, 0, 24, 18, matBase, 1.5);
+        addSoftPart(9, 4, 2, 0, 21.5, 24, whiteMat);
+        addPart(2, 1.5, 1, 0, 23, 25.5, matAcc);
+        addPart(1, 2, 0.5, 0, 21.5, 25.3, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 3, 1, side * 4.5, 26, 24.5, blackMat);
+            addPart(1, 1, 0.5, side * 4.5 - 0.5, 26.6, 25.2, whiteMat);
+            addPart(5, 4, 4, side * 5, 31, 18, matBase);
+            addPart(3, 3, 3, side * 5.5, 34, 18, matBase);
+            addPart(2, 3, 0.8, side * 5, 32, 20.4, matAcc);
+            addPart(4, 0.8, 0.8, side * 7, 22, 24.5, matSec);
+            addPart(3, 0.8, 0.8, side * 7, 20.5, 24.5, matSec);
+            for (const z of [-8, 8]) {
+                addPart(4, 6, 4, side * 4.5, 5, z);
+                addSoftPart(5, 3, 6, side * 4.5, 1.5, z + 1, whiteMat, 0.5);
+            }
+        }
+        addPart(3, 3, 5, 0, 17.5, -3, matSec);
+        addPart(3, 14, 3, 0, 21, -13, matBase);
+        addPart(3, 4, 3, 0, 29, -14, matSec);
+        addPart(3, 3, 5, 0, 31, -16, matSec);
     } else if (type === 'rabbit') {
         heightOffset = 12;
-        addPart(12, 12, 16, 0, 10, 0, whiteMat);
-        addPart(10, 10, 10, 0, 20, 10, whiteMat);
-        addPart(2, 2, 2, 0, 18, 16, matSec);
-        addPart(2, 2, 2, -3, 22, 15, blackMat); addPart(2, 2, 2, 3, 22, 15, blackMat);
-        addPart(4, 16, 4, -3, 32, 12, matSec); addPart(4, 16, 4, 3, 32, 12, matSec);
-        addPart(6, 6, 6, 0, 12, -10, whiteMat);
-        addPart(4, 6, 4, -4, 3, 6, whiteMat); addPart(4, 6, 4, 4, 3, 6, whiteMat);
-        addPart(4, 8, 8, -4, 4, -6, whiteMat); addPart(4, 8, 8, 4, 4, -6, whiteMat);
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xf6b1c5, roughness: 0.8 });
+        addSoftPart(14, 12, 18, 0, 10, 0, whiteMat, 2);
+        addSoftPart(12, 11, 11, 0, 20, 10, whiteMat, 1.5);
+        addSoftPart(7, 3, 2, 0, 17.5, 15.5, whiteMat, 0.5);
+        addPart(2, 1.5, 1, 0, 19, 17, pink);
+        addPart(1, 1.5, 0.5, 0, 17.5, 16.8, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3, 1, side * 3.5, 22, 15.8, blackMat);
+            addPart(0.8, 0.8, 0.4, side * 3.5 - 0.4, 22.7, 16.5, whiteMat);
+            addSoftPart(4, 15, 4, side * 3.5, 32, 11, whiteMat, 1);
+            addSoftPart(2, 11, 0.8, side * 3.5, 32, 13.2, pink, 0.5);
+            addSoftPart(4, 6, 5, side * 4, 3, 7, whiteMat);
+            addSoftPart(6, 8, 9, side * 4, 4, -5, whiteMat);
+            addSoftPart(6, 3, 10, side * 4, 1.5, -2, whiteMat);
+            addPart(2, 0.6, 3, side * 4, 3.2, 1, pink);
+        }
+        addSoftPart(7, 7, 7, 0, 12, -11, whiteMat, 2);
     } else if (type === 'sheep') {
         heightOffset = 20;
-        addPart(24, 20, 28, 0, 18, 0, whiteMat);
-        addPart(12, 12, 16, 0, 28, 22, blackMat);
-        addPart(2, 2, 2, -4, 30, 28, whiteMat); addPart(2, 2, 2, 4, 30, 28, whiteMat);
-        addPart(4, 4, 8, -8, 28, 20, whiteMat); addPart(4, 4, 8, 8, 28, 20, whiteMat);
-        addPart(4, 10, 4, -6, 5, 10, blackMat); addPart(4, 10, 4, 6, 5, 10, blackMat);
-        addPart(4, 10, 4, -6, 5, -10, blackMat); addPart(4, 10, 4, 6, 5, -10, blackMat);
+        addSoftPart(24, 20, 28, 0, 18, 0, whiteMat, 3);
+        addSoftPart(18, 5, 22, 0, 28, 0, whiteMat, 2);
+        addSoftPart(13, 13, 16, 0, 28, 22, blackMat, 2);
+        addSoftPart(14, 6, 12, 0, 35, 21, whiteMat, 2);
+        addPart(3, 1, 0.6, 0, 24, 30.3, matSec);
+        for (const side of [-1, 1]) {
+            addSoftPart(6, 12, 22, side * 10, 18, 0, whiteMat, 2);
+            addPart(3.5, 4, 1, side * 4, 30, 30.3, whiteMat);
+            addPart(1.5, 2, 0.7, side * 4, 29.8, 31.1, blackMat);
+            addSoftPart(7, 4, 6, side * 8, 29, 22, blackMat);
+            for (const z of [-10, 10]) {
+                addPart(4, 8, 4, side * 6, 6, z, blackMat);
+                addSoftPart(5, 3, 5, side * 6, 1.5, z + 0.5, blackMat, 0.5);
+            }
+        }
+        addSoftPart(6, 6, 7, 0, 19, -16, whiteMat, 1.5);
     } else if (type === 'snake') {
         heightOffset = 6;
-        addPart(8, 6, 48, 0, 3, 0, matBase);
-        addPart(10, 8, 12, 0, 4, 30, matSec);
-        addPart(2, 2, 2, -4, 8, 34, blackMat); addPart(2, 2, 2, 4, 8, 34, blackMat);
-        addPart(4, 2, 8, 0, 4, 38, matAcc);
+        addSoftPart(9, 6, 26, 0, 3, 11, matBase, 1.5);
+        addSoftPart(8, 6, 14, 2, 3, -7, matBase, 1.5);
+        addSoftPart(6, 5, 10, 0, 2.5, -17, matBase, 1);
+        addPart(3, 3, 7, -1, 1.5, -24, matBase);
+        addSoftPart(12, 9, 13, 0, 5, 29.5, matBase, 2);
+        addSoftPart(10, 3, 9, 0, 2, 33, matSec, 1);
+        for (const side of [-1, 1]) {
+            addPart(3.5, 4, 3, side * 4, 8, 33, whiteMat);
+            addPart(2, 2.5, 0.8, side * 4, 8.4, 34.9, blackMat);
+            addPart(0.7, 0.7, 0.4, side * 4 - 0.3, 9, 35.5, whiteMat);
+        }
+        addPart(5, 0.8, 0.5, 0, 3, 37.8, blackMat);
+        addPart(2, 0.8, 4, 0, 2.5, 39, matAcc);
+        for (const z of [-12, 0, 12]) addPart(4, 0.8, 3, z === -12 ? 2 : 0, 6.3, z, matSec);
     } else if (type === 'horse') {
         heightOffset = 32;
-        addPart(20, 20, 40, 0, 32, 0);
-        addPart(12, 24, 12, 0, 48, 24);
-        addPart(12, 12, 20, 0, 56, 32);
-        addPart(2, 2, 2, -5, 60, 40, blackMat); addPart(2, 2, 2, 5, 60, 40, blackMat);
-        addPart(4, 24, 8, 0, 48, 18, matSec);
-        const tail = addPart(6, 24, 6, 0, 32, -20, matSec); tail.rotation.x = -Math.PI / 8;
-        addPart(6, 24, 6, -7, 12, 16, matAcc); addPart(6, 24, 6, 7, 12, 16, matAcc);
-        addPart(6, 24, 6, -7, 12, -16, matAcc); addPart(6, 24, 6, 7, 12, -16, matAcc);
+        addSoftPart(20, 20, 40, 0, 32, 0, matBase, 2);
+        addSoftPart(12, 24, 12, 0, 48, 24, matBase, 2);
+        addSoftPart(14, 13, 20, 0, 56, 32, matBase, 2);
+        addSoftPart(13, 6, 8, 0, 52, 41, matSec);
+        addPart(3, 10, 0.8, 0, 58, 42.4, whiteMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 3, 1, side * 4.5, 59, 42.5, blackMat);
+            addPart(1, 1, 0.5, side * 4.5 - 0.5, 59.7, 43.2, whiteMat);
+            addSoftPart(4, 8, 4, side * 4, 65, 26, matBase);
+            addPart(2, 4, 0.8, side * 4, 65, 28.3, matAcc);
+            addPart(1.5, 1, 0.6, side * 3.5, 53, 45.3, blackMat);
+            for (const z of [-16, 16]) {
+                addPart(6, 22, 6, side * 7, 14, z, matBase);
+                addSoftPart(7, 5, 8, side * 7, 2.5, z + 1, matSec);
+            }
+        }
+        addPart(5, 22, 6, 0, 48, 17, matSec);
+        addSoftPart(6, 6, 12, 0, 63, 29, matSec);
+        const tail = addPart(5, 20, 5, 0, 30, -22, matSec); tail.rotation.x = -Math.PI / 8;
+        addSoftPart(6, 8, 6, 0, 19, -26, matSec);
     } else if (type === 'pikachu') {
         heightOffset = 16;
-        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.6 });
-        const red = new THREE.MeshPhysicalMaterial({ color: 0xff0000, roughness: 0.8 });
-        addPart(16, 20, 16, 0, 10, 0, yellow);
-        addPart(16, 16, 16, 0, 28, 4, yellow);
-        addPart(2, 2, 2, -5, 28, 12, blackMat); addPart(2, 2, 2, 5, 28, 12, blackMat);
-        addPart(4, 4, 2, -6, 26, 12, red); addPart(4, 4, 2, 6, 26, 12, red);
-        addPart(4, 16, 4, -6, 40, 4, yellow); addPart(4, 4, 4, -6, 48, 4, blackMat);
-        addPart(4, 16, 4, 6, 40, 4, yellow); addPart(4, 4, 4, 6, 48, 4, blackMat);
-        const pTail = addPart(4, 20, 12, 0, 16, -12, yellow); pTail.rotation.x = -Math.PI / 4;
-        addPart(4, 6, 6, -4, 3, 4, yellow); addPart(4, 6, 6, 4, 3, 4, yellow);
+        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd83d, roughness: 0.7 });
+        const red = new THREE.MeshPhysicalMaterial({ color: 0xf35748, roughness: 0.8 });
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x99643c, roughness: 0.8 });
+        addSoftPart(16, 19, 15, 0, 13.5, 0, yellow, 2);
+        addSoftPart(19, 17, 16, 0, 29, 4, yellow, 2);
+        for (const side of [-1, 1]) {
+            addPart(3, 3.5, 1.5, side * 5.5, 30, 12.4, blackMat);
+            addPart(1, 1, 0.5, side * 5.5 - 0.5, 30.8, 13.4, whiteMat);
+            addSoftPart(4, 4, 1.5, side * 7, 26.5, 12.5, red, 0.5);
+            addPart(5, 7, 4, side * 6.5, 39, 3.5, yellow);
+            addPart(4, 6, 4, side * 8, 44, 3.5, yellow);
+            addPart(3.5, 4, 4, side * 9, 49, 3.5, blackMat);
+            addPart(2, 2, 3, side * 9.7, 52, 3.5, blackMat);
+            addSoftPart(4.5, 8, 5, side * 8.5, 14, 7, yellow, 0.8);
+            addSoftPart(6, 4, 9, side * 5, 2, 4, yellow, 0.8);
+            addPart(2, 0.7, 0.5, side * 1.2, 25.2, 12.3, blackMat);
+            addPart(0.7, 1.2, 0.5, side * 2.4, 25.7, 12.3, blackMat);
+        }
+        addPart(1.2, 0.8, 0.7, 0, 28, 12.6, blackMat);
+        addPart(10, 2, 0.8, 0, 15, -7.8, brown);
+        addPart(9, 2, 0.8, 0, 20, -7.8, brown);
+        // A connected, two-bend lightning silhouette stays readable behind the body.
+        addPart(4, 8, 4, 1, 10, -9, brown);
+        addPart(8, 4, 4, 3, 15, -11, brown);
+        addPart(5, 10, 4, 7, 20, -11, yellow);
+        addPart(9, 5, 4, 10, 25, -11, yellow);
+        addPart(8, 10, 4, 12, 31, -11, yellow);
+        addPart(4, 3, 4, 14, 37.5, -11, yellow);
     } else if (type === 'squirtle') {
         heightOffset = 16;
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x4fc3f7, roughness: 0.6 });
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8d6e63, roughness: 0.8 });
-        addPart(16, 16, 12, 0, 12, 0, blue); addPart(20, 20, 8, 0, 12, -4, brown);
-        addPart(16, 16, 16, 0, 28, 4, blue);
-        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat);
-        addPart(6, 6, 6, -8, 16, 8, blue); addPart(6, 6, 6, 8, 16, 8, blue);
-        addPart(6, 8, 8, -6, 4, 4, blue); addPart(6, 8, 8, 6, 4, 4, blue);
-        const sTail = addPart(8, 8, 12, 0, 8, -12, blue); sTail.rotation.x = Math.PI / 4;
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x72c9e9, roughness: 0.7 });
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0xa87851, roughness: 0.8 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffe4a8, roughness: 0.8 });
+        addSoftPart(16, 16, 12, 0, 13, 0, blue, 2);
+        addSoftPart(21, 20, 8, 0, 13, -4, cream, 3);
+        addSoftPart(18, 17, 8, 0, 13, -7, brown, 3);
+        addSoftPart(11, 10, 2, 0, 13, -11.2, brown, 2);
+        addSoftPart(13, 15, 2, 0, 13, 6.5, cream, 2);
+        addPart(10, 0.7, 0.6, 0, 11, 7.7, brown);
+        addPart(9, 0.7, 0.6, 0, 16, 7.7, brown);
+        addSoftPart(18, 17, 16, 0, 29, 4, blue, 2);
+        addPart(5, 0.8, 0.6, 0, 25, 12.3, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 4, 1.5, side * 5.5, 31, 12.3, blackMat);
+            addPart(1, 1.3, 0.5, side * 5.5 - 0.5, 32, 13.3, whiteMat);
+            addSoftPart(6, 6, 7, side * 9, 16, 7, blue);
+            addSoftPart(7, 7, 9, side * 6, 3.5, 5, blue);
+        }
+        addPart(6, 5, 8, 0, 7, -13, blue);
+        addSoftPart(8, 10, 5, 0, 10, -18, blue, 2);
+        addPart(4, 4, 1, 0, 11, -20.8, cream);
     } else if (type === 'charmander') {
         heightOffset = 16;
-        const orange = new THREE.MeshPhysicalMaterial({ color: 0xff9800, roughness: 0.6 });
-        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffeb3b, roughness: 0.8 });
-        const fire = new THREE.MeshPhysicalMaterial({ color: 0xff3d00, roughness: 0.2, emissive: 0xff3d00 });
-        addPart(16, 18, 16, 0, 12, 0, orange); addPart(12, 14, 2, 0, 10, 8, yellow);
-        addPart(16, 16, 16, 0, 28, 4, orange);
-        addPart(2, 4, 2, -5, 30, 12, blackMat); addPart(2, 4, 2, 5, 30, 12, blackMat);
-        addPart(4, 8, 4, -8, 16, 8, orange); addPart(4, 8, 4, 8, 16, 8, orange);
-        addPart(6, 8, 8, -6, 4, 4, orange); addPart(6, 8, 8, 6, 4, 4, orange);
-        const cTail = addPart(6, 6, 20, 0, 8, -12, orange); cTail.rotation.x = Math.PI / 6;
-        addPart(4, 8, 4, 0, 16, -24, fire);
+        const orange = new THREE.MeshPhysicalMaterial({ color: 0xffa744, roughness: 0.7 });
+        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffe7a0, roughness: 0.8 });
+        const fire = new THREE.MeshPhysicalMaterial({ color: 0xff6948, roughness: 0.6, emissive: 0xff4b20, emissiveIntensity: 0.25 });
+        addSoftPart(16, 18, 16, 0, 13, 0, orange, 2);
+        addSoftPart(12, 14, 2, 0, 12, 8.2, yellow, 2);
+        addSoftPart(18, 17, 16, 0, 29, 4, orange, 2);
+        addSoftPart(11, 5, 4, 0, 25, 12, orange);
+        addPart(5, 0.8, 0.6, 0, 24, 14.3, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 4, 1.5, side * 5.5, 31, 12.4, blackMat);
+            addPart(1, 1.2, 0.5, side * 5.5 - 0.5, 32, 13.4, whiteMat);
+            addSoftPart(5, 8, 5, side * 9, 16, 6, orange);
+            addSoftPart(7, 7, 9, side * 6, 3.5, 5, orange);
+            addPart(3, 1, 1, side * 6, 2, 9.8, yellow);
+        }
+        addSoftPart(7, 6, 12, 0, 7, -10, orange);
+        addPart(5, 5, 10, 0, 10, -18, orange);
+        addPart(4, 7, 5, 0, 14, -23, orange);
+        addSoftPart(8, 9, 7, 0, 21, -23, fire, 2);
+        addPart(4, 5, 4, 1, 27, -23, fire);
+        addSoftPart(4, 7, 1, 0, 21, -19.3, yellow);
     } else if (type === 'meowth') {
         heightOffset = 16;
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffdd0, roughness: 0.7 });
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.7 });
-        const gold = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.3 });
-        addPart(12, 16, 12, 0, 12, 0, cream); addPart(16, 16, 12, 0, 28, 2, cream);
-        addPart(2, 2, 2, -4, 30, 8, blackMat); addPart(2, 2, 2, 4, 30, 8, blackMat);
-        addPart(4, 8, 4, -6, 38, 2, brown); addPart(4, 8, 4, 6, 38, 2, brown);
-        addPart(6, 8, 2, 0, 32, 8, gold);
-        addPart(4, 12, 4, -8, 16, 2, cream); addPart(4, 12, 4, 8, 16, 2, cream);
-        addPart(6, 6, 8, -5, 3, 4, brown); addPart(6, 6, 8, 5, 3, 4, brown);
-        const mTail = addPart(4, 20, 4, 0, 12, -8, brown); mTail.rotation.x = Math.PI / 8;
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x986445, roughness: 0.8 });
+        const gold = new THREE.MeshPhysicalMaterial({ color: 0xffcc4d, roughness: 0.45 });
+        addSoftPart(12, 16, 12, 0, 12, 0, cream, 2);
+        addSoftPart(18, 16, 12, 0, 28, 2, cream, 2);
+        addSoftPart(5, 9, 2, 0, 34, 8.5, gold, 1);
+        addPart(0.7, 5, 0.5, 0, 34, 9.8, brown);
+        addPart(2, 1, 1, 0, 25.5, 8.6, brown);
+        addPart(5, 0.7, 0.5, 0, 23, 8.4, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 4, 1.3, side * 5, 29.5, 8.4, blackMat);
+            addPart(1, 1, 0.5, side * 5 - 0.5, 30.5, 9.3, whiteMat);
+            addPart(5, 6, 4, side * 6.5, 37, 2, brown);
+            addPart(3, 3, 3, side * 7, 41, 2, brown);
+            addPart(2.5, 4, 0.7, side * 6.5, 37.5, 4.4, gold);
+            addPart(5, 0.8, 0.8, side * 10, 27, 8, brown);
+            addPart(4, 0.8, 0.8, side * 10, 24.5, 8, brown);
+            addSoftPart(4, 11, 4, side * 8, 16, 2, cream);
+            addSoftPart(5, 4, 5, side * 8, 10, 3, cream);
+            addSoftPart(6, 5, 9, side * 5, 2.5, 4, brown);
+        }
+        addPart(3, 15, 3, 0, 12, -9, cream);
+        addPart(3, 6, 3, 0, 21, -9, brown);
+        addPart(7, 3, 3, 2, 25, -9, brown);
+        addPart(3, 5, 3, 5, 23, -9, brown);
     } else if (type === 'snorlax') {
         heightOffset = 24;
-        const teal = new THREE.MeshPhysicalMaterial({ color: 0x008080, roughness: 0.8 });
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xf5f5dc, roughness: 0.8 });
-        addPart(40, 36, 32, 0, 20, 0, teal); addPart(32, 28, 8, 0, 18, 16, cream);
-        addPart(24, 20, 20, 0, 48, 0, teal); addPart(16, 12, 4, 0, 48, 10, cream);
-        addPart(4, 2, 2, -6, 50, 12, blackMat); addPart(4, 2, 2, 6, 50, 12, blackMat);
-        addPart(6, 8, 6, -8, 60, 0, teal); addPart(6, 8, 6, 8, 60, 0, teal);
-        addPart(10, 16, 10, -24, 24, 4, teal); addPart(10, 16, 10, 24, 24, 4, teal);
-        addPart(10, 10, 12, -12, 5, 12, cream); addPart(10, 10, 12, 12, 5, 12, cream);
+        const teal = new THREE.MeshPhysicalMaterial({ color: 0x478d95, roughness: 0.8 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffedc7, roughness: 0.8 });
+        const pad = new THREE.MeshPhysicalMaterial({ color: 0xbc9065, roughness: 0.8 });
+        addSoftPart(40, 36, 32, 0, 21, 0, teal, 4);
+        addSoftPart(32, 28, 7, 0, 20, 16, cream, 4);
+        addSoftPart(26, 22, 20, 0, 48, 0, teal, 3);
+        addSoftPart(20, 14, 3, 0, 48, 10, cream, 2);
+        addPart(6, 1, 0.7, 0, 44, 12, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(5, 1.2, 0.8, side * 6, 50, 12, blackMat);
+            addPart(1, 1.5, 0.8, side * 8.2, 50.5, 12, blackMat);
+            addSoftPart(6, 8, 6, side * 9, 60, 0, teal);
+            addSoftPart(11, 16, 11, side * 23, 24, 4, teal, 2);
+            addSoftPart(10, 6, 10, side * 23, 16, 6, teal, 1.5);
+            addSoftPart(12, 10, 14, side * 12, 5, 13, cream, 2);
+            addSoftPart(6, 4, 1, side * 12, 4, 20.3, pad, 1);
+            addPart(2, 2, 1, side * 12 - 3, 7.5, 20.3, cream);
+            addPart(2, 2, 1, side * 12 + 3, 7.5, 20.3, cream);
+        }
     } else if (type === 'jigglypuff') {
         heightOffset = 12;
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb6c1, roughness: 0.7 });
-        addPart(24, 24, 24, 0, 12, 0, pink);
-        addPart(4, 4, 2, -6, 14, 12, blackMat); addPart(4, 4, 2, 6, 14, 12, blackMat);
-        addPart(6, 8, 6, -6, 26, 0, pink); addPart(6, 8, 6, 6, 26, 0, pink);
-        addPart(8, 6, 6, 0, 26, 8, pink);
-        addPart(6, 6, 6, -12, 12, 4, pink); addPart(6, 6, 6, 12, 12, 4, pink);
-        addPart(8, 4, 10, -6, 2, 8, pink); addPart(8, 4, 10, 6, 2, 8, pink);
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb9d0, roughness: 0.75 });
+        const rose = new THREE.MeshPhysicalMaterial({ color: 0xe887aa, roughness: 0.8 });
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x499eb9, roughness: 0.8 });
+        addSoftPart(24, 24, 24, 0, 14, 0, pink, 4);
+        for (const side of [-1, 1]) {
+            addSoftPart(6, 7, 1, side * 6, 16, 12.3, whiteMat, 1);
+            addPart(4, 5, 0.8, side * 6, 16, 13, blue);
+            addPart(2.5, 3.5, 0.5, side * 6, 16.3, 13.6, blackMat);
+            addPart(1.4, 1.4, 0.4, side * 6 - 0.7, 17.4, 14, whiteMat);
+            addSoftPart(6, 8, 6, side * 8, 28, 0, pink, 1);
+            addPart(3, 4, 0.7, side * 8, 28.5, 3.4, rose);
+            addSoftPart(6, 6, 6, side * 12, 13, 4, pink, 1.5);
+            addSoftPart(8, 4, 10, side * 6, 2, 8, pink, 1.5);
+            addPart(3, 1.5, 0.7, side * 9, 11, 12.4, rose);
+        }
+        addSoftPart(9, 6, 6, 0, 27, 8, pink, 1.5);
+        addPart(5, 3, 3, 1, 30, 9, pink);
+        addPart(3, 5, 3, 3, 27, 10, pink);
+        addPart(3, 1, 0.6, 0, 9, 12.4, blackMat);
+        addPart(1, 1, 0.6, -2, 10, 12.4, blackMat);
+        addPart(1, 1, 0.6, 2, 10, 12.4, blackMat);
     } else if (type === 'diglett') {
         heightOffset = 8;
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
-        const dirt = new THREE.MeshPhysicalMaterial({ color: 0x5c4033, roughness: 1.0 });
-        addPart(28, 4, 28, 0, 2, 0, dirt); addPart(16, 20, 16, 0, 12, 0, brown);
-        addPart(2, 4, 2, -4, 16, 8, blackMat); addPart(2, 4, 2, 4, 16, 8, blackMat);
-        addPart(8, 4, 6, 0, 12, 8, pink);
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0xb88358, roughness: 0.9 });
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xf299b0, roughness: 0.65 });
+        const dirt = new THREE.MeshPhysicalMaterial({ color: 0x876652, roughness: 1.0 });
+        addSoftPart(28, 4, 26, 0, 2, 0, dirt, 3);
+        addSoftPart(17, 21, 16, 0, 13, 0, brown, 3);
+        addSoftPart(9, 5, 5, 0, 12, 9, pink, 1);
+        addPart(3, 1, 0.5, -1, 13, 11.8, whiteMat);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 4, 1, side * 4.5, 18, 8.3, blackMat);
+            addPart(0.8, 1, 0.4, side * 4.5 - 0.3, 19, 9, whiteMat);
+            addSoftPart(6, 5, 6, side * 10, 3.5, 4, dirt, 1);
+            addSoftPart(5, 4, 5, side * 8, 3, -8, dirt, 1);
+            addPart(3, 1, 3, side * 8, 5.3, -8, brown);
+        }
+        addSoftPart(8, 4, 5, 0, 3, 10, dirt, 1);
     } else if (type === 'porygon') {
         heightOffset = 16;
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.5 });
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x00bfff, roughness: 0.5 });
-        addPart(16, 16, 16, 0, 12, 0, pink); addPart(12, 12, 12, 0, 28, 6, pink);
-        addPart(4, 4, 4, -6, 30, 8, blackMat); addPart(4, 4, 4, 6, 30, 8, blackMat);
-        addPart(8, 8, 16, 0, 24, 18, blue);
-        addPart(12, 16, 8, -12, 12, 0, blue); addPart(12, 16, 8, 12, 12, 0, blue);
-        const pTail = addPart(8, 8, 12, 0, 12, -12, blue); pTail.rotation.x = -Math.PI / 4;
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xef8bad, roughness: 0.6 });
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x68c5e2, roughness: 0.6 });
+        addSoftPart(17, 16, 16, 0, 13, 0, pink, 3);
+        addPart(12, 5, 12, 0, 22, 3, pink);
+        addSoftPart(15, 13, 14, 0, 29, 6, pink, 2);
+        addSoftPart(10, 7, 8, 0, 25, 15, blue, 1);
+        addPart(7, 5, 8, 0, 24, 22, blue);
+        addPart(5, 0.8, 0.6, 0, 23, 26.3, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(5, 5, 1, side * 5, 31, 13.3, whiteMat);
+            addPart(2.5, 3, 0.8, side * 5, 31, 14.1, blackMat);
+            addPart(0.8, 0.8, 0.4, side * 5 - 0.4, 31.8, 14.7, whiteMat);
+            addSoftPart(11, 11, 8, side * 12, 12, 0, blue, 2);
+            addPart(6, 6, 6, side * 16, 10, 1, blue);
+            addSoftPart(9, 4, 12, side * 8, 2, 3, blue, 1);
+        }
+        addPart(6, 6, 10, 0, 12, -12, blue);
+        addPart(9, 9, 6, 0, 16, -18, blue);
     } else if (type === 'ditto') {
         heightOffset = 8;
-        const purple = new THREE.MeshPhysicalMaterial({ color: 0xdda0dd, roughness: 0.4, transmission: 0.2 });
-        addPart(24, 12, 20, 0, 6, 0, purple); addPart(16, 12, 16, 0, 14, 0, purple);
-        addPart(2, 2, 2, -4, 16, 8, blackMat); addPart(2, 2, 2, 4, 16, 8, blackMat);
-        addPart(8, 8, 8, -10, 10, 4, purple); addPart(8, 8, 8, 10, 10, 4, purple);
+        const purple = new THREE.MeshPhysicalMaterial({ color: 0xd9afe7, roughness: 0.5, transmission: 0.15 });
+        const blush = new THREE.MeshPhysicalMaterial({ color: 0xe7a0d0, roughness: 0.7 });
+        addSoftPart(24, 12, 20, 0, 6, 0, purple, 3);
+        addSoftPart(19, 13, 17, 0, 14, 0, purple, 2);
+        addSoftPart(9, 4, 12, -2, 20, 0, purple, 1);
+        for (const side of [-1, 1]) {
+            addPart(2, 2, 1, side * 4.5, 16, 8.8, blackMat);
+            addPart(0.6, 0.6, 0.4, side * 4.5 - 0.3, 16.4, 9.5, whiteMat);
+            addPart(3, 1.2, 0.6, side * 7, 14, 8.8, blush);
+            addSoftPart(8, 7, 9, side * 11, 10, 3, purple, 2);
+            addSoftPart(8, 4, 8, side * 8, 2, 7, purple, 1);
+            addPart(1, 1.5, 0.6, side * 3, 14, 8.8, blackMat);
+        }
+        addPart(5, 1, 0.6, 0, 13.5, 8.8, blackMat);
     } else if (type === 'lion') {
         heightOffset = 24;
-        const gold = new THREE.MeshPhysicalMaterial({ color: 0xdaa520, roughness: 0.8 });
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        addPart(20, 20, 36, 0, 24, 0, gold); addPart(28, 28, 12, 0, 32, 20, brown);
-        addPart(16, 16, 16, 0, 32, 28, gold);
-        addPart(4, 4, 4, -6, 34, 36, blackMat); addPart(4, 4, 4, 6, 34, 36, blackMat);
-        addPart(8, 8, 8, 0, 28, 36, blackMat);
-        const tail = addPart(4, 20, 4, 0, 24, -20, gold); tail.rotation.x = -Math.PI / 6;
-        addPart(6, 6, 6, 0, 4, -28, brown);
-        addPart(6, 16, 6, -7, 8, 14, gold); addPart(6, 16, 6, 7, 8, 14, gold);
-        addPart(6, 16, 6, -7, 8, -14, gold); addPart(6, 16, 6, 7, 8, -14, gold);
+        const gold = new THREE.MeshPhysicalMaterial({ color: 0xe9b34e, roughness: 0.8 });
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x9d572f, roughness: 0.9 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffdf9b, roughness: 0.8 });
+        addSoftPart(20, 20, 36, 0, 24, 0, gold, 2);
+        addSoftPart(28, 28, 12, 0, 32, 20, brown, 4);
+        addSoftPart(18, 18, 16, 0, 32, 28, gold, 2);
+        addSoftPart(10, 6, 4, 0, 28, 37, cream, 1);
+        addPart(3, 2, 1, 0, 30, 39.5, blackMat);
+        addPart(4, 0.7, 0.6, 0, 26.8, 39.3, brown);
+        for (const side of [-1, 1]) {
+            addSoftPart(6, 6, 5, side * 9, 42, 25, gold, 1);
+            addPart(3, 3, 0.8, side * 9, 42, 28, cream);
+            addPart(3, 4, 1, side * 5, 35, 36.5, blackMat);
+            addPart(1, 1.3, 0.5, side * 5 - 0.5, 35.9, 37.3, whiteMat);
+            for (const z of [-14, 14]) {
+                addSoftPart(6, 16, 6, side * 7, 8, z, gold, 1);
+                addSoftPart(7, 4, 8, side * 7, 2, z + 1, cream, 1);
+            }
+        }
+        addPart(3, 3, 12, 0, 24, -22, gold);
+        addPart(3, 9, 3, 0, 28, -27, gold);
+        addSoftPart(6, 7, 6, 0, 34, -27, brown, 1);
     } else if (type === 'elephant') {
         heightOffset = 36;
-        const grey = new THREE.MeshPhysicalMaterial({ color: 0x808080, roughness: 0.8 });
-        addPart(36, 32, 48, 0, 32, 0, grey); addPart(28, 28, 28, 0, 40, 32, grey);
-        addPart(4, 4, 4, -10, 44, 46, blackMat); addPart(4, 4, 4, 10, 44, 46, blackMat);
-        addPart(8, 20, 8, 0, 30, 48, grey); addPart(6, 10, 6, 0, 15, 48, grey);
-        addPart(20, 28, 4, -24, 36, 28, grey); addPart(20, 28, 4, 24, 36, 28, grey);
-        addPart(12, 20, 12, -12, 10, 16, grey); addPart(12, 20, 12, 12, 10, 16, grey);
-        addPart(12, 20, 12, -12, 10, -16, grey); addPart(12, 20, 12, 12, 10, -16, grey);
+        const grey = new THREE.MeshPhysicalMaterial({ color: 0x939eae, roughness: 0.8 });
+        const light = new THREE.MeshPhysicalMaterial({ color: 0xb5bec9, roughness: 0.8 });
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xd8b8bb, roughness: 0.8 });
+        addSoftPart(36, 32, 48, 0, 32, 0, grey, 4);
+        addSoftPart(28, 28, 28, 0, 40, 32, grey, 3);
+        for (const side of [-1, 1]) {
+            addSoftPart(20, 28, 5, side * 24, 36, 28, grey, 4);
+            addSoftPart(13, 20, 1, side * 25, 36, 31, pink, 3);
+            addPart(3.5, 4.5, 1, side * 9, 44, 46.5, blackMat);
+            addPart(1.2, 1.4, 0.5, side * 9 - 0.6, 45, 47.3, whiteMat);
+            for (const z of [-16, 16]) {
+                addSoftPart(12, 20, 12, side * 12, 10, z, grey, 2);
+                addSoftPart(10, 4, 1, side * 12, 2, z + 6.4, light, 1);
+            }
+        }
+        addSoftPart(9, 17, 9, 0, 32, 47, grey, 1);
+        addPart(8, 11, 8, 0, 20, 49, grey);
+        addPart(7, 7, 10, 0, 15, 53, grey);
+        addSoftPart(6, 8, 6, 0, 18, 57, grey, 1);
+        addPart(3, 12, 3, 0, 26, -25, grey);
+        addSoftPart(5, 5, 4, 0, 19, -25, light, 1);
     } else if (type === 'giraffe') {
         heightOffset = 60;
-        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd700, roughness: 0.8 });
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        addPart(20, 20, 32, 0, 40, 0, yellow);
-        addPart(6, 2, 6, -10, 40, 5, brown); addPart(6, 2, 6, 10, 40, -5, brown);
-        addPart(8, 40, 12, 0, 64, 20, yellow); addPart(12, 12, 20, 0, 84, 28, yellow);
-        addPart(4, 4, 4, -6, 86, 38, blackMat); addPart(4, 4, 4, 6, 86, 38, blackMat);
-        addPart(4, 6, 4, -4, 92, 24, brown); addPart(4, 6, 4, 4, 92, 24, brown);
-        addPart(6, 36, 6, -7, 18, 12, yellow); addPart(6, 36, 6, 7, 18, 12, yellow);
-        addPart(6, 36, 6, -7, 18, -12, yellow); addPart(6, 36, 6, 7, 18, -12, yellow);
+        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xf6c65d, roughness: 0.8 });
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0xa76838, roughness: 0.9 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffe4a6, roughness: 0.8 });
+        addSoftPart(20, 20, 32, 0, 40, 0, yellow, 2);
+        addSoftPart(8, 40, 12, 0, 64, 20, yellow, 1);
+        addSoftPart(12, 12, 20, 0, 84, 28, yellow, 2);
+        addSoftPart(12, 6, 6, 0, 81, 38, cream, 1);
+        addPart(4, 0.7, 0.5, 0, 80, 41.4, brown);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3.5, 1, side * 4, 87, 38.4, blackMat);
+            addPart(0.8, 1, 0.4, side * 4 - 0.4, 87.8, 39.2, whiteMat);
+            addSoftPart(6, 4, 4, side * 8, 88, 26, yellow, 1);
+            addPart(2, 5, 2, side * 4, 92, 24, yellow);
+            addSoftPart(4, 3, 4, side * 4, 95, 24, brown, 0.8);
+            for (const z of [-10, 8]) addPart(0.8, 7, 7, side * 10.3, 40, z, brown);
+            for (const y of [57, 70]) addPart(0.8, 5, 6, side * 4.3, y, 20, brown);
+            for (const z of [-12, 12]) {
+                addPart(6, 36, 6, side * 7, 18, z, yellow);
+                addSoftPart(6.3, 4, 7, side * 7, 2, z + 0.5, brown, 1);
+            }
+        }
+        addPart(2, 14, 2, 0, 32, -17, yellow);
+        addSoftPart(4, 5, 4, 0, 24, -17, brown, 1);
     } else if (type === 'penguin') {
         heightOffset = 16;
-        const black = new THREE.MeshPhysicalMaterial({ color: 0x111111, roughness: 0.6 });
-        const white = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.8 });
-        const orange = new THREE.MeshPhysicalMaterial({ color: 0xffa500, roughness: 0.6 });
-        addPart(20, 28, 16, 0, 16, 0, black); addPart(16, 24, 4, 0, 16, 9, white);
-        addPart(16, 16, 16, 0, 36, 0, black);
-        addPart(4, 4, 4, -4, 38, 8, blackMat); addPart(4, 4, 4, 4, 38, 8, blackMat);
-        addPart(12, 12, 4, 0, 36, 9, white); addPart(8, 4, 8, 0, 32, 12, orange);
-        addPart(4, 20, 8, -12, 20, 0, black); addPart(4, 20, 8, 12, 20, 0, black);
-        addPart(8, 4, 12, -6, 2, 6, orange); addPart(8, 4, 12, 6, 2, 6, orange);
+        const black = new THREE.MeshPhysicalMaterial({ color: 0x303947, roughness: 0.7 });
+        const orange = new THREE.MeshPhysicalMaterial({ color: 0xffb64c, roughness: 0.7 });
+        addSoftPart(20, 28, 16, 0, 16, 0, black, 3);
+        addSoftPart(16, 23, 3, 0, 16, 8.5, whiteMat, 3);
+        addSoftPart(18, 16, 16, 0, 36, 0, black, 2);
+        addSoftPart(14, 12, 2, 0, 35, 8.5, whiteMat, 2);
+        addSoftPart(8, 3, 7, 0, 32.5, 12, orange, 1);
+        addPart(6, 1.5, 5, 0, 30.5, 12, orange);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3.5, 1, side * 4.5, 37, 10, blackMat);
+            addPart(0.8, 1, 0.4, side * 4.5 - 0.4, 37.7, 10.8, whiteMat);
+            const wing = addSoftPart(4, 19, 8, side * 12, 20, 0, black, 1);
+            wing.rotation.z = side * 0.15;
+            addSoftPart(8, 4, 12, side * 6, 2, 6, orange, 1.5);
+        }
+        addPart(8, 5, 5, 0, 8, -9, black);
     } else if (type === 'crocodile') {
         heightOffset = 6;
-        const green = new THREE.MeshPhysicalMaterial({ color: 0x2e8b57, roughness: 0.9 });
-        addPart(24, 8, 40, 0, 4, 0, green); addPart(20, 8, 24, 0, 4, 32, green);
-        addPart(4, 4, 4, -8, 8, 36, blackMat); addPart(4, 4, 4, 8, 8, 36, blackMat);
-        addPart(16, 8, 36, 0, 4, -36, green);
-        addPart(8, 6, 8, -16, 3, 12, green); addPart(8, 6, 8, 16, 3, 12, green);
-        addPart(8, 6, 8, -16, 3, -12, green); addPart(8, 6, 8, 16, 3, -12, green);
+        const green = new THREE.MeshPhysicalMaterial({ color: 0x59a579, roughness: 0.9 });
+        const light = new THREE.MeshPhysicalMaterial({ color: 0xc6d993, roughness: 0.8 });
+        const dark = new THREE.MeshPhysicalMaterial({ color: 0x397955, roughness: 0.9 });
+        addSoftPart(24, 8, 40, 0, 4, 0, green, 2);
+        addSoftPart(20, 7, 24, 0, 5, 32, green, 1.5);
+        addPart(18, 2, 23, 0, 1, 32.5, light);
+        addPart(12, 0.6, 0.7, 0, 3, 44.4, dark);
+        addSoftPart(16, 7, 16, 0, 4, -27, green, 1);
+        addSoftPart(10, 5, 12, 0, 3, -40, green, 1);
+        addPart(5, 3, 9, 0, 2, -50, green);
+        for (const z of [-14, -3, 8]) addSoftPart(8, 3, 6, 0, 9, z, dark, 1);
+        for (const side of [-1, 1]) {
+            addSoftPart(6, 6, 6, side * 7, 9, 29, green, 1);
+            addPart(3, 3, 1, side * 7, 10, 32.5, blackMat);
+            addPart(1, 1, 0.4, side * 7 - 0.5, 10.6, 33.3, whiteMat);
+            addPart(2, 1, 1, side * 5, 8.6, 41, dark);
+            for (const z of [-12, 12]) {
+                addSoftPart(8, 6, 8, side * 16, 3, z, green, 1);
+                addPart(7, 2, 4, side * 17, 1, z + 4, light);
+            }
+        }
     } else if (type === 'pig') {
         heightOffset = 12;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xffc0cb, roughness: 0.8 });
-        addPart(24, 20, 32, 0, 14, 0, pink); addPart(16, 16, 16, 0, 24, 20, pink);
-        addPart(4, 4, 4, -4, 26, 28, blackMat); addPart(4, 4, 4, 4, 26, 28, blackMat);
-        addPart(8, 8, 4, 0, 20, 30, pink);
-        addPart(4, 6, 4, -6, 32, 16, pink); addPart(4, 6, 4, 6, 32, 16, pink);
-        addPart(6, 8, 6, -8, 4, 10, pink); addPart(6, 8, 6, 8, 4, 10, pink);
-        addPart(6, 8, 6, -8, 4, -10, pink); addPart(6, 8, 6, 8, 4, -10, pink);
+        const rose = new THREE.MeshPhysicalMaterial({ color: 0xde829c, roughness: 0.8 });
+        addSoftPart(24, 20, 32, 0, 14, 0, pink, 3);
+        addSoftPart(18, 16, 16, 0, 24, 20, pink, 2);
+        addSoftPart(10, 7, 4, 0, 21, 29.5, rose, 1);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3, 1, side * 5, 27, 28.5, blackMat);
+            addPart(0.8, 1, 0.4, side * 5 - 0.4, 27.6, 29.3, whiteMat);
+            addPart(1.5, 2, 0.6, side * 2.5, 21, 31.8, blackMat);
+            addSoftPart(6, 7, 4, side * 7, 33, 18, pink, 1);
+            addPart(3, 3, 1, side * 7, 34, 20.5, rose);
+            for (const z of [-10, 10]) {
+                addSoftPart(6, 8, 6, side * 8, 4, z, pink, 1);
+                addPart(6.3, 2, 6.3, side * 8, 1, z, rose);
+            }
+        }
+        addPart(2, 2, 6, 0, 16, -18, rose);
+        addPart(5, 2, 2, 1.5, 16, -21, rose);
+        addPart(2, 5, 2, 3, 18, -21, rose);
+        addPart(4, 2, 2, 2, 20, -21, rose);
     } else if (type === 'turtle') {
         heightOffset = 8;
         const green = new THREE.MeshPhysicalMaterial({ color: 0x3cb371, roughness: 0.8 });
-        const darkGreen = new THREE.MeshPhysicalMaterial({ color: 0x006400, roughness: 0.9 });
-        addPart(28, 12, 32, 0, 8, 0, darkGreen); addPart(12, 12, 12, 0, 8, 20, green);
-        addPart(2, 2, 2, -4, 10, 26, blackMat); addPart(2, 2, 2, 4, 10, 26, blackMat);
-        addPart(8, 4, 8, -16, 4, 12, green); addPart(8, 4, 8, 16, 4, 12, green);
-        addPart(8, 4, 8, -16, 4, -12, green); addPart(8, 4, 8, 16, 4, -12, green);
-        addPart(4, 4, 8, 0, 4, -20, green);
+        const darkGreen = new THREE.MeshPhysicalMaterial({ color: 0x387b4a, roughness: 0.9 });
+        const shellTop = new THREE.MeshPhysicalMaterial({ color: 0x6ba45b, roughness: 0.9 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xe3dca1, roughness: 0.8 });
+        addSoftPart(28, 10, 32, 0, 7, 0, darkGreen, 2);
+        addSoftPart(22, 6, 26, 0, 13, -1, shellTop, 2);
+        addPart(12, 2, 17, 0, 17, -1, darkGreen);
+        addSoftPart(28.6, 2, 32.6, 0, 3, 0, cream, 0.5);
+        addSoftPart(12, 12, 12, 0, 8, 20, green, 2);
+        addPart(4, 0.7, 0.6, 0, 5.5, 26.4, darkGreen);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3, 1, side * 3.5, 10, 26.4, blackMat);
+            addPart(0.8, 1, 0.4, side * 3.5 - 0.4, 10.6, 27.2, whiteMat);
+            for (const z of [-12, 12]) addSoftPart(8, 4, 9, side * 16, 4, z, green, 1);
+        }
+        addPart(4, 4, 6, 0, 4, -18, green);
+        addPart(2, 2, 5, 0, 4, -23, green);
 
     // ── 신규 10종 ──
     } else if (type === 'eevee') {
         heightOffset = 14;
         const brown = new THREE.MeshPhysicalMaterial({ color: 0xc68642, roughness: 0.7 });
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xfff5dc, roughness: 0.6 });
-        addPart(14, 12, 20, 0, 10, 0, brown);
-        addPart(22, 8, 10, 0, 14, 6, cream);
-        addPart(14, 13, 14, 0, 24, 6, brown);
-        addPart(2, 2, 2, -4, 28, 13, blackMat); addPart(2, 2, 2, 4, 28, 13, blackMat);
-        addPart(6, 8, 2, -5, 35, 6, brown); addPart(6, 8, 2, 5, 35, 6, brown);
-        addPart(8, 5, 3, 0, 25, 13, cream);
-        addPart(4, 4, 14, 0, 12, -14, brown);
-        addPart(6, 5, 5, -4, 14, -22, cream); addPart(6, 5, 5, 2, 16, -22, cream); addPart(6, 5, 5, 6, 13, -21, cream);
-        addPart(4, 8, 4, -4, 3, 6, brown); addPart(4, 8, 4, 4, 3, 6, brown);
-        addPart(4, 8, 4, -4, 3, -6, brown); addPart(4, 8, 4, 4, 3, -6, brown);
+        addSoftPart(14, 12, 20, 0, 10, 0, brown, 2);
+        addSoftPart(22, 8, 10, 0, 14, 6, cream, 2);
+        addPart(12, 4, 5, 0, 10, 10, cream);
+        addSoftPart(16, 14, 14, 0, 24, 6, brown, 2);
+        addSoftPart(8, 4, 3, 0, 22, 13.5, cream, 1);
+        addPart(2, 1.5, 1, 0, 23, 15.5, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 4, 1, side * 4.5, 27, 13.5, blackMat);
+            addPart(1, 1.2, 0.4, side * 4.5 - 0.5, 27.8, 14.3, whiteMat);
+            addSoftPart(6, 12, 4, side * 6, 35, 6, brown, 1);
+            addPart(4, 4, 3, side * 7, 42, 6, brown);
+            addSoftPart(3, 8, 0.8, side * 6, 36, 8.4, blackMat, 0.6);
+            for (const z of [-6, 6]) {
+                addSoftPart(4, 8, 4, side * 4, 4, z, brown, 0.8);
+                addPart(4.5, 2, 5, side * 4, 1, z + 0.5, cream);
+            }
+        }
+        addPart(5, 5, 10, 0, 12, -12, brown);
+        addSoftPart(11, 10, 10, 0, 16, -19, brown, 2);
+        addSoftPart(9, 8, 6, 0, 19, -25, cream, 2);
+        addPart(5, 4, 3, 0, 21, -28, cream);
     } else if (type === 'vulpix') {
         heightOffset = 12;
         const orange = new THREE.MeshPhysicalMaterial({ color: 0xe8743b, roughness: 0.7 });
-        const redTip = new THREE.MeshPhysicalMaterial({ color: 0xcc3300, roughness: 0.8 });
+        const redTip = new THREE.MeshPhysicalMaterial({ color: 0xb85132, roughness: 0.8 });
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xfff0c0, roughness: 0.6 });
-        addPart(12, 12, 18, 0, 10, 0, orange); addPart(12, 12, 12, 0, 22, 5, orange);
-        addPart(2, 2, 2, -3, 26, 11, blackMat); addPart(2, 2, 2, 3, 26, 11, blackMat);
-        addPart(2, 2, 2, 0, 23, 13, blackMat);
-        addPart(4, 8, 2, -4, 32, 5, orange); addPart(4, 4, 2, -4, 40, 5, redTip);
-        addPart(4, 8, 2, 4, 32, 5, orange); addPart(4, 4, 2, 4, 40, 5, redTip);
-        addPart(6, 4, 4, 0, 24, 14, cream);
-        addPart(4, 4, 12, -5, 10, -12, orange); addPart(4, 4, 4, -5, 10, -22, redTip);
-        addPart(4, 4, 12, 0, 12, -12, orange); addPart(4, 4, 4, 0, 12, -22, redTip);
-        addPart(4, 4, 12, 5, 10, -12, orange); addPart(4, 4, 4, 5, 10, -22, redTip);
-        addPart(4, 6, 4, -4, 3, 6, orange); addPart(4, 6, 4, 4, 3, 6, orange);
-        addPart(4, 6, 4, -4, 3, -6, orange); addPart(4, 6, 4, 4, 3, -6, orange);
+        addSoftPart(12, 12, 18, 0, 10, 0, orange, 2);
+        addSoftPart(14, 13, 12, 0, 22, 5, orange, 2);
+        addSoftPart(7, 4, 4, 0, 21, 12, cream, 1);
+        addPart(2, 1.5, 1, 0, 22, 14.5, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3, 1, side * 4, 25, 11.5, blackMat);
+            addPart(0.8, 1, 0.4, side * 4 - 0.4, 25.6, 12.3, whiteMat);
+            addSoftPart(5, 10, 4, side * 5, 33, 5, orange, 1);
+            addPart(3, 4, 3, side * 5, 39, 5, redTip);
+            addPart(2.5, 6, 1, side * 5, 34, 7.5, cream);
+            for (const z of [-6, 6]) addSoftPart(4, 6, 5, side * 4, 3, z, orange, 1);
+        }
+        for (const x of [-5, 0, 5]) {
+            addSoftPart(4, 3, 4, x * 0.5, 29, 5, redTip, 0.6);
+            for (const y of [9, 15]) {
+                addSoftPart(4, 5, 12, x, y, -13, orange, 1);
+                addSoftPart(4, 5, 5, x, y + 2, -21, redTip, 1);
+            }
+        }
     } else if (type === 'gengar') {
         heightOffset = 16;
-        const purple = new THREE.MeshPhysicalMaterial({ color: 0x6a0dad, roughness: 0.5 });
-        const dpurple = new THREE.MeshPhysicalMaterial({ color: 0x4b0082, roughness: 0.6 });
-        const red = new THREE.MeshPhysicalMaterial({ color: 0xff2020, roughness: 0.5 });
-        addPart(24, 22, 20, 0, 12, 0, purple); addPart(22, 20, 20, 0, 26, 2, purple);
-        addPart(4, 4, 2, -6, 32, 10, red); addPart(4, 4, 2, 6, 32, 10, red);
-        addPart(2, 2, 2, -6, 32, 10, blackMat); addPart(2, 2, 2, 6, 32, 10, blackMat);
-        addPart(16, 3, 2, 0, 25, 12, whiteMat);
-        addPart(2, 4, 2, -5, 23, 12, whiteMat); addPart(2, 4, 2, -2, 23, 12, whiteMat);
-        addPart(2, 4, 2, 2, 23, 12, whiteMat); addPart(2, 4, 2, 5, 23, 12, whiteMat);
-        addPart(6, 10, 4, -6, 36, 2, dpurple); addPart(6, 10, 4, 6, 36, 2, dpurple);
-        addPart(10, 8, 8, -12, 16, 4, purple); addPart(10, 8, 8, 12, 16, 4, purple);
-        addPart(6, 8, 6, -8, 3, 0, dpurple); addPart(6, 8, 6, 0, 2, 0, dpurple); addPart(6, 8, 6, 8, 3, 0, dpurple);
+        const purple = new THREE.MeshPhysicalMaterial({ color: 0x8856b8, roughness: 0.7 });
+        const dpurple = new THREE.MeshPhysicalMaterial({ color: 0x62408e, roughness: 0.8 });
+        const red = new THREE.MeshPhysicalMaterial({ color: 0xff8a9c, roughness: 0.7 });
+        addSoftPart(24, 22, 20, 0, 14, 0, purple, 3);
+        addSoftPart(22, 20, 20, 0, 26, 2, purple, 3);
+        addSoftPart(15, 6, 1, 0, 24, 12.6, whiteMat, 1.5);
+        addPart(10, 0.6, 0.5, 0, 24.8, 13.4, dpurple);
+        for (const side of [-1, 1]) {
+            addPart(4.5, 4, 1, side * 6, 31, 12.6, red);
+            addPart(2, 3, 0.6, side * 6, 31, 13.5, blackMat);
+            addPart(0.8, 1, 0.4, side * 6 - 0.4, 31.7, 14.1, whiteMat);
+            addSoftPart(6, 8, 5, side * 7, 37, 2, purple, 1);
+            addPart(3, 4, 4, side * 8, 42, 2, purple);
+            addSoftPart(8, 8, 8, side * 13, 17, 3, purple, 2);
+            addSoftPart(8, 8, 9, side * 7, 4, 2, dpurple, 1.5);
+        }
+        for (const x of [-6, 0, 6]) addSoftPart(4, 6, 4, x, 28, -10, dpurple, 1);
+        addPart(6, 5, 7, 0, 10, -12, purple);
     } else if (type === 'psyduck') {
         heightOffset = 16;
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd54f, roughness: 0.6 });
-        const orange = new THREE.MeshPhysicalMaterial({ color: 0xff6d00, roughness: 0.7 });
-        addPart(16, 18, 14, 0, 12, 0, yellow); addPart(18, 18, 18, 0, 28, 2, yellow);
-        addPart(2, 2, 2, -5, 32, 10, blackMat); addPart(2, 2, 2, 5, 32, 10, blackMat);
-        addPart(8, 5, 4, 0, 27, 12, orange);
-        addPart(4, 2, 4, -8, 32, 2, yellow); addPart(4, 2, 4, 8, 32, 2, yellow);
-        const lArm = addPart(6, 12, 4, -12, 22, 4, yellow); lArm.rotation.z = Math.PI / 3;
-        const rArm = addPart(6, 12, 4, 12, 22, 4, yellow); rArm.rotation.z = -Math.PI / 3;
-        addPart(8, 6, 10, -6, 3, 4, yellow); addPart(8, 6, 10, 6, 3, 4, yellow);
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xf6d6a0, roughness: 0.7 });
+        addSoftPart(16, 18, 14, 0, 12, 0, yellow, 2);
+        addSoftPart(20, 18, 18, 0, 28, 2, yellow, 3);
+        addSoftPart(11, 5, 7, 0, 26, 13, cream, 1);
+        addPart(6, 0.6, 0.5, 0, 24.8, 16.8, blackMat);
+        for (const side of [-1, 1]) {
+            addSoftPart(5, 5, 1, side * 5.5, 32, 11.5, whiteMat, 0.8);
+            addPart(1.6, 2.2, 0.6, side * 5.5, 32, 12.5, blackMat);
+            const arm = addSoftPart(5, 12, 5, side * 11, 22, 4, yellow, 1);
+            arm.rotation.z = -side * Math.PI / 3;
+            addSoftPart(5, 5, 5, side * 10, 29, 3, yellow, 1);
+            addSoftPart(8, 4, 10, side * 6, 2, 4, cream, 1);
+        }
+        for (const x of [-3, 0, 3]) addPart(1.2, x === 0 ? 6 : 4, 1.2, x, 39, 1, blackMat);
+        addSoftPart(7, 6, 8, 0, 8, -9, yellow, 1);
     } else if (type === 'bulbasaur') {
         heightOffset = 14;
         const blueGreen = new THREE.MeshPhysicalMaterial({ color: 0x78c878, roughness: 0.7 });
         const dgreen = new THREE.MeshPhysicalMaterial({ color: 0x228b22, roughness: 0.8 });
         const spot = new THREE.MeshPhysicalMaterial({ color: 0x3a7d44, roughness: 0.8 });
-        addPart(18, 16, 22, 0, 12, 0, blueGreen);
-        addPart(6, 2, 6, -6, 18, -4, spot); addPart(6, 2, 6, 6, 18, 2, spot);
-        addPart(12, 16, 12, 0, 24, -6, dgreen); addPart(8, 6, 8, 0, 36, -6, dgreen);
-        addPart(16, 14, 16, 0, 24, 10, blueGreen);
-        addPart(2, 2, 2, -4, 28, 18, blackMat); addPart(2, 2, 2, 4, 28, 18, blackMat);
-        addPart(2, 2, 2, 0, 25, 18, blackMat);
-        addPart(4, 4, 2, -4, 34, 10, blueGreen); addPart(4, 4, 2, 4, 34, 10, blueGreen);
-        addPart(5, 8, 5, -6, 3, 8, blueGreen); addPart(5, 8, 5, 6, 3, 8, blueGreen);
-        addPart(5, 8, 5, -6, 3, -8, blueGreen); addPart(5, 8, 5, 6, 3, -8, blueGreen);
+        addSoftPart(18, 16, 22, 0, 12, 0, blueGreen, 2);
+        addSoftPart(17, 14, 16, 0, 25, -6, dgreen, 3);
+        addSoftPart(11, 8, 10, 0, 34, -6, dgreen, 2);
+        addPart(5, 4, 5, 0, 39, -6, dgreen);
+        addSoftPart(18, 14, 16, 0, 24, 10, blueGreen, 2);
+        addPart(5, 0.7, 0.6, 0, 21, 18.5, spot);
+        addPart(3, 2, 0.6, -1, 29, 18.4, spot);
+        for (const side of [-1, 1]) {
+            addSoftPart(7, 7, 13, side * 6, 23, -5, spot, 1);
+            addPart(3, 4, 1, side * 5, 26, 18.5, blackMat);
+            addPart(1, 1.3, 0.4, side * 5 - 0.5, 26.9, 19.3, whiteMat);
+            addSoftPart(5, 5, 4, side * 6, 32, 10, blueGreen, 1);
+            addPart(0.8, 4, 4, side * 9.3, 13, 2, spot);
+            for (const z of [-8, 8]) addSoftPart(5, 8, 6, side * 6, 4, z, blueGreen, 1);
+        }
     } else if (type === 'slowpoke') {
         heightOffset = 18;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb6b6, roughness: 0.7 });
-        const tailTip = new THREE.MeshPhysicalMaterial({ color: 0xff7070, roughness: 0.6 });
-        addPart(22, 18, 34, 0, 16, 0, pink); addPart(18, 16, 18, 0, 26, 14, pink);
-        addPart(2, 2, 2, -5, 28, 22, blackMat); addPart(2, 2, 2, 5, 28, 22, blackMat);
-        addPart(6, 4, 4, 0, 24, 24, pink);
-        addPart(6, 4, 4, -10, 30, 14, pink); addPart(6, 4, 4, 10, 30, 14, pink);
-        addPart(4, 4, 24, 0, 16, -20, pink); addPart(6, 6, 6, 0, 16, -34, tailTip);
-        addPart(8, 10, 8, -8, 3, 10, pink); addPart(8, 10, 8, 8, 3, 10, pink);
-        addPart(8, 10, 8, -8, 3, -10, pink); addPart(8, 10, 8, 8, 3, -10, pink);
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffe0b8, roughness: 0.7 });
+        const rose = new THREE.MeshPhysicalMaterial({ color: 0xd98496, roughness: 0.8 });
+        addSoftPart(22, 18, 34, 0, 16, 0, pink, 3);
+        addSoftPart(20, 16, 18, 0, 26, 14, pink, 2);
+        addSoftPart(15, 6, 5, 0, 23, 24, cream, 1.5);
+        addPart(8, 0.7, 0.6, 0, 21.8, 26.8, rose);
+        for (const side of [-1, 1]) {
+            addPart(3, 3, 1, side * 5.5, 29, 23.5, whiteMat);
+            addPart(1.4, 1.8, 0.6, side * 5.5, 29, 24.4, blackMat);
+            addSoftPart(6, 6, 5, side * 10, 33, 14, pink, 1);
+            addPart(3, 3, 0.8, side * 10, 33, 17, rose);
+            for (const z of [-10, 10]) addSoftPart(8, 10, 9, side * 8, 5, z, pink, 1.5);
+        }
+        addPart(6, 6, 17, 0, 16, -22, pink);
+        addSoftPart(5, 9, 7, 0, 18, -31, pink, 1);
+        addSoftPart(5, 6, 5, 0, 24, -32, cream, 1);
     } else if (type === 'marill') {
         heightOffset = 12;
         const blue = new THREE.MeshPhysicalMaterial({ color: 0x5b9bd5, roughness: 0.5 });
         const lightBlue = new THREE.MeshPhysicalMaterial({ color: 0xadd8e6, roughness: 0.5 });
-        addPart(20, 20, 20, 0, 12, 0, blue); addPart(16, 10, 4, 0, 12, 11, lightBlue);
-        addPart(18, 18, 18, 0, 28, 0, blue);
-        addPart(4, 4, 2, -5, 30, 9, blackMat); addPart(4, 4, 2, 5, 30, 9, blackMat);
-        addPart(2, 2, 2, 0, 27, 10, blackMat);
-        addPart(8, 8, 2, -8, 36, 0, blue); addPart(8, 8, 2, 8, 36, 0, blue);
-        addPart(4, 4, 10, 0, 14, -12, blue); addPart(4, 4, 6, 4, 14, -20, blue);
-        addPart(6, 6, 6, 4, 14, -26, lightBlue);
-        addPart(6, 6, 6, -6, 3, 6, blue); addPart(6, 6, 6, 6, 3, 6, blue);
+        const pink = new THREE.MeshPhysicalMaterial({ color: 0xe9a7b6, roughness: 0.7 });
+        addSoftPart(20, 20, 20, 0, 12, 0, blue, 3);
+        addSoftPart(16, 12, 2, 0, 12, 10.5, whiteMat, 2);
+        addSoftPart(18, 18, 18, 0, 28, 0, blue, 2.5);
+        addPart(3, 0.7, 0.6, 0, 25, 9.5, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 4, 1, side * 5, 30, 9.5, blackMat);
+            addPart(1, 1.2, 0.4, side * 5 - 0.5, 30.8, 10.3, whiteMat);
+            addSoftPart(9, 9, 4, side * 8, 37, 0, blue, 2);
+            addSoftPart(5, 5, 1, side * 8, 37, 2.5, pink, 1);
+            addSoftPart(5, 6, 6, side * 11, 15, 1, blue, 1);
+            addSoftPart(6, 5, 8, side * 6, 2.5, 6, blue, 1);
+        }
+        addPart(2, 2, 8, 0, 14, -13, blackMat);
+        addPart(6, 2, 2, 2, 14, -17, blackMat);
+        addPart(2, 2, 6, 4, 14, -20, blackMat);
+        addSoftPart(8, 8, 8, 4, 14, -26, blue, 1.5);
+        addPart(2, 2, 0.6, 2, 16, -21.7, lightBlue);
     } else if (type === 'togepi') {
         heightOffset = 14;
         const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffacd, roughness: 0.6 });
         const red = new THREE.MeshPhysicalMaterial({ color: 0xff4444, roughness: 0.7 });
         const blue = new THREE.MeshPhysicalMaterial({ color: 0x4488ff, roughness: 0.7 });
-        addPart(16, 22, 16, 0, 12, 0, cream);
-        addPart(5, 5, 2, -5, 18, 9, red); addPart(5, 5, 2, 5, 14, 9, blue); addPart(5, 5, 2, 0, 22, 9, red);
-        addPart(14, 14, 14, 0, 28, 0, cream);
-        addPart(2, 2, 2, -4, 32, 7, blackMat); addPart(2, 2, 2, 4, 32, 7, blackMat);
-        addPart(2, 3, 2, 0, 29, 7, blackMat);
-        addPart(2, 6, 2, -4, 38, 0, matBase); addPart(2, 8, 2, 0, 40, 0, matBase); addPart(2, 6, 2, 4, 38, 0, matBase);
-        addPart(5, 4, 5, -6, 1, 3, cream); addPart(5, 4, 5, 6, 1, 3, cream);
+        addSoftPart(18, 20, 16, 0, 12, 0, whiteMat, 3);
+        addSoftPart(14, 14, 14, 0, 28, 0, cream, 2);
+        addPart(3, 2, 0.8, 0, 27, 7.5, blackMat);
+        addPart(1.5, 0.7, 0.5, 0, 26.5, 8.2, red);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3, 1, side * 4, 31, 7.5, blackMat);
+            addPart(0.8, 1, 0.4, side * 4 - 0.4, 31.6, 8.3, whiteMat);
+            addPart(4, 7, 4, side * 5, 36, 0, cream);
+            addPart(2, 3, 3, side * 6, 40, 0, cream);
+            addSoftPart(5, 7, 5, side * 10, 20, 0, cream, 1);
+            addPart(3, 4, 3, side * 6, 23, 6, whiteMat);
+            addSoftPart(5, 4, 6, side * 6, 2, 3, cream, 1);
+        }
+        addPart(4, 8, 4, 0, 38, 0, cream);
+        addPart(2, 3, 3, 0, 43, 0, cream);
+        for (const [x, y, material] of [[-5, 15, red], [5, 11, blue], [0, 20, blue]]) {
+            const patch = addPart(3.5, 3.5, 0.7, x, y, 8.5, material);
+            patch.rotation.z = Math.PI / 4;
+        }
     } else if (type === 'clefairy') {
         heightOffset = 16;
         const pink = new THREE.MeshPhysicalMaterial({ color: 0xffafd7, roughness: 0.6 });
-        const dpink = new THREE.MeshPhysicalMaterial({ color: 0xff69b4, roughness: 0.7 });
-        addPart(18, 18, 16, 0, 12, 0, pink); addPart(6, 8, 2, 0, 22, 8, pink);
-        addPart(16, 16, 16, 0, 26, 2, pink);
-        addPart(2, 2, 2, -4, 30, 9, blackMat); addPart(2, 2, 2, 4, 30, 9, blackMat);
-        addPart(2, 2, 2, 0, 28, 9, blackMat);
-        addPart(5, 8, 2, -5, 36, 2, pink); addPart(2, 3, 2, -5, 44, 2, blackMat);
-        addPart(5, 8, 2, 5, 36, 2, pink); addPart(2, 3, 2, 5, 44, 2, blackMat);
-        addPart(8, 10, 2, -10, 18, -6, dpink); addPart(8, 10, 2, 10, 18, -6, dpink);
-        addPart(6, 8, 4, -8, 14, 8, pink); addPart(6, 8, 4, 8, 14, 8, pink);
-        addPart(6, 6, 8, -5, 2, 5, pink); addPart(6, 6, 8, 5, 2, 5, pink);
-        addPart(4, 4, 10, 0, 12, -10, dpink);
+        const dpink = new THREE.MeshPhysicalMaterial({ color: 0xe887b4, roughness: 0.7 });
+        addSoftPart(18, 18, 16, 0, 12, 0, pink, 3);
+        addSoftPart(18, 17, 16, 0, 26, 2, pink, 2.5);
+        addPart(4, 1, 0.8, 0, 25, 10.5, blackMat);
+        addPart(1, 1.5, 0.8, -2, 25.5, 10.5, blackMat);
+        addPart(1, 1.5, 0.8, 2, 25.5, 10.5, blackMat);
+        addSoftPart(6, 4, 3, 0, 34, 8, pink, 1);
+        addPart(3, 3, 1, -1.5, 33, 10, dpink);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3, 1, side * 4.5, 29, 10.5, blackMat);
+            addPart(0.9, 1, 0.4, side * 4.5 - 0.4, 29.7, 11.3, whiteMat);
+            addSoftPart(3, 2, 1, side * 6.5, 25.5, 10.2, dpink, 0.5);
+            addSoftPart(6, 8.5, 4, side * 6, 35.75, 2, pink, 1);
+            addSoftPart(4, 4, 4, side * 7, 42, 2, blackMat, 0.8);
+            addPart(3, 6, 0.8, side * 6, 36, 4.3, dpink);
+            addSoftPart(8, 10, 3, side * 10, 18, -7, dpink, 2);
+            addSoftPart(5, 8, 5, side * 10, 14, 4, pink, 1);
+            addSoftPart(6, 6, 8, side * 5, 3, 5, pink, 1);
+        }
+        addSoftPart(6, 6, 10, 0, 12, -10, pink, 1);
+        addPart(5, 8, 4, 0, 15, -15, dpink);
+        addPart(5, 3, 5, 0, 19, -14.5, pink);
     } else if (type === 'wobbuffet') {
         heightOffset = 28;
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x3a86c8, roughness: 0.6 });
+        const blue = new THREE.MeshPhysicalMaterial({ color: 0x62a7df, roughness: 0.6 });
         const dblue = new THREE.MeshPhysicalMaterial({ color: 0x1a5a9a, roughness: 0.7 });
-        addPart(20, 44, 16, 0, 24, 0, blue); addPart(18, 14, 14, 0, 50, 0, blue);
-        addPart(16, 10, 3, 0, 44, 8, whiteMat);
-        addPart(3, 3, 2, -4, 46, 9, blackMat); addPart(3, 3, 2, 4, 46, 9, blackMat);
-        addPart(6, 3, 2, 0, 43, 9, blackMat);
-        addPart(8, 8, 4, -12, 28, 0, blue); addPart(8, 8, 4, 12, 28, 0, blue);
-        addPart(8, 8, 12, 0, 8, -12, dblue); addPart(8, 8, 8, 0, 8, -20, dblue);
-        addPart(4, 2, 1, -2, 10, -24, blackMat); addPart(4, 2, 1, 2, 10, -24, blackMat);
-        addPart(5, 2, 1, 0, 8, -24, blackMat);
+        addSoftPart(20, 44, 16, 0, 24, 0, blue, 3);
+        addSoftPart(18, 14, 14, 0, 50, 0, blue, 2.5);
+        addSoftPart(16, 11, 2, 0, 46, 8, whiteMat, 2);
+        addPart(6, 2, 1, 0, 43, 9.5, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(3, 3, 1, side * 4, 48, 9.5, blackMat);
+            addPart(1, 1, 0.4, side * 4 - 0.5, 48.6, 10.3, whiteMat);
+            addSoftPart(5, 13, 5, side * 10.5, 34, 0, blue, 1);
+            addSoftPart(8, 8, 5, side * 12, 28, 0, blue, 1.5);
+            addSoftPart(7, 2, 11, side * 5, 1, 3, blue, 0.5);
+            addPart(3, 3, 1, side * 2.3, 10, -24.4, whiteMat);
+            addPart(1.4, 1.8, 0.6, side * 2.3, 10, -25.1, blackMat);
+            addPart(0.5, 0.6, 0.3, side * 2.3 - 0.2, 10.5, -25.55, whiteMat);
+        }
+        addSoftPart(8, 8, 12, 0, 8, -12, dblue, 1.5);
+        addSoftPart(9, 9, 8, 0, 8.5, -20, dblue, 1.5);
+        addPart(3, 1, 0.8, 0, 6.5, -24.6, blackMat);
 
     // ── 신규: 점프 그룹 ──
     } else if (type === 'kangaroo') {
         heightOffset = 28;
-        const tan = new THREE.MeshPhysicalMaterial({ color: 0xc8933c, roughness: 0.8 });
-        const light = new THREE.MeshPhysicalMaterial({ color: 0xe8c080, roughness: 0.7 });
-        addPart(16, 20, 16, 0, 18, 0, tan);          // 몸통
-        addPart(14, 16, 12, 0, 36, 4, tan);          // 상체
-        addPart(12, 12, 12, 0, 50, 6, tan);          // 머리
-        addPart(2, 2, 2, -4, 54, 12, blackMat); addPart(2, 2, 2, 4, 54, 12, blackMat); // 눈
-        addPart(4, 12, 4, -4, 62, 6, tan); addPart(4, 12, 4, 4, 62, 6, tan); // 귀
-        addPart(6, 14, 4, -10, 38, 2, tan); addPart(6, 14, 4, 10, 38, 2, tan); // 팔
-        addPart(6, 16, 6, -7, 3, 4, tan); addPart(6, 16, 6, 7, 3, 4, tan);   // 뒷다리
-        addPart(4, 6, 12, -6, 1, -10, tan); addPart(4, 6, 12, 6, 1, -10, tan); // 발
-        addPart(6, 4, 24, 0, 16, -18, light);        // 꼬리 (육아낭 느낌)
+        const tan = new THREE.MeshPhysicalMaterial({ color: 0xd7a35d, roughness: 0.8 });
+        const light = new THREE.MeshPhysicalMaterial({ color: 0xffdfaa, roughness: 0.7 });
+        addSoftPart(16, 20, 16, 0, 18, 0, tan, 2);
+        addSoftPart(14, 16, 12, 0, 36, 4, tan, 2);
+        addSoftPart(13, 13, 12, 0, 50, 6, tan, 2);
+        addSoftPart(8, 6, 6, 0, 47, 13, light, 1);
+        addSoftPart(3, 2, 1.5, 0, 48.5, 16.5, blackMat, 0.5);
+        addPart(4, 1, 0.6, 0, 45.5, 16.4, blackMat);
+        addSoftPart(10, 9, 2, 0, 18, 8.3, light, 1.5);
+        addPart(8, 1.5, 0.8, 0, 20.5, 9.5, tan);
+        for (const side of [-1, 1]) {
+            addPart(2.5, 3, 1, side * 3.8, 52, 12.5, blackMat);
+            addPart(0.9, 1, 0.4, side * 3.8 - 0.4, 52.7, 13.3, whiteMat);
+            addSoftPart(4, 12, 4, side * 4, 62, 6, tan, 1);
+            addPart(2, 8, 0.8, side * 4, 62, 8.3, light);
+            addSoftPart(6, 12, 5, side * 10, 36, 3, tan, 1);
+            addSoftPart(8, 11, 9, side * 7, 14, 0, tan, 1.5);
+            addSoftPart(6, 13, 6, side * 7, 10.5, 4, tan, 1);
+            addSoftPart(6, 4, 14, side * 7, 2, 6, light, 1);
+        }
+        addSoftPart(8, 6, 12, 0, 12, -13, tan, 1);
+        addSoftPart(6, 4, 10, 0, 9, -21, tan, 1);
+        addSoftPart(3, 3, 6, 0, 7, -27, light, 0.7);
 
     } else if (type === 'grasshopper') {
         heightOffset = 12;
-        const green = new THREE.MeshPhysicalMaterial({ color: 0x4caf50, roughness: 0.7 });
-        const dgreen = new THREE.MeshPhysicalMaterial({ color: 0x2e7d32, roughness: 0.8 });
-        addPart(10, 8, 28, 0, 8, 0, green);          // 몸통
-        addPart(8, 8, 10, 0, 14, 18, green);         // 머리
-        addPart(2, 2, 2, -3, 18, 22, blackMat); addPart(2, 2, 2, 3, 18, 22, blackMat); // 눈
-        addPart(1, 1, 16, -4, 20, 14, dgreen); addPart(1, 1, 16, 4, 20, 14, dgreen);   // 더듬이
-        addPart(4, 14, 4, -6, 3, 4, dgreen); addPart(4, 14, 4, 6, 3, 4, dgreen);       // 도약 뒷다리
-        addPart(4, 8, 4, -5, 3, -4, green); addPart(4, 8, 4, 5, 3, -4, green);         // 앞다리
+        const green = new THREE.MeshPhysicalMaterial({ color: 0x74bd65, roughness: 0.7 });
+        const dgreen = new THREE.MeshPhysicalMaterial({ color: 0x40874b, roughness: 0.8 });
+        const light = new THREE.MeshPhysicalMaterial({ color: 0xb9e289, roughness: 0.8 });
+        addSoftPart(10, 8, 28, 0, 8, 0, green, 2);
+        addSoftPart(10, 10, 10, 0, 14, 18, green, 2);
+        addPart(3, 1, 0.8, 0, 12, 23.6, blackMat);
+        for (const side of [-1, 1]) {
+            addSoftPart(4, 3, 22, side * 2.8, 12, -2, light, 0.7);
+            addPart(3, 3, 1, side * 3, 16, 23.5, blackMat);
+            addPart(1, 1, 0.4, side * 3 - 0.4, 16.7, 24.3, whiteMat);
+            addPart(1, 5, 1, side * 3, 21.5, 18, dgreen);
+            addPart(1, 1, 6, side * 3, 24, 15.5, dgreen);
+            addSoftPart(2, 2, 2, side * 3, 24, 13, light, 0.5);
+            const thigh = addSoftPart(4, 10, 4, side * 6, 8, -4, dgreen, 1);
+            thigh.rotation.x = -0.55;
+            addSoftPart(2, 6, 3, side * 7, 5, -8, green, 0.5);
+            addSoftPart(6, 2, 5, side * 7, 1, -8, light, 0.5);
+            addSoftPart(3, 3.5, 3, side * 5, 3.75, 9, green, 0.7);
+            addSoftPart(4, 2, 5, side * 5, 1, 11, light, 0.5);
+        }
 
     } else if (type === 'frog') {
         heightOffset = 10;
         const fgreen = new THREE.MeshPhysicalMaterial({ color: 0x66bb6a, roughness: 0.6 });
-        const belly = new THREE.MeshPhysicalMaterial({ color: 0xc8e6c9, roughness: 0.5 });
-        addPart(20, 12, 20, 0, 8, 0, fgreen);        // 몸통
-        addPart(14, 6, 8, 0, 12, -2, belly);         // 배
-        addPart(18, 12, 16, 0, 18, 8, fgreen);       // 머리
-        addPart(6, 6, 4, -8, 24, 10, fgreen); addPart(6, 6, 4, 8, 24, 10, fgreen); // 눈 볼록
-        addPart(2, 2, 2, -8, 26, 13, blackMat); addPart(2, 2, 2, 8, 26, 13, blackMat); // 눈
-        addPart(6, 4, 14, -12, 4, -4, fgreen); addPart(6, 4, 14, 12, 4, -4, fgreen);   // 뒷다리
-        addPart(8, 3, 6, -14, 3, -14, fgreen); addPart(8, 3, 6, 14, 3, -14, fgreen);   // 발
+        const belly = new THREE.MeshPhysicalMaterial({ color: 0xe1efb5, roughness: 0.5 });
+        addSoftPart(20, 12, 20, 0, 8, 0, fgreen, 3);
+        addSoftPart(12, 7, 1.5, 0, 7, 10.4, belly, 1.5);
+        addSoftPart(20, 12, 16, 0, 18, 8, fgreen, 2);
+        addPart(8, 1, 0.8, 0, 17, 16.6, blackMat);
+        for (const side of [-1, 1]) {
+            addSoftPart(6, 7, 5, side * 7, 25, 12, fgreen, 1.5);
+            addSoftPart(4, 5, 0.8, side * 7, 26, 14.9, whiteMat, 0.7);
+            addPart(3, 4, 0.8, side * 7, 26, 15.5, blackMat);
+            addPart(1, 1.2, 0.4, side * 7 - 0.5, 27, 16.2, whiteMat);
+            addPart(2, 2, 0.8, side * 4.5, 17.5, 16.6, blackMat);
+            addSoftPart(3, 2, 0.8, side * 7.5, 18, 16.5, belly, 0.5);
+            addSoftPart(6, 6, 13, side * 11, 4, -4, fgreen, 1.5);
+            addSoftPart(8, 3, 6, side * 13, 1.5, -12, fgreen, 0.7);
+            addSoftPart(4, 7, 4, side * 9, 5, 9, fgreen, 1);
+            addSoftPart(6, 2, 6, side * 9, 1, 12, belly, 0.5);
+        }
 
     // ── 신규: 벽타기 그룹 ──
     } else if (type === 'snail') {
         heightOffset = 10;
-        const shellMat = new THREE.MeshPhysicalMaterial({ color: 0xa0522d, roughness: 0.6 });
-        const bodyMat  = new THREE.MeshPhysicalMaterial({ color: 0xd4a843, roughness: 0.5 });
-        addPart(12, 6, 24, 0, 4, 0, bodyMat);        // 몸통
-        addPart(10, 8, 10, 0, 10, 4, bodyMat);       // 머리
-        addPart(2, 8, 2, -3, 18, 8, bodyMat); addPart(2, 8, 2, 3, 18, 8, bodyMat); // 더듬이
-        addPart(2, 2, 2, -3, 26, 8, blackMat); addPart(2, 2, 2, 3, 26, 8, blackMat); // 눈
-        addPart(16, 14, 18, 0, 12, -6, shellMat);    // 껍데기 하단
-        addPart(12, 10, 14, 0, 20, -8, shellMat);    // 껍데기 중단
-        addPart(8, 6, 10, 0, 28, -8, matAcc);        // 껍데기 상단 강조
+        const shellMat = new THREE.MeshPhysicalMaterial({ color: 0xbc7f52, roughness: 0.6 });
+        const bodyMat = new THREE.MeshPhysicalMaterial({ color: 0xe3bd6b, roughness: 0.5 });
+        const spiral = new THREE.MeshPhysicalMaterial({ color: 0xf6d29d, roughness: 0.7 });
+        addSoftPart(14, 5, 26, 0, 2.5, 0, bodyMat, 1.2);
+        addSoftPart(12, 8, 10, 0, 9, 8, bodyMat, 2);
+        addPart(4, 1, 0.8, 0, 8, 13.5, blackMat);
+        addSoftPart(18, 16, 18, 0, 13, -5, shellMat, 3);
+        addSoftPart(14, 8, 14, 0, 23, -6, shellMat, 2);
+        addSoftPart(8, 6, 10, 0, 29, -6, shellMat, 1.5);
+        for (const side of [-1, 1]) {
+            addPart(2, 10, 2, side * 3.5, 18, 11, bodyMat);
+            addSoftPart(5, 6, 4, side * 3.5, 24, 11, bodyMat, 1);
+            addPart(3, 4, 1, side * 3.5, 24, 13.4, blackMat);
+            addPart(1, 1.2, 0.4, side * 3.5 - 0.5, 25, 14.2, whiteMat);
+            addPart(0.8, 9, 2, side * 9.3, 12.5, -10, spiral);
+            addPart(0.8, 2, 10, side * 9.3, 17, -6, spiral);
+            addPart(0.8, 7, 2, side * 9.3, 14.5, -2, spiral);
+            addPart(0.8, 2, 6, side * 9.3, 12.5, -4, spiral);
+            addPart(0.8, 4, 2, side * 9.3, 13.5, -6, spiral);
+        }
 
     } else if (type === 'lizard') {
         heightOffset = 8;
-        const liz = new THREE.MeshPhysicalMaterial({ color: 0x8bc34a, roughness: 0.7 });
+        const liz = new THREE.MeshPhysicalMaterial({ color: 0x9dca62, roughness: 0.7 });
         const dliz = new THREE.MeshPhysicalMaterial({ color: 0x558b2f, roughness: 0.8 });
-        addPart(10, 6, 36, 0, 4, 0, liz);            // 몸통
-        addPart(12, 8, 12, 0, 8, 20, liz);           // 머리
-        addPart(2, 2, 2, -4, 12, 25, blackMat); addPart(2, 2, 2, 4, 12, 25, blackMat); // 눈
-        addPart(2, 2, 16, 0, 4, -26, dliz);          // 꼬리
-        addPart(4, 4, 4, -7, 4, 12, liz); addPart(4, 4, 4, 7, 4, 12, liz);   // 앞다리
-        addPart(4, 4, 4, -7, 4, -8, liz); addPart(4, 4, 4, 7, 4, -8, liz);   // 뒷다리
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xe2edbb, roughness: 0.8 });
+        addSoftPart(10, 6, 36, 0, 4, 0, liz, 1.5);
+        addSoftPart(8, 2, 28, 0, 2, 2, cream, 0.5);
+        addSoftPart(14, 10, 12, 0, 8, 20, liz, 2);
+        addSoftPart(7, 3, 2, 0, 6.5, 26.3, cream, 0.7);
+        addPart(4, 1, 0.6, 0, 6.4, 27.7, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(2.8, 3, 1, side * 4, 11, 26.5, blackMat);
+            addPart(1, 1, 0.4, side * 4 - 0.5, 11.7, 27.3, whiteMat);
+            for (const z of [-8, 10]) {
+                addSoftPart(4, 3, 5, side * 7, 2.5, z, liz, 0.7);
+                addSoftPart(5, 2, 6, side * 8, 1, z + 2, cream, 0.5);
+            }
+        }
+        for (const z of [-6, 4]) addPart(3, 0.8, 6, 0, 7.3, z, dliz);
+        addSoftPart(6, 4, 10, 0, 4, -21, liz, 1);
+        addSoftPart(4, 3, 8, 0, 4, -28, liz, 0.7);
+        addSoftPart(2, 2, 6, 2, 5, -33, dliz, 0.5);
 
     // ── 신규: 육식동물 그룹 ──
-    } else if (type === 'lion') {
-        heightOffset = 24;
-        const gold = new THREE.MeshPhysicalMaterial({ color: 0xe8a820, roughness: 0.7 });
-        const mane = new THREE.MeshPhysicalMaterial({ color: 0x8b4513, roughness: 0.9 });
-        const tan  = new THREE.MeshPhysicalMaterial({ color: 0xf5c842, roughness: 0.6 });
-        addPart(22, 18, 38, 0, 20, 0, gold);         // 몸통
-        addPart(20, 20, 20, 0, 28, 26, mane);        // 갈기
-        addPart(14, 14, 14, 0, 34, 34, gold);        // 머리
-        addPart(2, 2, 2, -4, 36, 40, blackMat); addPart(2, 2, 2, 4, 36, 40, blackMat); // 눈
-        addPart(4, 4, 2, 0, 32, 42, tan);            // 코
-        const tail = addPart(4, 24, 4, 0, 22, -20, gold); tail.rotation.x = -Math.PI / 5;
-        addPart(6, 6, 6, 0, 18, -38, mane);         // 꼬리 끝 솜
-        addPart(6, 16, 6, -8, 6, 12, gold); addPart(6, 16, 6, 8, 6, 12, gold);   // 앞다리
-        addPart(6, 16, 6, -8, 6, -12, gold); addPart(6, 16, 6, 8, 6, -12, gold); // 뒷다리
-
     } else if (type === 'bear') {
         heightOffset = 30;
-        const brn  = new THREE.MeshPhysicalMaterial({ color: 0x6b3a1f, roughness: 0.9 });
-        const lbrn = new THREE.MeshPhysicalMaterial({ color: 0xa0602a, roughness: 0.8 });
-        // 2족 보행: 몸통 직립
-        addPart(22, 28, 18, 0, 26, 0, brn);          // 몸통 (직립)
-        addPart(16, 8, 12, 0, 22, 0, lbrn);          // 배
-        addPart(20, 18, 18, 0, 52, 2, brn);          // 머리
-        addPart(10, 6, 6, 0, 46, 10, lbrn);         // 주둥이
-        addPart(2, 2, 2, -5, 54, 11, blackMat); addPart(2, 2, 2, 5, 54, 11, blackMat); // 눈
-        addPart(6, 6, 4, -8, 62, 2, brn); addPart(6, 6, 4, 8, 62, 2, brn); // 귀
-        // 팔 (옆으로 뻗음)
-        const lArm = addPart(8, 22, 8, -18, 36, 0, brn); lArm.rotation.z =  Math.PI / 6;
-        const rArm = addPart(8, 22, 8,  18, 36, 0, brn); rArm.rotation.z = -Math.PI / 6;
-        // 뒷다리 (직립)
-        addPart(8, 22, 8, -7, 6, 0, brn); addPart(8, 22, 8, 7, 6, 0, brn);
+        const brn = new THREE.MeshPhysicalMaterial({ color: 0x976442, roughness: 0.9 });
+        const lbrn = new THREE.MeshPhysicalMaterial({ color: 0xd6a675, roughness: 0.8 });
+        addSoftPart(24, 34, 18, 0, 28, 0, brn, 3);
+        addSoftPart(16, 20, 2, 0, 27, 9.5, lbrn, 3);
+        addSoftPart(22, 20, 18, 0, 52, 2, brn, 3);
+        addSoftPart(12, 7, 5, 0, 48, 12.5, lbrn, 1.5);
+        addSoftPart(4, 3, 2, 0, 50, 15.4, blackMat, 0.7);
+        addPart(1, 2, 0.8, 0, 47.5, 15.4, blackMat);
+        addPart(6, 1, 0.8, 0, 46.3, 15.4, blackMat);
+        for (const side of [-1, 1]) {
+            addPart(2.8, 3, 1.5, side * 5.5, 54, 11.7, blackMat);
+            addPart(1, 1, 0.4, side * 5.5 - 0.5, 54.7, 12.8, whiteMat);
+            addSoftPart(8, 8, 5, side * 9, 62, 2, brn, 2);
+            addSoftPart(4, 4, 1, side * 9, 62, 4.8, lbrn, 1);
+            const arm = addSoftPart(8, 22, 8, side * 17, 35, 0, brn, 1.5);
+            arm.rotation.z = -side * 0.2;
+            addSoftPart(4, 5, 1, side * 15.4, 27, 4.5, lbrn, 1).rotation.z = -side * 0.2;
+            addSoftPart(8, 15, 8, side * 7, 12.5, 0, brn, 1.5);
+            addSoftPart(10, 5, 12, side * 7, 2.5, 3, brn, 1);
+            addSoftPart(6, 3, 1, side * 7, 3, 9.4, lbrn, 0.7);
+        }
+        addSoftPart(6, 6, 6, 0, 17, -10, brn, 1.5);
     }
+
+    mergeStaticParts(animalGroup);
 
     // 발/꼬리 파트가 모델 원점 아래로 내려간 종도 지면에 파묻히지 않게 맞춘다.
     const modelBounds = new THREE.Box3().setFromObject(animalGroup);
