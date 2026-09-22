@@ -124,17 +124,23 @@ async function touchEvent(session, type, points) {
     await session.send('Input.dispatchTouchEvent', { type, touchPoints: points.map((point, id) => ({ x: point.x, y: point.y, id, radiusX: 1, radiusY: 1, force: 1 })) });
 }
 async function startDrawing(page, touchSession, routeTarget) {
-    await page.evaluate(() => {
+    const speed = await page.evaluate(() => {
+        // Keep the projected target still across browser round trips until the real press.
+        const speed = qa.state.gameSpeed; qa.state.gameSpeed = 0;
         const target = qa.state.train.position, distance = Math.max(1, 0.78 / qa.state.camera.aspect);
         qa.state.camera.position.copy(target).add(new qa.THREE.Vector3(560, 720, 950).multiplyScalar(distance));
         qa.state.controls.target.copy(target); qa.state.velocity.set(0, 0, 0); qa.state.controls.update();
+        return speed;
     });
-    const start = await trainPoint(page);
-    const target = await page.evaluate(() => qa.state.train.position.toArray());
-    const end = await project(page, routeTarget || [target[0] + 190, 0, target[2] - 140]);
-    const before = await cameraState(page);
-    if (touchSession) await touchEvent(touchSession, 'touchStart', [start]);
-    else { await page.mouse.move(start.x, start.y); await page.mouse.down(); }
+    let start, end, before;
+    try {
+        start = await trainPoint(page);
+        const target = await page.evaluate(() => qa.state.train.position.toArray());
+        end = await project(page, routeTarget || [target[0] + 190, 0, target[2] - 140]);
+        before = await cameraState(page);
+        if (touchSession) await touchEvent(touchSession, 'touchStart', [start]);
+        else { await page.mouse.move(start.x, start.y); await page.mouse.down(); }
+    } finally { await page.evaluate(speed => { qa.state.gameSpeed = speed; }, speed); }
     for (let i = 1; i <= 8; i++) {
         const point = { x: start.x + (end.x - start.x) * i / 8, y: start.y + (end.y - start.y) * i / 8 };
         if (touchSession) await touchEvent(touchSession, 'touchMove', [point]);
