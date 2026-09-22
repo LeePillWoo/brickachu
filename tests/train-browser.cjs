@@ -92,14 +92,58 @@ async function placeTrain(page, position, touch = false) {
 }
 async function checkAnimalCap(page, touch = false) {
     await page.evaluate(() => {
+        if (qa.MAX_ANIMALS !== 30) throw new Error('Animal capacity must be thirty');
+        qa.capPreviousSpeed = qa.state.gameSpeed; qa.state.gameSpeed = 0;
+        qa.clearAllAnimals();
         qa.GROUP_ANIMALS.capFixture = ['dog'];
-        while (qa.animals.length < 20) qa.spawnDog('capFixture');
+        const position = qa.state.train.position;
+        const friend = (x,z) => {
+            const animal = qa.spawnDog('capFixture');
+            animal.body.position.set(x,animal.heightOffset * qa.voxelSize / 20,z); animal.mesh.position.set(x,0,z);
+            animal.body.velocity.set(0,0,0); animal.state = 'idle'; animal.timer = 100; animal.speed = 0;
+            return animal;
+        };
+        friend(position.x,position.z - 80);
+        for (let i = 0; i < 7; i++) qa.updateTrain(0.1);
+        friend(550,-650); // Older than the second passenger, but not riding.
+        friend(position.x,position.z - 180);
+        for (let i = 0; i < 7; i++) qa.updateTrain(0.1);
+        if (qa.state.train.followers.length !== 2) throw new Error('Two passengers must join through updateTrain');
+        while (qa.animals.length < qa.MAX_ANIMALS) friend(550,-650);
         delete qa.GROUP_ANIMALS.capFixture;
-        qa.cappedFriends = [...qa.animals]; qa.cappedTrain = qa.state.train;
+        qa.beginTrainRoute(); qa.appendTrainRoutePoint(position.clone().add(new qa.THREE.Vector3(0,0,400))); qa.finishTrainRoute();
+        qa.captureCappedTrain = () => {
+            qa.cappedTrain = qa.state.train; qa.cappedFollowers = [...qa.state.train.followers]; qa.cappedRopes = [...qa.state.train.ropes];
+            qa.cappedRoute = JSON.stringify(qa.state.train.route.map(point => point.toArray()));
+        };
+        qa.cappedTrainIntact = () => qa.state.train === qa.cappedTrain && qa.state.train.followers.length === qa.cappedFollowers.length && qa.state.train.followers.every((animal,index) => animal === qa.cappedFollowers[index] && animal.trainRide?.train === qa.cappedTrain) && qa.state.train.ropes.length === qa.cappedRopes.length && qa.state.train.ropes.every((rope,index) => rope === qa.cappedRopes[index]) && JSON.stringify(qa.state.train.route.map(point => point.toArray())) === qa.cappedRoute;
+        qa.captureCappedTrain();
+    });
+    for (let i = 0; i < 2; i++) {
+        await page.evaluate(() => { qa.cappedFriends = [...qa.animals]; qa.capVictim = qa.animals.find(animal => !animal.trainRide); });
+        await page.locator('#add-dog-btn')[touch ? 'tap' : 'click']();
+        assert.ok(await page.evaluate(() => {
+            const survivors = qa.cappedFriends.filter(animal => animal !== qa.capVictim);
+            return qa.animals.length === qa.MAX_ANIMALS && !qa.capVictim.mesh.parent && survivors.every((animal,index) => qa.animals[index] === animal) && !qa.cappedFriends.includes(qa.animals.at(-1)) && qa.cappedTrainIntact();
+        }), 'Only the oldest non-passenger may be replaced');
+    }
+    check(`${touch ? 'Mobile' : 'Desktop'} summons at thirty replace the oldest non-passenger while preserving joining friends, ropes and route`, true);
+    await page.evaluate(() => {
+        const position = qa.state.train.position;
+        qa.animals.forEach((animal,index) => {
+            animal.speed = 0;
+            if (animal.trainRide) return;
+            const x = position.x + (index % 6 - 2.5) * 36, z = position.z - 80 - Math.floor(index / 6) * 36;
+            animal.body.position.set(x,animal.heightOffset * qa.voxelSize / 20,z); animal.mesh.position.set(x,0,z);
+            animal.body.velocity.set(0,0,0); animal.state = 'idle'; animal.timer = 100;
+        });
+        for (let i = 0; i < qa.MAX_ANIMALS * 7; i++) qa.updateTrain(0.1);
+        if (qa.state.train.followers.length !== qa.MAX_ANIMALS || !qa.animals.every(animal => animal.trainRide?.joining)) throw new Error('All thirty friends must genuinely join the train');
+        qa.cappedFriends = [...qa.animals]; qa.captureCappedTrain();
     });
     for (let i = 0; i < 2; i++) await page.locator('#add-dog-btn')[touch ? 'tap' : 'click']();
-    check(`${touch ? 'Mobile' : 'Desktop'} animal button at capacity shows a notice and preserves every friend and the train`, await page.evaluate(() => qa.animals.length === 20 && qa.animals.every((animal, index) => animal === qa.cappedFriends[index]) && qa.state.train === qa.cappedTrain && document.getElementById('toy-notice').textContent.includes('상한선')));
-    await page.evaluate(() => qa.clearAllAnimals());
+    check(`${touch ? 'Mobile' : 'Desktop'} a full train of thirty passengers rejects summons with a notice and preserves every friend and rope`, await page.evaluate(() => qa.animals.length === qa.MAX_ANIMALS && qa.animals.every((animal,index) => animal === qa.cappedFriends[index]) && qa.cappedTrainIntact() && /30.*기차|기차.*30/.test(document.getElementById('toy-notice').textContent)));
+    await page.evaluate(() => { qa.clearAllAnimals(); qa.state.gameSpeed = qa.capPreviousSpeed; });
 }
 async function createPassengerFixture(page, touch = false) {
     await page.evaluate(() => {
@@ -285,6 +329,20 @@ async function checkWallBreakthrough(page) {
     const url = process.argv.find(arg => arg.startsWith('--url='))?.slice(6) || `http://127.0.0.1:${server.address().port}/`;
     const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--enable-webgl', '--use-angle=swiftshader'] });
     try {
+        if (process.argv.includes('--capacity-only')) {
+            for (const touch of [false,true]) {
+                const page = await browser.newPage({ viewport: touch ? { width: 390, height: 844 } : { width: 1280, height: 900 }, isMobile: touch, hasTouch: touch });
+                const errors = []; page.on('pageerror', error => errors.push(error.message));
+                await initialize(page,url); await resetFixture(page);
+                await page.locator('#btn-train')[touch ? 'tap' : 'click']();
+                assert.ok(await page.evaluate(() => qa.state.train?.mesh.parent));
+                await checkAnimalCap(page,touch);
+                check(`${touch ? 'Mobile' : 'Desktop'} capacity checks have no runtime errors`,errors.length === 0,errors);
+                await page.close();
+            }
+            console.log('RESULT',checks.length,'train capacity browser checks passed');
+            return;
+        }
         if (!process.argv.includes('--mobile-only')) {
             const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
             const errors = []; page.on('pageerror', error => errors.push(error.message));

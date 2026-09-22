@@ -12,7 +12,7 @@ import { triggerAnimalPower, updateAnimalPowers, clearAnimalPower, getAnimalPowe
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
-export const MAX_ANIMALS = 20;
+export const MAX_ANIMALS = 30;
 
 export const GROUP_ANIMALS = {
     quad:       ['dog','cat','sheep','pig','giraffe','otter'],
@@ -439,8 +439,10 @@ const ANIMAL_PALETTES = [
 ];
 
 export function spawnDog(group = 'all') {
-    if (animals.length >= MAX_ANIMALS) {
-        state.onToyNotice?.(`동물 상한선에 도달했어요! 최대 ${MAX_ANIMALS}마리까지 함께 놀 수 있어요. 🐾`);
+    const replacementCount = Math.max(0, animals.length - MAX_ANIMALS + 1);
+    const replacements = animals.filter(animal => !animal.trainRide).slice(0, replacementCount);
+    if (replacements.length < replacementCount) {
+        state.onToyNotice?.(`동물 상한선이에요! ${MAX_ANIMALS}마리 모두 기차놀이 중이라 새 친구를 부를 수 없어요. 🚂`);
         return null;
     }
     let pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
@@ -453,6 +455,9 @@ export function spawnDog(group = 'all') {
         if (pool.length === 0) pool = GROUP_ANIMALS.all.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
     }
     const type = pool[Math.floor(Math.random() * pool.length)];
+    // Array order is summon order. Joining passengers are protected too.
+    replacements.forEach(removeAnimalImmediately);
+    if (replacements.some(animal => animal.livingId)) pushHistory();
 
     const animalGroup = new THREE.Group();
     const u = voxelSize / 25;

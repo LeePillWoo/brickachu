@@ -190,7 +190,7 @@ export function reconcileLivingAnimals(descriptors = []) {
     const existing = new Set(animals.filter(animal => animal.livingId).map(animal => animal.livingId));
     for (const descriptor of wanted.values()) {
         // Restoring an edit must preserve ordinary animals spawned since then.
-        // History may exceed the spawn cap; further spawns wait for space to open.
+        // History may exceed the cap; the next summon replaces eligible non-passengers.
         if (!existing.has(descriptor.id)) createFromDescriptor(descriptor);
     }
 }

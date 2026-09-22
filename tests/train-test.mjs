@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, objects, materials, explodingBricks } from '../js/state.js';
-import { animals, GROUP_ANIMALS, spawnDog, clearAllAnimals, updateDogs, setGrabbedAnimal, removeAnimalImmediately, triggerClickAction } from '../js/entities.js';
+import { animals, GROUP_ANIMALS, MAX_ANIMALS, spawnDog, clearAllAnimals, updateDogs, setGrabbedAnimal, removeAnimalImmediately, triggerClickAction } from '../js/entities.js';
 import { placeVoxel, explodeBricks, disposeExplodingBrick, pushHistory, undo, redo } from '../js/scene.js';
 import { awakenBlocks } from '../js/living.js';
 import { clearAllFood, spawnFood, foods } from '../js/food.js';
@@ -152,17 +152,42 @@ test('automatic placement keeps the front and back corners outside an overlappin
     }
 });
 
-test('repeated animal summons at capacity preserve every passenger, rope and train route', () => {
-    pet('dog',0,-80); pet('cat',0,-180);
-    const train = spawnTrain(point(0,0)); route(point(0,600)); step(100);
+test('summons at capacity replace the oldest non-passenger and preserve joining friends, ropes and route', () => {
+    assert.equal(MAX_ANIMALS,30);
+    const first = pet('dog',0,-80); first.speed = 0;
+    const train = spawnTrain(point(0,0)); route(point(0,600)); updateTrain(0.1);
+    const oldestFree = pet('cat',550,-650);
+    const second = pet('dog',0,-180); second.speed = 0;
+    for (let i = 0; i < 7; i++) updateTrain(0.1);
     assert.equal(train.followers.length,2);
-    while (animals.length < 20) pet('dog',550,-650);
+    while (animals.length < MAX_ANIMALS) pet('dog',550,-650);
+    assert.equal(animals.find(animal => !animal.trainRide),oldestFree);
+    const followers = [...train.followers], ropes = [...train.ropes], previousRoute = train.route.map(p => p.toArray());
+    assert.ok(followers.every(animal => animal.trainRide.joining));
+    for (let i = 0; i < 4; i++) {
+        const previous = [...animals], victim = animals.find(animal => !animal.trainRide);
+        const newcomer = spawnDog('all'); assert.ok(newcomer);
+        assert.deepEqual(animals,[...previous.filter(animal => animal !== victim),newcomer]);
+        assert.equal(animals.length,MAX_ANIMALS); assert.equal(victim.mesh.parent,null);
+        assert.equal(state.train,train); assert.deepEqual(train.followers,followers); assert.deepEqual(train.ropes,ropes);
+        assert.deepEqual(train.route.map(p => p.toArray()),previousRoute);
+        assert.ok(followers.every(animal => animal.trainRide?.train === train));
+    }
+});
+
+test('a full train of thirty genuinely recruited passengers rejects repeated summons without changing its queue', () => {
+    for (let i = 0; i < MAX_ANIMALS; i++) pet('dog',(i % 6 - 2.5) * 36,-80 - Math.floor(i / 6) * 36).speed = 0;
+    const train = spawnTrain(point(0,0)); route(point(0,600));
+    for (let i = 0; i < MAX_ANIMALS * 7; i++) updateTrain(0.1);
+    assert.equal(train.followers.length,MAX_ANIMALS); assert.equal(train.ropes.length,MAX_ANIMALS);
+    assert.ok(animals.every(animal => animal.trainRide?.train === train && animal.trainRide.joining));
     const friends = [...animals], followers = [...train.followers], ropes = [...train.ropes], previousRoute = train.route.map(p => p.toArray());
-    for (let i = 0; i < 4; i++) assert.equal(spawnDog('all'), null);
+    let notice = ''; state.onToyNotice = value => { notice = value; };
+    for (let i = 0; i < 4; i++) assert.equal(spawnDog('all'),null);
     assert.deepEqual(animals,friends); assert.equal(state.train,train);
     assert.deepEqual(train.followers,followers); assert.deepEqual(train.ropes,ropes);
     assert.deepEqual(train.route.map(p => p.toArray()),previousRoute);
-    assert.ok(followers.every(animal => animal.trainRide?.train === train));
+    assert.match(notice,/기차/); assert.match(notice,/30/);
 });
 
 test('nearby friends join nearest first with a delay between admissions', () => {

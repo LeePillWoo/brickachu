@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, objects, materials, explodingBricks } from '../js/state.js';
 import { placeVoxel, pushHistory, undo, redo, getFullSnapshot, explodeBricks, restoreBricks, disposeExplodingBrick } from '../js/scene.js';
-import { animals, grabbedAnimal, setGrabbedAnimal, clearAllAnimals, spawnDog, removeAnimalImmediately, removeAnimalWithEffect, removeAllAnimalsWithEffect, updateDogs } from '../js/entities.js';
+import { animals, MAX_ANIMALS, grabbedAnimal, setGrabbedAnimal, clearAllAnimals, spawnDog, removeAnimalImmediately, removeAnimalWithEffect, removeAllAnimalsWithEffect, updateDogs } from '../js/entities.js';
 import { foods, spawnFood, clearAllFoodWithEffect } from '../js/food.js';
 import { awakenBlocks, collectConnectedBlocks, classifyLivingShape, MAX_LIVING_BLOCKS } from '../js/living.js';
 import { applySnack, updateMagicEffects } from '../js/magic.js';
@@ -66,7 +66,7 @@ test('oversize builds reject atomically, without removing blocks or recording hi
 });
 
 test('full playground rejects creation without evicting friends or eating blocks', () => {
-    for (let i = 0; i < 20; i++) spawnDog('quad');
+    for (let i = 0; i < MAX_ANIMALS; i++) spawnDog('quad');
     const seed = block();
     const original = [...animals];
     assert.equal(awakenBlocks(seed).ok, false);
@@ -163,20 +163,39 @@ test('deleting a friend is undoable without reviving the original blocks alongsi
     assert.equal(animals.length, 0);
 });
 
-test('history preserves friends above capacity and further spawns are refused without eviction', () => {
+test('history preserves friends above capacity and a new summon restores the cap in age order', () => {
     const { animal } = awakenBlocks(block());
     removeAnimalWithEffect(animal);
     flush();
-    for (let i = 0; i < 20; i++) spawnDog('quad');
+    for (let i = 0; i < MAX_ANIMALS; i++) spawnDog('quad');
     const ordinary = [...animals];
     undo();
-    assert.equal(animals.length, 21);
+    assert.equal(animals.length, MAX_ANIMALS + 1);
     assert.ok(ordinary.every(friend => animals.includes(friend)));
     assert.equal(animals.filter(friend => friend.livingId).length, 1);
     const restored = [...animals];
-    assert.equal(spawnDog('quad'), null);
-    assert.deepEqual(animals, restored);
-    assert.equal(animals.length, 21);
+    const added = spawnDog('quad');
+    assert.ok(added);
+    assert.deepEqual(animals, [...restored.slice(2), added]);
+    assert.equal(animals.length, MAX_ANIMALS);
+});
+
+test('replacing the oldest block friend records its removal without reviving editable blocks', () => {
+    const { animal } = awakenBlocks(block());
+    for (let i = 1; i < MAX_ANIMALS; i++) spawnDog('quad');
+    const added = spawnDog('quad');
+    assert.ok(added);
+    assert.equal(animals.length, MAX_ANIMALS);
+    assert.ok(!animals.includes(animal));
+    assert.equal(animal.mesh.parent, null);
+    assert.equal(objects.length, 1);
+    undo();
+    assert.equal(animals.length, MAX_ANIMALS + 1);
+    assert.ok(animals.some(friend => friend.livingId === animal.livingId));
+    assert.equal(objects.length, 1);
+    redo();
+    assert.equal(animals.length, MAX_ANIMALS);
+    assert.ok(!animals.some(friend => friend.livingId));
 });
 
 test('custom cleanup disposes owned resources once and leaves shared palette intact', () => {

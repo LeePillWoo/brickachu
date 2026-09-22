@@ -61,20 +61,23 @@ function test(name, fn) { reset(); fn(); tests.push(name); }
 test('random pool contains each animal exactly once', () => {
     assert.equal(new Set(entities.GROUP_ANIMALS.all).size, entities.GROUP_ANIMALS.all.length);
 });
-test('capacity refuses new friends without replacing animals or disposing their resources', () => {
+test('capacity replaces the oldest friend and disposes only its resources', () => {
     for (let i = 0; i < entities.MAX_ANIMALS; i++) spawn('dog');
-    const original = [...entities.animals], bodies = [...state.world.bodies], scene = [...state.scene.children];
+    assert.equal(entities.MAX_ANIMALS, 30);
+    const original = [...entities.animals];
     const notices = [];
     state.onToyNotice = notice => notices.push(notice);
-    let disposals = 0;
-    original.forEach(animal => animal.mesh.traverse(part => part.geometry?.addEventListener('dispose', () => disposals++)));
-    for (const group of ['all', 'pets', 'forest', 'water', 'tiny', 'magic']) assert.equal(entities.spawnDog(group), null);
-    assert.deepEqual(entities.animals, original);
-    assert.deepEqual(state.world.bodies, bodies);
-    assert.deepEqual(state.scene.children, scene);
-    assert.equal(disposals, 0);
-    assert.equal(notices.length, 6);
-    assert.ok(notices.every(notice => notice.includes('상한선') && notice.includes('20')));
+    const disposals = original.map(() => 0);
+    original.forEach((animal, index) => animal.mesh.traverse(part => part.geometry?.addEventListener('dispose', () => disposals[index]++)));
+    const added = spawn('rabbit');
+    assert.deepEqual(entities.animals, [...original.slice(1), added]);
+    assert.equal(original[0].mesh.parent, null);
+    assert.ok(!state.world.bodies.includes(original[0].body));
+    assert.ok(disposals[0] > 0 && disposals.slice(1).every(count => count === 0));
+    assert.equal(state.world.bodies.length, entities.MAX_ANIMALS + 1);
+    assert.equal(notices.length, 0);
+    const next = spawn('cat');
+    assert.deepEqual(entities.animals, [...original.slice(2), added, next]);
 });
 test('removing one friend at capacity permits one new friend without replacing others', () => {
     for (let i = 0; i < entities.MAX_ANIMALS; i++) spawn('dog');
@@ -86,12 +89,12 @@ test('removing one friend at capacity permits one new friend without replacing o
     assert.ok(remaining.every(animal => entities.animals.includes(animal)));
 });
 test('carnivore limit rejects without evicting an existing animal', () => {
-    for (let i = 0; i < 16; i++) spawn('dog');
+    for (let i = 0; i < entities.MAX_ANIMALS - 4; i++) spawn('dog');
     for (let i = 0; i < 4; i++) entities.spawnDog('carnivore');
     const original = [...entities.animals];
     entities.spawnDog('carnivore');
     assert.deepEqual(entities.animals, original);
-    assert.equal(state.world.bodies.length, 21);
+    assert.equal(state.world.bodies.length, entities.MAX_ANIMALS + 1);
 });
 test('all 26 model types spawn and settle on the physical floor', () => {
     for (const type of entities.GROUP_ANIMALS.all) {
