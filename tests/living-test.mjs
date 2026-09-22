@@ -163,7 +163,7 @@ test('deleting a friend is undoable without reviving the original blocks alongsi
     assert.equal(animals.length, 0);
 });
 
-test('history preserves ordinary animals even at capacity; the next spawn restores the cap', () => {
+test('history preserves friends above capacity and further spawns are refused without eviction', () => {
     const { animal } = awakenBlocks(block());
     removeAnimalWithEffect(animal);
     flush();
@@ -173,8 +173,10 @@ test('history preserves ordinary animals even at capacity; the next spawn restor
     assert.equal(animals.length, 21);
     assert.ok(ordinary.every(friend => animals.includes(friend)));
     assert.equal(animals.filter(friend => friend.livingId).length, 1);
-    spawnDog('quad');
-    assert.equal(animals.length, 20);
+    const restored = [...animals];
+    assert.equal(spawnDog('quad'), null);
+    assert.deepEqual(animals, restored);
+    assert.equal(animals.length, 21);
 });
 
 test('custom cleanup disposes owned resources once and leaves shared palette intact', () => {

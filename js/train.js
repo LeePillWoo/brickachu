@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { state, objects, voxelSize } from './state.js';
 import { animals } from './entities.js';
+import { foods } from './food.js';
 import { playSound } from './sound.js';
 import { explodeBlockHeavy } from './scene.js';
 import { createSoftBoxGeometry, mergeStaticParts } from './model-utils.js';
@@ -198,7 +199,41 @@ export function clearTrain() {
     state.train = null;
 }
 
-export function spawnTrain(point) {
+function findTrainSpawnPoint() {
+    const limit = BOARD_LIMIT - TRAIN_RADIUS;
+    const center = state.controls?.target || new THREE.Vector3();
+    const candidates = [new THREE.Vector3(THREE.MathUtils.clamp(center.x, -limit, limit), 0, THREE.MathUtils.clamp(center.z, -limit, limit))];
+    for (let x = -825; x <= 825; x += 50) for (let z = -825; z <= 825; z += 50) candidates.push(new THREE.Vector3(x, 0, z));
+    candidates.sort((a, b) => a.distanceToSquared(center) - b.distanceToSquared(center));
+    state.scene?.updateMatrixWorld(true); state.camera?.updateMatrixWorld(true);
+    const blocks = obstacles();
+    const friends = animals.map(animal => new THREE.Box3().setFromObject(animal.mesh));
+    const canvas = state.renderer?.domElement, rect = canvas?.getBoundingClientRect();
+    const ray = new THREE.Raycaster(), projected = new THREE.Vector3();
+    for (const point of candidates) {
+        if (blocks.some(block => touchesBlock(point, point, TRAIN_RADIUS, TRAIN_HEIGHT, block))) continue;
+        if (friends.some(box => point.x + TRAIN_RADIUS > box.min.x && point.x - TRAIN_RADIUS < box.max.x && point.z + TRAIN_RADIUS > box.min.z && point.z - TRAIN_RADIUS < box.max.z)) continue;
+        if (foods.some(food => !food.eaten && Math.hypot(point.x - food.position.x, point.z - food.position.z) < TRAIN_RADIUS + 25)) continue;
+        if (state.camera && rect) {
+            let visible = true;
+            for (const y of [0, TRAIN_HEIGHT]) for (const xSide of [-1, 1]) for (const zSide of [-1, 1]) {
+                projected.set(point.x + xSide * TRAIN_RADIUS, y, point.z + zSide * TRAIN_RADIUS).project(state.camera);
+                const x = rect.left + (projected.x + 1) * rect.width / 2, screenY = rect.top + (1 - projected.y) * rect.height / 2;
+                if (Math.abs(projected.x) > 0.94 || Math.abs(projected.y) > 0.94 || Math.abs(projected.z) > 1 || (document.elementFromPoint && document.elementFromPoint(x, screenY) !== canvas)) visible = false;
+            }
+            if (!visible) continue;
+            projected.copy(point).y = TRAIN_HEIGHT / 2;
+            const distance = projected.distanceTo(state.camera.position);
+            ray.set(state.camera.position, projected.sub(state.camera.position).normalize());
+            if (ray.intersectObjects(blocks.map(block => block.object), false)[0]?.distance < distance) continue;
+        }
+        return point;
+    }
+    state.onToyNotice?.('보이는 빈자리가 없어요. 화면을 넓혀 다시 눌러줘! 🚂');
+    return null;
+}
+
+export function spawnTrain(point = findTrainSpawnPoint()) {
     if (!state.scene || !point || ![point.x, point.y, point.z].every(Number.isFinite)) return null;
     const limit = BOARD_LIMIT - TRAIN_RADIUS;
     const position = new THREE.Vector3(THREE.MathUtils.clamp(point.x, -limit, limit), 0, THREE.MathUtils.clamp(point.z, -limit, limit));

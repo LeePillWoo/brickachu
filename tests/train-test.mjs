@@ -24,6 +24,7 @@ function reset() {
     state.actionHistory.length = 0; state.actionRedoStack.length = 0;
     state.screenShakeTimer = 0; state.onToyNotice = null;
     state.camera = null; state.renderer = null;
+    state.controls = null;
     document.hidden = false;
 }
 function pet(type, x, z) {
@@ -92,6 +93,76 @@ test('invalid or occupied placement does not destroy the existing train', () => 
     assert.equal(spawnTrain(point(400,0,50)), null);
     assert.equal(spawnTrain(point(NaN,0)), null);
     assert.equal(state.train, train);
+});
+
+test('automatic train placement finds nearby empty ground without overlapping blocks, friends or snacks', () => {
+    state.controls = { target: point(25,25) };
+    const block = placeVoxel(point(25,25,25));
+    const animal = pet('dog', -100,0), food = spawnFood(point(100,0));
+    const train = spawnTrain();
+    assert.ok(train);
+    assert.ok(Math.abs(train.position.x) <= 832 && Math.abs(train.position.z) <= 832);
+    assert.ok(Math.abs(train.position.x - block.position.x) >= 93 || Math.abs(train.position.z - block.position.z) >= 93);
+    const bounds = new THREE.Box3().setFromObject(animal.mesh);
+    assert.ok(train.position.x + 68 <= bounds.min.x || train.position.x - 68 >= bounds.max.x || train.position.z + 68 <= bounds.min.z || train.position.z - 68 >= bounds.max.z);
+    assert.ok(Math.hypot(train.position.x - food.position.x, train.position.z - food.position.z) >= 93);
+    assert.ok(objects.includes(block)); assert.ok(foods.includes(food)); assert.ok(animals.includes(animal));
+});
+
+test('automatic placement failure leaves the previous train and its route intact', () => {
+    const train = spawnTrain(point(0,0)); route(point(0,400));
+    const previousRoute = train.route.map(p => p.toArray());
+    for (let x = -800; x <= 800; x += 100) for (let z = -800; z <= 800; z += 100) placeVoxel(point(x,z,25),null,true);
+    let notice; state.onToyNotice = value => { notice = value; };
+    assert.equal(spawnTrain(), null); assert.equal(state.train, train);
+    assert.deepEqual(train.route.map(p => p.toArray()), previousRoute);
+    assert.match(notice, /빈자리/);
+});
+
+test('automatic placement finds a small empty pocket between block-aligned walls', () => {
+    // The only clear ground is x,z in [-50,150]; its valid train centers are
+    // [18,82], which a 100-unit grid centered on the origin misses completely.
+    for (let x = -825; x <= 825; x += 50) for (let z = -825; z <= 825; z += 50) {
+        if (x > -50 && x < 150 && z > -50 && z < 150) continue;
+        placeVoxel(point(x,z,25),null,true);
+    }
+    const train = spawnTrain();
+    assert.ok(train);
+    for (const axis of ['x','z']) assert.ok(train.position[axis] >= 18 && train.position[axis] <= 82);
+});
+
+test('automatic placement keeps the front and back corners outside an overlapping UI panel', () => {
+    state.camera = new THREE.PerspectiveCamera(45,1,1,5000);
+    state.camera.position.set(0,800,1300); state.camera.lookAt(0,0,0); state.camera.updateMatrixWorld(true);
+    const canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1000, height: 1000 }) };
+    state.renderer = { domElement: canvas };
+    const panelTop = (1 - point(0,34).project(state.camera).y) * 500;
+    const originalHitTest = document.elementFromPoint;
+    document.elementFromPoint = (x,y) => y >= panelTop ? { panel: true } : canvas;
+    try {
+        const train = spawnTrain(); assert.ok(train);
+        assert.ok(train.position.z < 0, 'the center is clear but the original front would overlap the panel');
+        for (const x of [-68,68]) for (const z of [-68,68]) for (const y of [0,110]) {
+            const corner = train.position.clone().add(new THREE.Vector3(x,y,z)).project(state.camera);
+            assert.equal(document.elementFromPoint((corner.x+1)*500,(1-corner.y)*500),canvas);
+        }
+    } finally {
+        if (originalHitTest) document.elementFromPoint = originalHitTest;
+        else delete document.elementFromPoint;
+    }
+});
+
+test('repeated animal summons at capacity preserve every passenger, rope and train route', () => {
+    pet('dog',0,-80); pet('cat',0,-180);
+    const train = spawnTrain(point(0,0)); route(point(0,600)); step(100);
+    assert.equal(train.followers.length,2);
+    while (animals.length < 20) pet('dog',550,-650);
+    const friends = [...animals], followers = [...train.followers], ropes = [...train.ropes], previousRoute = train.route.map(p => p.toArray());
+    for (let i = 0; i < 4; i++) assert.equal(spawnDog('all'), null);
+    assert.deepEqual(animals,friends); assert.equal(state.train,train);
+    assert.deepEqual(train.followers,followers); assert.deepEqual(train.ropes,ropes);
+    assert.deepEqual(train.route.map(p => p.toArray()),previousRoute);
+    assert.ok(followers.every(animal => animal.trainRide?.train === train));
 });
 
 test('nearby friends join nearest first with a delay between admissions', () => {
@@ -230,7 +301,7 @@ test('route samples, length and magical lights have bounded lifetimes', () => {
 });
 
 test('train friends never hunt or flee, including a predator waiting to join', () => {
-    const predator = pet('bear',-50,0), prey = pet('rabbit',-170,0);
+    const predator = pet('lion',-50,0), prey = pet('rabbit',-170,0);
     const train = spawnTrain(point(0,0)); route(point(0,700));
     updateTrain(1 / 60); assert.equal(train.followers[0],predator); assert.ok(predator.trainRide.joining);
     updateDogs(1 / 60); assert.equal(prey.state,'idle'); assert.equal(prey.body.velocity.x,0);
@@ -239,7 +310,7 @@ test('train friends never hunt or flee, including a predator waiting to join', (
 });
 
 test('even unjoined animals remain friends while a train exists, and normal fear returns after removal', () => {
-    const predator = pet('bear',500,0), prey = pet('rabbit',650,0);
+    const predator = pet('lion',500,0), prey = pet('rabbit',650,0);
     spawnTrain(point(-500,0)); updateDogs(1 / 60);
     assert.equal(predator.trainRide,undefined); assert.equal(prey.trainRide,undefined);
     assert.equal(prey.state,'idle'); assert.equal(prey.body.velocity.x,0);

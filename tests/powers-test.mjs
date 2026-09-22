@@ -40,8 +40,8 @@ function decorations(name) {
 let passed = 0;
 function test(name, fn) { reset(); fn(); console.log(`  ✓ ${name}`); passed++; }
 
-test('six new powers and five existing refinements expose useful Korean descriptions', () => {
-    for (const type of ['otter', 'panda', 'octopus', 'crab', 'hedgehog', 'baby-dragon', 'penguin', 'elephant', 'squirtle', 'bulbasaur', 'snail']) {
+test('six new powers and three existing refinements expose useful Korean descriptions', () => {
+    for (const type of ['otter', 'panda', 'octopus', 'crab', 'hedgehog', 'baby-dragon', 'penguin', 'elephant', 'snail']) {
         const info = getAnimalPowerInfo(type); assert.ok(info.name && info.description);
     }
     assert.equal(getAnimalPowerInfo('unknown'), null);
@@ -150,7 +150,14 @@ test('dragon bubble reuses floating exclusions, ignores existing transformations
     assert.ok(friend.magicEffect.localBounds.containsPoint(shell.position.clone().add(shell.scale)));
     assert.ok(friend.magicEffect.localBounds.containsPoint(shell.position.clone().sub(shell.scale)));
     const bubble = friend.magicEffect; spawnFood(new THREE.Vector3(170, 0, 0));
-    step(50); assert.equal(friend.magicEffect, bubble); assert.equal(friend.isEating, false);
+    let traveled = 0;
+    for (let i = 0; i < 50; i++) {
+        const before = new THREE.Vector3().copy(friend.body.position); step();
+        traveled += Math.hypot(friend.body.position.x - before.x, friend.body.position.z - before.z);
+        assert.ok(Math.hypot(friend.body.velocity.x, friend.body.velocity.z) <= Math.min(friend.speed * 0.12, 36) + 1e-8);
+    }
+    assert.ok(traveled < 30, 'dragon bubbles also drift gently instead of keeping ground movement speed');
+    assert.equal(friend.magicEffect, bubble); assert.equal(friend.isEating, false);
     assert.ok(friend.body.position.y > friend.heightOffset * 2.5 + 50);
     triggerClickAction(friend); assert.equal(friend.magicEffect, undefined);
 });
@@ -227,8 +234,8 @@ test('bomb transfer clears active toys, restores physics, releases carried food 
     });
 });
 
-test('old penguin, elephant, turtle and flower friends retain useful click behavior', () => {
-    for (const [type, powerType] of [['penguin', 'slide'], ['elephant', 'sprinkle'], ['squirtle', 'sprinkle'], ['bulbasaur', 'flowers'], ['snail', 'paint']]) {
+test('penguin, elephant, snail and turtle retain useful click behavior', () => {
+    for (const [type, powerType] of [['penguin', 'slide'], ['elephant', 'sprinkle'], ['snail', 'paint']]) {
         const animal = pet(type); assert.equal(triggerAnimalPower(animal, animals), true); assert.equal(animal.animalPower.type, powerType); clearAnimalPower(animal);
     }
     const turtle = pet('turtle'); assert.equal(triggerAnimalPower(turtle, animals), false); triggerClickAction(turtle); assert.equal(turtle.clickActionType, 'spin');

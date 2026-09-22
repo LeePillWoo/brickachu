@@ -26,6 +26,7 @@ function reset() {
     state.scene.updateMatrixWorld(true);
     state.previewScene = new THREE.Scene();
     state.previewObjects.length = 0;
+    state.onToyNotice = null;
     materials['preset-0'] = new THREE.MeshBasicMaterial();
 }
 function spawn(type) {
@@ -60,6 +61,30 @@ function test(name, fn) { reset(); fn(); tests.push(name); }
 test('random pool contains each animal exactly once', () => {
     assert.equal(new Set(entities.GROUP_ANIMALS.all).size, entities.GROUP_ANIMALS.all.length);
 });
+test('capacity refuses new friends without replacing animals or disposing their resources', () => {
+    for (let i = 0; i < entities.MAX_ANIMALS; i++) spawn('dog');
+    const original = [...entities.animals], bodies = [...state.world.bodies], scene = [...state.scene.children];
+    const notices = [];
+    state.onToyNotice = notice => notices.push(notice);
+    let disposals = 0;
+    original.forEach(animal => animal.mesh.traverse(part => part.geometry?.addEventListener('dispose', () => disposals++)));
+    for (const group of ['all', 'pets', 'forest', 'water', 'tiny', 'magic']) assert.equal(entities.spawnDog(group), null);
+    assert.deepEqual(entities.animals, original);
+    assert.deepEqual(state.world.bodies, bodies);
+    assert.deepEqual(state.scene.children, scene);
+    assert.equal(disposals, 0);
+    assert.equal(notices.length, 6);
+    assert.ok(notices.every(notice => notice.includes('상한선') && notice.includes('20')));
+});
+test('removing one friend at capacity permits one new friend without replacing others', () => {
+    for (let i = 0; i < entities.MAX_ANIMALS; i++) spawn('dog');
+    entities.removeAnimalImmediately(entities.animals[4]);
+    const remaining = [...entities.animals];
+    const added = spawn('rabbit');
+    assert.equal(entities.animals.length, entities.MAX_ANIMALS);
+    assert.ok(added && entities.animals.includes(added));
+    assert.ok(remaining.every(animal => entities.animals.includes(animal)));
+});
 test('carnivore limit rejects without evicting an existing animal', () => {
     for (let i = 0; i < 16; i++) spawn('dog');
     for (let i = 0; i < 4; i++) entities.spawnDog('carnivore');
@@ -68,7 +93,7 @@ test('carnivore limit rejects without evicting an existing animal', () => {
     assert.deepEqual(entities.animals, original);
     assert.equal(state.world.bodies.length, 21);
 });
-test('all 44 model types spawn and settle on the physical floor', () => {
+test('all 26 model types spawn and settle on the physical floor', () => {
     for (const type of entities.GROUP_ANIMALS.all) {
         entities.clearAllAnimals();
         const animal = spawn(type);
@@ -84,7 +109,7 @@ test('all 44 model types spawn and settle on the physical floor', () => {
 });
 
 test('soft friends squash while the turtle spins and restored jumpers use their own movement', () => {
-    for (const type of ['sheep', 'pig', 'bear', 'snorlax', 'ditto', 'diglett']) {
+    for (const type of ['sheep', 'pig', 'snorlax', 'ditto']) {
         entities.clearAllAnimals();
         const animal = standing(type);
         entities.triggerClickAction(animal);
@@ -98,7 +123,7 @@ test('soft friends squash while the turtle spins and restored jumpers use their 
     assert.equal(turtle.clickActionType, 'spin');
     entities.updateDogs(0.2);
     assert.equal(turtle.body.velocity.z, 0, 'shell spin does not launch the turtle forward');
-    for (const type of ['kangaroo', 'marill']) assert.equal(standing(type).animGroup, 'HOP');
+    for (const type of ['kangaroo', 'baby-dragon']) assert.equal(standing(type).animGroup, 'HOP');
 });
 test('ground queries respect start height and explicit fallback', () => {
     block(0, 25, 0);
@@ -167,7 +192,7 @@ test('animals cannot consume nearby food through a blocking wall', () => {
     assert.equal(animal.isEating, false);
 });
 
-test('balloon recipes ignore reachable food and keep their wandering direction above nearby snacks', () => {
+test('balloon recipes ignore reachable food while drifting slowly above nearby snacks', () => {
     for (const recipe of [['balloon'], ['balloon', 'rainbow'], ['jelly', 'balloon']]) {
         entities.clearAllAnimals();
         const animal = standing('dog');
@@ -175,6 +200,7 @@ test('balloon recipes ignore reachable food and keep their wandering direction a
         entities.updateDogs(1 / 60);
         assert.equal(animal.state, 'walking');
         assert.ok(animal.body.velocity.x > 0, 'ordinary animal first pursues the placed food');
+        animal.mesh.rotation.y = 0;
         applySnack(animal, recipe);
         assert.equal(animal.state, 'idle', `${recipe}: reset the old pursuit immediately`);
         assert.equal(animal.timer, 0);
@@ -195,10 +221,11 @@ test('balloon recipes ignore reachable food and keep their wandering direction a
             state.world.step(1 / 60);
             entities.updateDogs(1 / 60);
             updateMagicEffects(entities.animals, 1 / 60);
-            assert.ok(Math.abs(animal.body.position.x + 200) < 1e-6, `${recipe}: no turn toward nearby food`);
-            assert.ok(Math.hypot(animal.body.velocity.x, animal.body.velocity.z) <= 120 + 1e-8);
+            assert.ok(Math.abs(animal.body.position.x + 200) < 30, `${recipe}: gentle wind never chases nearby food`);
+            assert.ok(Math.hypot(animal.body.velocity.x, animal.body.velocity.z) <= 36 + 1e-8);
+            assert.equal(animal.state, 'idle');
         }
-        assert.ok(animal.body.position.z > 100, `${recipe}: ordinary floating wander continues`);
+        assert.ok(animal.body.position.z > 15 && animal.body.position.z < 100, `${recipe}: actual three-second breeze displacement`);
         assert.equal(food.eaten, false);
         assert.equal(pursued.eaten, false);
         clearAllFood();
@@ -209,6 +236,7 @@ test('a floating animal passes above real food without reversing over it or eati
     const animal = standing('dog', 1, 0);
     const food = spawnFood(new THREE.Vector3(0, 0, 0), []);
     animal.body.position.y += 160; animal.mesh.position.y = 160;
+    animal.mesh.rotation.y = Math.PI / 2;
     applySnack(animal, ['balloon']);
     animal.speed = 300; animal.state = 'walking'; animal.timer = 1000; animal.targetDir.set(1, 0, 0);
     let previousX = animal.body.position.x;
@@ -220,7 +248,7 @@ test('a floating animal passes above real food without reversing over it or eati
         assert.equal(animal.isEating, false);
         previousX = animal.body.position.x;
     }
-    assert.ok(animal.body.position.x > 300, 'leave the food behind instead of hovering and shaking over it');
+    assert.ok(animal.body.position.x > 25 && animal.body.position.x < 120, 'gently drift past food without racing across the board');
     assert.equal(food.eaten, false);
     clearAllFood();
 });
@@ -240,10 +268,15 @@ test('direct apple feeding and balloon expiry restore ordinary pursuit and autom
             assert.equal(food.eaten, false, `${restore}: ignore placed food while floating`);
         }
         assert.ok(animal.body.position.y > animal.heightOffset * 2.5 + 100);
+        // The breeze can travel during twenty seconds; put this landing snack
+        // within reach so the check measures restored feeding, not return time.
+        food.position.set(animal.body.position.x + 70, 0, animal.body.position.z);
+        food.mesh.position.copy(food.position);
         if (restore === 'apple') assert.equal(applySnack(animal, []), true);
         assert.equal(animal.magicEffect, undefined);
         entities.updateDogs(1 / 60);
-        assert.ok(animal.body.velocity.x > 0, `${restore}: pursue food again immediately`);
+        const foodDirection = food.position.clone().sub(animal.body.position).setY(0);
+        assert.ok(animal.body.velocity.x * foodDirection.x + animal.body.velocity.z * foodDirection.z > 0, `${restore}: pursue food again immediately`);
         for (let i = 0; i < 180 && !food.eaten; i++) {
             state.world.step(1 / 60);
             entities.updateDogs(1 / 60);

@@ -291,7 +291,7 @@ test('held pets keep the grab position while their game-time duration still elap
     assert.equal(pet.magicEffect.remaining, 17);
 });
 
-test('all 44 real animal models obey the 40 percent horizontal cap during AI, nearby food and click dash', () => {
+test('all real animal models drift at most 36 units per second despite ground AI, food and click dash', () => {
     for (const type of GROUP_ANIMALS.all) {
         clearAllAnimals();
         clearAllFood();
@@ -300,6 +300,7 @@ test('all 44 real animal models obey the 40 percent horizontal cap during AI, ne
         delete GROUP_ANIMALS.magicTest;
         const halfHeight = pet.heightOffset * 2.5;
         const originalSpeed = pet.speed;
+        const speedLimit = Math.min(originalSpeed * 0.12, 36);
         pet.body.position.set(0, halfHeight, 0);
         pet.mesh.position.set(0, 0, 0);
         pet.body.velocity.set(0, 0, 0);
@@ -307,45 +308,45 @@ test('all 44 real animal models obey the 40 percent horizontal cap during AI, ne
         pet.timer = 10;
         pet.targetDir.set(1, 0, 0);
         applySnack(pet, ['balloon', 'rainbow']);
+        let traveled = 0;
         for (let i = 0; i < 300; i++) {
             if (i === 120) spawnFood(new THREE.Vector3(850, 0, 0), []);
             if (i === 210) { pet.clickActionType = 'dash'; pet.clickActionTimer = 0.7; pet.clickActionPhase = 0; }
+            const before = new THREE.Vector3().copy(pet.body.position);
             state.world.step(1 / 60);
             updateDogs(1 / 60);
             updateMagicEffects(animals, 1 / 60);
-            assert.ok(Math.hypot(pet.body.velocity.x, pet.body.velocity.z) <= originalSpeed * 0.4 + 1e-8, `${type}: speed cap at frame ${i}`);
+            traveled += Math.hypot(pet.body.position.x - before.x, pet.body.position.z - before.z);
+            assert.ok(Math.hypot(pet.body.velocity.x, pet.body.velocity.z) <= speedLimit + 1e-8, `${type}: breeze cap at frame ${i}`);
             assert.equal(pet.speed, originalSpeed, `${type}: unchanged base speed`);
+            assert.equal(pet.state, 'idle', `${type}: airborne motion skips ground AI`);
         }
+        assert.ok(traveled > 5 && traveled < speedLimit * 5, `${type}: actual five-second travel ${traveled}`);
         const bounds = new THREE.Box3().setFromObject(pet.mesh);
         assert.ok(bounds.min.y > 90 && bounds.min.y < 240, `${type}: foot ${bounds.min.y}`);
         assert.ok(bounds.min.x >= -1000 && bounds.max.x <= 1000, `${type}: board`);
     }
 });
 
-test('balloon drift accelerates, brakes and reverses smoothly with rate independent timing', () => {
-    function run(hz) {
+test('balloon breeze ignores alternating sprint commands and accelerates smoothly at different update rates', () => {
+    function run(hz, sprint = true) {
         const pet = animal();
         applySnack(pet, ['balloon']);
         const velocity = [];
         for (let i = 0; i < hz; i++) {
-            pet.body.velocity.x = i < hz / 2 ? 900 : -900;
-            pet.body.velocity.z = i < hz / 2 ? 900 : -900;
+            pet.body.velocity.x = sprint ? (i < hz / 2 ? 900 : -900) : 0;
+            pet.body.velocity.z = pet.body.velocity.x;
             updateMagicEffects([pet], 1 / hz);
             velocity.push(new THREE.Vector3(pet.body.velocity.x, 0, pet.body.velocity.z));
-            assert.ok(velocity.at(-1).length() <= pet.speed * 0.4 + 1e-8);
+            assert.ok(velocity.at(-1).length() <= 26.4 + 1e-8);
+            if (i > 0) assert.ok(velocity.at(-1).distanceTo(velocity.at(-2)) < 26.4 / hz, 'gentle acceleration');
         }
-        const afterReverse = velocity[Math.floor(hz / 2)];
-        assert.ok(afterReverse.x > 0, 'reversing the AI direction should first slow the old drift');
-        assert.ok(velocity.at(-1).x < 0, 'the drift should complete the direction change');
-        const beforeBrake = velocity.at(-1).length();
-        pet.body.velocity.set(0, 0, 0);
-        updateMagicEffects([pet], 0.1);
-        const afterBrake = Math.hypot(pet.body.velocity.x, pet.body.velocity.z);
-        assert.ok(afterBrake > 0 && afterBrake < beforeBrake, 'stopping should glide to rest');
+        assert.ok(velocity.at(-1).z > 5, 'idle animals also drift instead of stopping in midair');
         return velocity.at(-1);
     }
     const reference = run(60);
-    for (const hz of [30, 144]) assert.ok(run(hz).distanceTo(reference) < 1e-8, `${hz} Hz drift response`);
+    assert.ok(run(60, false).distanceTo(reference) < 1e-8, 'ground sprint input cannot steer the wind');
+    for (const hz of [30, 144]) assert.ok(run(hz).distanceTo(reference) < 0.15, `${hz} Hz drift response`);
 });
 
 test('balloon and jelly wall rebound remain capped even after an extreme flee or dash command', () => {
@@ -361,13 +362,13 @@ test('balloon and jelly wall rebound remain capped even after an extreme flee or
         pet.body.velocity.set(5000, 1200, 5000);
         if (i >= 30 && i < 60) pet.magicEffect.pendingWall = new THREE.Vector3(-1, 0, 0);
         updateMagicEffects([pet], 1 / 60);
-        assert.ok(Math.hypot(pet.body.velocity.x, pet.body.velocity.z) <= 64 + 1e-8);
+        assert.ok(Math.hypot(pet.body.velocity.x, pet.body.velocity.z) <= 19.2 + 1e-8);
         if (pet.body.velocity.x < 0) sawReversal = true;
     }
     assert.ok(sawReversal, 'mixed jelly retains its reflected wall motion');
 });
 
-test('real fleeing prey remains slow while a predator approaches', () => {
+test('floating prey keeps the same gentle breeze instead of fleeing from a ground predator', () => {
     GROUP_ANIMALS.magicPrey = ['dog'];
     const pet = spawnDog('magicPrey');
     delete GROUP_ANIMALS.magicPrey;
@@ -378,15 +379,18 @@ test('real fleeing prey remains slow while a predator approaches', () => {
     pet.mesh.position.set(0, 160, 0);
     pet.state = 'walking';
     pet.timer = 10;
+    pet.mesh.rotation.y = 0;
     applySnack(pet, ['balloon']);
     for (let i = 0; i < 120; i++) {
         predator.body.position.set(pet.body.position.x - 100, predator.heightOffset * 2.5, pet.body.position.z);
         state.world.step(1 / 60);
         updateDogs(1 / 60);
         updateMagicEffects(animals, 1 / 60);
-        assert.ok(Math.hypot(pet.body.velocity.x, pet.body.velocity.z) <= pet.speed * 0.4 + 1e-8);
+        assert.ok(Math.hypot(pet.body.velocity.x, pet.body.velocity.z) <= Math.min(pet.speed * 0.12, 36) + 1e-8);
+        assert.equal(pet.state, 'idle');
     }
-    assert.ok(pet.body.position.x > 30, 'prey should still flee, at the slower balloon pace');
+    assert.ok(Math.abs(pet.body.position.x) < 10, 'nearby predator cannot start horizontal sprinting');
+    assert.ok(pet.body.position.z > 10 && pet.body.position.z < 72, 'breeze continues slowly');
 });
 
 test('refeeding does not compound slowdown and apple, replacement or expiry release the cap', () => {
@@ -394,13 +398,14 @@ test('refeeding does not compound slowdown and apple, replacement or expiry rele
     const pet = spawnDog('magicTest');
     delete GROUP_ANIMALS.magicTest;
     const originalSpeed = pet.speed;
+    const speedLimit = Math.min(originalSpeed * 0.12, 36);
     for (let pass = 0; pass < 5; pass++) {
         pet.body.velocity.set(originalSpeed, 0, 0);
         applySnack(pet, ['balloon']);
-        assert.ok(Math.abs(pet.body.velocity.x - originalSpeed * 0.4) < 1e-8);
+        assert.ok(Math.abs(pet.body.velocity.x - speedLimit) < 1e-8);
         updateMagicEffects(animals, 0.1);
         assert.equal(pet.speed, originalSpeed);
-        assert.ok(Math.abs(pet.body.velocity.x - originalSpeed * 0.4) < 1e-8);
+        assert.ok(Math.hypot(pet.body.velocity.x, pet.body.velocity.z) <= speedLimit + 1e-8);
     }
     for (const clear of [() => applySnack(pet, []), () => applySnack(pet, ['rainbow']), () => updateMagicEffects(animals, 20)]) {
         applySnack(pet, ['balloon']);
@@ -482,7 +487,7 @@ test('missing or invalid custom speed stays finite and a zero speed remains stat
             updateMagicEffects([pet], 1 / 60);
             const actualSpeed = Math.hypot(pet.body.velocity.x, pet.body.velocity.z);
             assert.ok(Number.isFinite(actualSpeed));
-            assert.ok(actualSpeed <= (speed === 0 ? 0 : 88) + 1e-8);
+            assert.ok(actualSpeed <= (speed === 0 ? 0 : 26.4) + 1e-8);
         }
         assert.equal(pet.speed, speed);
     }

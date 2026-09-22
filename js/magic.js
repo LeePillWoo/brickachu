@@ -12,8 +12,9 @@ export const SNACK_INGREDIENTS = Object.freeze([
 
 const INGREDIENT_IDS = new Set(SNACK_INGREDIENTS.map(item => item.id));
 const EFFECT_DURATION = 20;
-const BALLOON_SPEED_FACTOR = 0.4;
-const BALLOON_MOVE_RESPONSE = 2.5;
+const BALLOON_SPEED_FACTOR = 0.12;
+const BALLOON_MAX_SPEED = 36;
+const BALLOON_MOVE_RESPONSE = 0.8;
 const BALLOON_BOB_PERIOD = 3.6;
 const BALLOON_BOB_AMPLITUDE = 18;
 const BALLOON_RISE_SPEED = 110;
@@ -26,7 +27,7 @@ let trailGeometry = null;
 
 function balloonSpeedLimit(animal) {
     const speed = Number.isFinite(animal.speed) && animal.speed >= 0 ? animal.speed : 220;
-    return speed * BALLOON_SPEED_FACTOR;
+    return Math.min(speed * BALLOON_SPEED_FACTOR, BALLOON_MAX_SPEED);
 }
 
 function readHorizontalVelocity(body, target) {
@@ -35,9 +36,20 @@ function readHorizontalVelocity(body, target) {
 
 function updateBalloonDrift(animal, effect, dt) {
     const limit = balloonSpeedLimit(animal);
-    readHorizontalVelocity(animal.body, effect.floatTargetVelocity).clampLength(0, limit);
-    // Retain our previous output because normal AI replaces body.velocity each
-    // step. Exponential smoothing gives the same response at every update rate.
+    // Airborne friends follow a soft breeze, independent of ground wandering,
+    // predator flight and click-dash impulses. Keep even the fastest species slow.
+    const phase = effect.elapsed * 0.55 + effect.windPhase;
+    const heading = effect.windHeading + Math.sin(phase) * 0.45;
+    const breezeSpeed = limit * (0.62 + Math.sin(phase * 0.7) * 0.08);
+    effect.floatTargetVelocity.set(Math.sin(heading) * breezeSpeed, 0, Math.cos(heading) * breezeSpeed);
+    for (const axis of ['x', 'z']) {
+        const position = animal.body.position[axis];
+        const inward = THREE.MathUtils.clamp((Math.abs(position) - 700) / 160, 0, 1);
+        effect.floatTargetVelocity[axis] = THREE.MathUtils.lerp(effect.floatTargetVelocity[axis], -Math.sign(position) * breezeSpeed, inward);
+    }
+    if (effect.bounceTimer > 0) effect.floatTargetVelocity.copy(effect.wallBounce);
+    effect.floatTargetVelocity.clampLength(0, limit);
+    // Retain momentum and turn gradually rather than stopping on every idle tick.
     const response = effect.bounceTimer > 0 ? 6 : BALLOON_MOVE_RESPONSE;
     effect.floatVelocity.lerp(effect.floatTargetVelocity, -Math.expm1(-response * dt)).clampLength(0, limit);
     animal.body.velocity.x = effect.floatVelocity.x;
@@ -195,6 +207,8 @@ export function applySnack(animal, ids) {
         wallBounce: new THREE.Vector3(), landingImpact: 0, pendingWall: null,
         floatVelocity: new THREE.Vector3(), floatTargetVelocity: new THREE.Vector3(),
         floatHeading: animal.mesh.rotation.y,
+        windHeading: animal.mesh.rotation.y,
+        windPhase: ((animal.body?.position.x || 0) + (animal.body?.position.z || 0)) * 0.01,
         originalTilt: { x: animal.mesh.rotation.x, z: animal.mesh.rotation.z },
     };
     animal.magicEffect = effect;

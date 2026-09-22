@@ -16,8 +16,6 @@ const POWER_INFO = {
     'baby-dragon': { name: '비눗방울 숨결', description: '친구를 비눗방울에 태워요. 친구를 누르면 뽁!' },
     penguin: { name: '얼음 미끄럼틀', description: '배로 미끄러지며 친구들도 탈 수 있는 물길을 만들어요.' },
     elephant: { name: '코끼리 분수', description: '긴 코에서 반짝이는 물방울을 뿌려요.' },
-    squirtle: { name: '꼬마 물대포', description: '통통 튀는 파란 물방울을 뿜어요.' },
-    bulbasaur: { name: '꽃씨 산책', description: '등에서 꽃이 피고 걸어간 자리에 꽃길이 생겨요.' },
     snail: { name: '알록달록 산책', description: '지나간 자리에 작은 파스텔 도장을 남겨요.' },
 };
 const COLORS = [0xff9ab8, 0x93cfdf, 0xc4a5e8, 0xffd284, 0xaad7a0];
@@ -276,13 +274,13 @@ export function triggerAnimalPower(animal, list) {
     else if (type === 'baby-dragon') startBubble(animal, list);
     else if (type === 'panda') createPins(animal, begin(animal, 'bowling', 2.4, true));
     else if (type === 'otter' || type === 'penguin') begin(animal, 'slide', 3.2, true);
-    else if (type === 'hedgehog' || type === 'bulbasaur') {
+    else if (type === 'hedgehog') {
         const power = begin(animal, 'flowers', 5);
         for (let i = 0; i < 3; i++) {
             const bloom = flower(COLORS[i]); bloom.position.set((i - 1) * 17, power.topY + 3, 0);
             decorate(animal, bloom, 1.6, { bloom: true }, animal.mesh);
         }
-    } else if (type === 'elephant' || type === 'squirtle') begin(animal, 'sprinkle', 1.8);
+    } else if (type === 'elephant') begin(animal, 'sprinkle', 1.8);
     else begin(animal, 'paint', 5);
     return true;
 }

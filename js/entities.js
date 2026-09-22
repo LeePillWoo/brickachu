@@ -15,13 +15,13 @@ export const dogs = animals; // Aliased for backwards compatibility in main.js
 export const MAX_ANIMALS = 20;
 
 export const GROUP_ANIMALS = {
-    quad:       ['dog','cat','sheep','pig','bulbasaur','squirtle','charmander'],
-    hop:        ['rabbit','pikachu','eevee','grasshopper','frog'],
-    sneak:      ['snake','turtle','snail','lizard'],
-    heavy:      ['snorlax','elephant','slowpoke','wobbuffet'],
-    waddle:     ['penguin','psyduck','togepi','clefairy','jigglypuff','meowth'],
-    special:    ['porygon','ditto','diglett','gengar'],
-    carnivore:  ['lion','crocodile','bear'],
+    quad:       ['dog','cat','sheep','pig','giraffe','otter'],
+    hop:        ['rabbit','pikachu','eevee','frog','kangaroo','baby-dragon'],
+    sneak:      ['snake','turtle','snail','crocodile','hedgehog'],
+    heavy:      ['snorlax','elephant'],
+    waddle:     ['penguin','jigglypuff','octopus','crab','panda'],
+    special:    ['ditto'],
+    carnivore:  ['lion','crocodile'],
     ...Object.fromEntries(ANIMAL_CATEGORIES.map(category => [category.id, category.types])),
 };
 
@@ -366,13 +366,13 @@ function canReachFood(animal, food) {
 // ── 애니메이션 그룹 매핑 ──
 const ANIM_TYPE = {};
 [
-    ['WADDLE',    ['penguin', 'psyduck', 'togepi', 'clefairy', 'jigglypuff', 'meowth', 'octopus', 'crab', 'panda']],
-    ['HOP',       ['rabbit', 'pikachu', 'eevee', 'grasshopper', 'frog', 'kangaroo', 'marill', 'baby-dragon']],
-    ['SNEAK',     ['snake', 'turtle', 'snail', 'lizard', 'crocodile', 'hedgehog']],
-    ['HEAVY',     ['snorlax', 'elephant', 'slowpoke', 'wobbuffet']],
-    ['quadruped', ['dog', 'cat', 'sheep', 'pig', 'bulbasaur', 'squirtle', 'charmander', 'horse', 'giraffe', 'vulpix', 'otter']],
-    ['CARNIVORE', ['lion', 'bear']],
-    ['special',   ['porygon', 'ditto', 'diglett', 'gengar']],
+    ['WADDLE',    ['penguin', 'jigglypuff', 'octopus', 'crab', 'panda']],
+    ['HOP',       ['rabbit', 'pikachu', 'eevee', 'frog', 'kangaroo', 'baby-dragon']],
+    ['SNEAK',     ['snake', 'turtle', 'snail', 'crocodile', 'hedgehog']],
+    ['HEAVY',     ['snorlax', 'elephant']],
+    ['quadruped', ['dog', 'cat', 'sheep', 'pig', 'giraffe', 'otter']],
+    ['CARNIVORE', ['lion']],
+    ['special',   ['ditto']],
 ].forEach(([grp, list]) => list.forEach(name => { ANIM_TYPE[name] = grp; }));
 
 const CLICK_ACTION_MAP = {
@@ -386,8 +386,7 @@ const CLICK_ACTION_MAP = {
 };
 
 const CLICK_ACTION_OVERRIDES = {
-    sheep: 'squash', pig: 'squash', bear: 'squash', snorlax: 'squash',
-    ditto: 'squash', diglett: 'squash', turtle: 'spin', horse: 'aerialSpin'
+    sheep: 'squash', pig: 'squash', snorlax: 'squash', ditto: 'squash', turtle: 'spin'
 };
 const CLICK_ACTION_INFO = {
     waddleSpin: { name: '뒤뚱뒤뚱 댄스', description: '톡 누르면 몸을 흔들며 한 바퀴 춤춰요.' },
@@ -440,6 +439,10 @@ const ANIMAL_PALETTES = [
 ];
 
 export function spawnDog(group = 'all') {
+    if (animals.length >= MAX_ANIMALS) {
+        state.onToyNotice?.(`동물 상한선에 도달했어요! 최대 ${MAX_ANIMALS}마리까지 함께 놀 수 있어요. 🐾`);
+        return null;
+    }
     let pool = GROUP_ANIMALS[group] || GROUP_ANIMALS.all;
     const carnivoreCount = animals.filter(a => a.isCarnivore).length;
     if (carnivoreCount >= MAX_CARNIVORES) {
@@ -450,7 +453,6 @@ export function spawnDog(group = 'all') {
         if (pool.length === 0) pool = GROUP_ANIMALS.all.filter(t => !GROUP_ANIMALS.carnivore.includes(t));
     }
     const type = pool[Math.floor(Math.random() * pool.length)];
-    while (animals.length >= MAX_ANIMALS) removeOldestAnimal();
 
     const animalGroup = new THREE.Group();
     const u = voxelSize / 25;
@@ -563,25 +565,6 @@ export function spawnDog(group = 'all') {
         }
         addPart(5, 0.8, 0.5, 0, 3, 37.8, blackMat);
         addPart(2, 0.8, 4, 0, 2.5, 39, matAcc);
-    } else if (type === 'horse') {
-        heightOffset = 32;
-        addSoftPart(20, 20, 40, 0, 32, 0, matBase, 3);
-        addSoftPart(12, 24, 12, 0, 48, 24, matBase, 2);
-        addSoftPart(14, 13, 20, 0, 56, 32, matBase, 3);
-        addSoftPart(13, 6, 8, 0, 52, 41, matSec);
-        addPart(3, 10, 0.8, 0, 58, 42.4, whiteMat);
-        for (const side of [-1, 1]) {
-            addPart(3, 3, 1, side * 4.5, 59, 42.5, blackMat);
-            addPart(1, 1, 0.5, side * 4.5 - 0.5, 59.7, 43.2, whiteMat);
-            addSoftPart(4, 8, 4, side * 4, 65, 26, matBase);
-            addPart(2, 4, 0.8, side * 4, 65, 28.3, matAcc);
-            for (const z of [-16, 16]) {
-                addSoftPart(7, 26, 8, side * 7, 13, z, matBase, 2);
-            }
-        }
-        addPart(5, 22, 6, 0, 48, 17, matSec);
-        addSoftPart(6, 6, 12, 0, 63, 29, matSec);
-        const tail = addSoftPart(6, 24, 6, 0, 28, -23, matSec, 2); tail.rotation.x = -Math.PI / 8;
     } else if (type === 'pikachu') {
         heightOffset = 16;
         const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd83d, roughness: 0.7 });
@@ -611,71 +594,6 @@ export function spawnDog(group = 'all') {
         addPart(5, 10, 4, 7, 20, -11, yellow);
         addPart(9, 5, 4, 10, 25, -11, yellow);
         addPart(8, 12, 4, 12, 32, -11, yellow);
-    } else if (type === 'squirtle') {
-        heightOffset = 16;
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x72c9e9, roughness: 0.7 });
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0xa87851, roughness: 0.8 });
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffe4a8, roughness: 0.8 });
-        addSoftPart(16, 16, 12, 0, 13, 0, blue, 2);
-        addSoftPart(21, 20, 8, 0, 13, -4, cream, 3);
-        addSoftPart(18, 17, 8, 0, 13, -7, brown, 3);
-        addSoftPart(13, 15, 1, 0, 13, 6.2, cream, 3);
-        addPart(9, 0.5, 0.3, 0, 13, 6.85, brown);
-        addSoftPart(18, 17, 16, 0, 29, 4, blue, 2);
-        addPart(5, 0.8, 0.6, 0, 25, 12.3, blackMat);
-        for (const side of [-1, 1]) {
-            addPart(3, 4, 1.5, side * 5.5, 31, 12.3, blackMat);
-            addPart(1, 1.3, 0.5, side * 5.5 - 0.5, 32, 13.3, whiteMat);
-            addSoftPart(6, 6, 7, side * 9, 16, 7, blue);
-            addSoftPart(7, 7, 9, side * 6, 3.5, 5, blue);
-        }
-        addPart(6, 5, 8, 0, 7, -13, blue);
-        addSoftPart(8, 10, 5, 0, 10, -18, blue, 2);
-    } else if (type === 'charmander') {
-        heightOffset = 16;
-        const orange = new THREE.MeshPhysicalMaterial({ color: 0xffa744, roughness: 0.7 });
-        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffe7a0, roughness: 0.8 });
-        const fire = new THREE.MeshPhysicalMaterial({ color: 0xff6948, roughness: 0.6, emissive: 0xff4b20, emissiveIntensity: 0.25 });
-        addSoftPart(16, 18, 16, 0, 13, 0, orange, 2);
-        addSoftPart(12, 14, 1, 0, 12, 8.1, yellow, 3);
-        addSoftPart(18, 17, 16, 0, 29, 4, orange, 2);
-        addSoftPart(9, 4, 2, 0, 25, 12.4, orange, 1.5);
-        addPart(5, 0.8, 0.5, 0, 24.5, 13.5, blackMat);
-        for (const side of [-1, 1]) {
-            addPart(3, 4, 1.5, side * 5.5, 31, 12.4, blackMat);
-            addPart(1, 1.2, 0.5, side * 5.5 - 0.5, 32, 13.4, whiteMat);
-            addSoftPart(5, 8, 5, side * 9, 16, 6, orange);
-            addSoftPart(7, 7, 9, side * 6, 3.5, 5, orange);
-        }
-        addSoftPart(7, 6, 12, 0, 7, -10, orange);
-        addPart(5, 5, 10, 0, 10, -18, orange);
-        addPart(4, 7, 5, 0, 14, -23, orange);
-        addSoftPart(8, 12, 7, 0, 22.5, -23, fire, 3);
-        addSoftPart(4, 7, 1, 0, 21, -19.3, yellow);
-    } else if (type === 'meowth') {
-        heightOffset = 16;
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffdd0, roughness: 0.7 });
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0x986445, roughness: 0.8 });
-        const gold = new THREE.MeshPhysicalMaterial({ color: 0xffcc4d, roughness: 0.45 });
-        addSoftPart(12, 16, 12, 0, 12, 0, cream, 2);
-        addSoftPart(18, 16, 12, 0, 28, 2, cream, 2);
-        addSoftPart(5, 9, 2, 0, 34, 8.5, gold, 1);
-        addPart(0.7, 5, 0.5, 0, 34, 9.8, brown);
-        addPart(2, 1, 1, 0, 25.5, 8.6, brown);
-        addPart(5, 0.7, 0.5, 0, 23, 8.4, blackMat);
-        for (const side of [-1, 1]) {
-            addPart(3, 4, 1.3, side * 5, 29.5, 8.4, blackMat);
-            addPart(1, 1, 0.5, side * 5 - 0.5, 30.5, 9.3, whiteMat);
-            addSoftPart(5, 8, 4, side * 6.5, 38, 2, brown, 1.5);
-            addPart(2.5, 4, 0.7, side * 6.5, 37.5, 4.4, gold);
-            addPart(5, 0.8, 0.8, side * 10, 27, 8, brown);
-            addSoftPart(6, 12, 5, side * 8, 14.5, 2, cream, 2);
-            addSoftPart(6, 5, 9, side * 5, 2.5, 4, brown);
-        }
-        addPart(3, 15, 3, 0, 12, -9, cream);
-        addPart(3, 6, 3, 0, 21, -9, brown);
-        addPart(7, 3, 3, 2, 25, -9, brown);
-        addPart(3, 5, 3, 5, 23, -9, brown);
     } else if (type === 'snorlax') {
         heightOffset = 24;
         const teal = new THREE.MeshPhysicalMaterial({ color: 0x478d95, roughness: 0.8 });
@@ -715,37 +633,6 @@ export function spawnDog(group = 'all') {
         addPart(3, 1, 0.6, 0, 9, 12.4, blackMat);
         addPart(1, 1, 0.6, -2, 10, 12.4, blackMat);
         addPart(1, 1, 0.6, 2, 10, 12.4, blackMat);
-    } else if (type === 'diglett') {
-        heightOffset = 8;
-        const brown = new THREE.MeshPhysicalMaterial({ color: 0xb88358, roughness: 0.9 });
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xf299b0, roughness: 0.65 });
-        const dirt = new THREE.MeshPhysicalMaterial({ color: 0x876652, roughness: 1.0 });
-        addSoftPart(28, 3, 26, 0, 1.5, 0, dirt, 5);
-        addSoftPart(17, 21, 16, 0, 13, 0, brown, 4);
-        addSoftPart(9, 5, 5, 0, 12, 9, pink, 2);
-        for (const side of [-1, 1]) {
-            addPart(2.5, 4, 1, side * 4.5, 18, 8.3, blackMat);
-            addPart(0.8, 1, 0.4, side * 4.5 - 0.3, 19, 9, whiteMat);
-            addSoftPart(6, 5, 6, side * 10, 3.5, 4, dirt, 2);
-        }
-    } else if (type === 'porygon') {
-        heightOffset = 16;
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xef8bad, roughness: 0.6 });
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x68c5e2, roughness: 0.6 });
-        addSoftPart(17, 16, 16, 0, 13, 0, pink, 3);
-        addPart(12, 5, 12, 0, 22, 3, pink);
-        addSoftPart(15, 13, 14, 0, 29, 6, pink, 2);
-        addSoftPart(10, 7, 16, 0, 25, 19, blue, 2);
-        addPart(5, 0.8, 0.5, 0, 24, 27.2, blackMat);
-        for (const side of [-1, 1]) {
-            addPart(5, 5, 1, side * 5, 31, 13.3, whiteMat);
-            addPart(2.5, 3, 0.8, side * 5, 31, 14.1, blackMat);
-            addPart(0.8, 0.8, 0.4, side * 5 - 0.4, 31.8, 14.7, whiteMat);
-            addSoftPart(12, 11, 9, side * 12.5, 12, 0, blue, 3);
-            addSoftPart(9, 4, 12, side * 8, 2, 3, blue, 1);
-        }
-        addSoftPart(6, 6, 10, 0, 12, -12, blue, 1.5);
-        addSoftPart(9, 9, 6, 0, 16, -18, blue, 2);
     } else if (type === 'ditto') {
         heightOffset = 8;
         const purple = new THREE.MeshPhysicalMaterial({ color: 0xd9afe7, roughness: 0.5, transmission: 0.15 });
@@ -935,190 +822,6 @@ export function spawnDog(group = 'all') {
         addPart(5, 5, 10, 0, 12, -12, brown);
         addSoftPart(11, 12, 12, 0, 17, -19, brown, 3);
         addSoftPart(9, 9, 7, 0, 19, -25, cream, 2.5);
-    } else if (type === 'vulpix') {
-        heightOffset = 12;
-        const orange = new THREE.MeshPhysicalMaterial({ color: 0xe8743b, roughness: 0.7 });
-        const redTip = new THREE.MeshPhysicalMaterial({ color: 0xb85132, roughness: 0.8 });
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xfff0c0, roughness: 0.6 });
-        addSoftPart(12, 12, 18, 0, 10, 0, orange, 2);
-        addSoftPart(14, 13, 12, 0, 22, 5, orange, 2);
-        addSoftPart(7, 4, 4, 0, 21, 12, cream, 1);
-        addPart(2, 1.5, 1, 0, 22, 14.5, blackMat);
-        for (const side of [-1, 1]) {
-            addPart(2.5, 3, 1, side * 4, 25, 11.5, blackMat);
-            addPart(0.8, 1, 0.4, side * 4 - 0.4, 25.6, 12.3, whiteMat);
-            addSoftPart(5, 10, 4, side * 5, 33, 5, orange, 1);
-            addPart(3, 4, 3, side * 5, 39, 5, redTip);
-            addPart(2.5, 6, 1, side * 5, 34, 7.5, cream);
-            for (const z of [-6, 6]) addSoftPart(4, 6, 5, side * 4, 3, z, orange, 1);
-        }
-        for (const x of [-5, 0, 5]) {
-            addSoftPart(4, 3, 4, x * 0.5, 29, 5, redTip, 0.6);
-            for (const y of [9, 15]) {
-                addSoftPart(4, 5, 12, x, y, -13, orange, 1);
-                addSoftPart(4, 5, 5, x, y + 2, -21, redTip, 1);
-            }
-        }
-    } else if (type === 'gengar') {
-        heightOffset = 16;
-        const purple = new THREE.MeshPhysicalMaterial({ color: 0x8856b8, roughness: 0.7 });
-        const dpurple = new THREE.MeshPhysicalMaterial({ color: 0x62408e, roughness: 0.8 });
-        const red = new THREE.MeshPhysicalMaterial({ color: 0xff8a9c, roughness: 0.7 });
-        addSoftPart(26, 32, 22, 0, 20, 1, purple, 6);
-        addSoftPart(15, 6, 1, 0, 24, 12.6, whiteMat, 1.5);
-        addPart(10, 0.6, 0.5, 0, 24.8, 13.4, dpurple);
-        for (const side of [-1, 1]) {
-            addPart(4.5, 4, 1, side * 6, 31, 12.6, red);
-            addPart(2, 3, 0.6, side * 6, 31, 13.5, blackMat);
-            addPart(0.8, 1, 0.4, side * 6 - 0.4, 31.7, 14.1, whiteMat);
-            addSoftPart(6, 10, 5, side * 8, 37, 2, purple, 2);
-            addSoftPart(8, 8, 8, side * 13, 17, 3, purple, 2);
-            addSoftPart(8, 8, 9, side * 7, 4, 2, dpurple, 1.5);
-        }
-        for (const x of [-6, 0, 6]) addSoftPart(4, 5, 4, x, 28, -10, dpurple, 1.5);
-        addPart(6, 5, 7, 0, 10, -12, purple);
-    } else if (type === 'psyduck') {
-        heightOffset = 16;
-        const yellow = new THREE.MeshPhysicalMaterial({ color: 0xffd54f, roughness: 0.6 });
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xf6d6a0, roughness: 0.7 });
-        addSoftPart(19, 21, 17, 0, 13.5, 0, yellow, 4);
-        addSoftPart(22, 20, 20, 0, 29, 2, yellow, 4);
-        addSoftPart(12, 6, 9, 0, 26, 14, cream, 2);
-        addPart(6, 0.6, 0.5, 0, 24.8, 18.8, blackMat);
-        for (const side of [-1, 1]) {
-            addSoftPart(5, 5, 0.8, side * 5.5, 32, 12.2, whiteMat, 1.2);
-            addPart(1.6, 2.2, 0.6, side * 5.5, 32, 12.9, blackMat);
-            const arm = addSoftPart(6, 12, 6, side * 11, 26, 4, yellow, 2);
-            arm.rotation.z = -side * 0.25;
-            addSoftPart(8, 4, 10, side * 6, 2, 4, cream, 1);
-        }
-        for (const x of [-3, 0, 3]) addPart(1.2, x === 0 ? 6 : 4, 1.2, x, 39, 1, blackMat);
-        addSoftPart(7, 6, 8, 0, 8, -9, yellow, 1);
-    } else if (type === 'bulbasaur') {
-        heightOffset = 14;
-        const blueGreen = new THREE.MeshPhysicalMaterial({ color: 0x78c878, roughness: 0.7 });
-        const dgreen = new THREE.MeshPhysicalMaterial({ color: 0x228b22, roughness: 0.8 });
-        const spot = new THREE.MeshPhysicalMaterial({ color: 0x3a7d44, roughness: 0.8 });
-        addSoftPart(18, 16, 22, 0, 12, 0, blueGreen, 2);
-        addSoftPart(18, 18, 17, 0, 27, -6, dgreen, 5);
-        addSoftPart(10, 7, 10, 0, 36, -6, dgreen, 3);
-        addSoftPart(18, 14, 16, 0, 24, 10, blueGreen, 2);
-        addPart(5, 0.7, 0.6, 0, 21, 18.5, spot);
-        addPart(3, 2, 0.6, -1, 29, 18.4, spot);
-        for (const side of [-1, 1]) {
-            addPart(3, 4, 1, side * 5, 26, 18.5, blackMat);
-            addPart(1, 1.3, 0.4, side * 5 - 0.5, 26.9, 19.3, whiteMat);
-            addSoftPart(5, 5, 4, side * 6, 32, 10, blueGreen, 1);
-            addPart(0.8, 4, 4, side * 9.3, 13, 2, spot);
-            for (const z of [-8, 8]) addSoftPart(5, 8, 6, side * 6, 4, z, blueGreen, 1);
-        }
-    } else if (type === 'slowpoke') {
-        heightOffset = 18;
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffb6b6, roughness: 0.7 });
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffe0b8, roughness: 0.7 });
-        const rose = new THREE.MeshPhysicalMaterial({ color: 0xd98496, roughness: 0.8 });
-        addSoftPart(22, 18, 34, 0, 16, 0, pink, 3);
-        addSoftPart(20, 16, 18, 0, 26, 14, pink, 2);
-        addSoftPart(15, 6, 5, 0, 23, 24, cream, 1.5);
-        addPart(8, 0.7, 0.6, 0, 21.8, 26.8, rose);
-        for (const side of [-1, 1]) {
-            addPart(3, 3, 1, side * 5.5, 29, 23.5, whiteMat);
-            addPart(1.4, 1.8, 0.6, side * 5.5, 29, 24.4, blackMat);
-            addSoftPart(6, 6, 5, side * 10, 33, 14, pink, 1);
-            addPart(3, 3, 0.8, side * 10, 33, 17, rose);
-            for (const z of [-10, 10]) addSoftPart(8, 10, 9, side * 8, 5, z, pink, 1.5);
-        }
-        addPart(6, 6, 17, 0, 16, -22, pink);
-        addSoftPart(5, 9, 7, 0, 18, -31, pink, 1);
-        addSoftPart(5, 6, 5, 0, 24, -32, cream, 1);
-    } else if (type === 'marill') {
-        heightOffset = 12;
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x5b9bd5, roughness: 0.5 });
-        const lightBlue = new THREE.MeshPhysicalMaterial({ color: 0xadd8e6, roughness: 0.5 });
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xe9a7b6, roughness: 0.7 });
-        addSoftPart(24, 29, 22, 0, 16.5, 0, blue, 6);
-        addSoftPart(16, 12, 0.8, 0, 11, 11.1, whiteMat, 3);
-        addPart(3, 0.7, 0.6, 0, 18, 11.5, blackMat);
-        for (const side of [-1, 1]) {
-            addPart(3, 4, 1, side * 5, 23, 11.5, blackMat);
-            addPart(1, 1.2, 0.4, side * 5 - 0.5, 23.8, 12.3, whiteMat);
-            addSoftPart(10, 10, 5, side * 10, 32, 0, blue, 4);
-            addSoftPart(6, 6, 0.8, side * 10, 32, 2.6, pink, 2);
-            addSoftPart(5, 6, 6, side * 12, 14, 1, blue, 2);
-            addSoftPart(7, 5, 9, side * 7, 2.5, 6, blue, 2);
-        }
-        addPart(2, 2, 8, 0, 14, -13, blackMat);
-        addPart(6, 2, 2, 2, 14, -17, blackMat);
-        addPart(2, 2, 6, 4, 14, -20, blackMat);
-        addSoftPart(8, 8, 8, 4, 14, -26, blue, 1.5);
-        addPart(2, 2, 0.6, 2, 16, -21.7, lightBlue);
-    } else if (type === 'togepi') {
-        heightOffset = 14;
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xfffacd, roughness: 0.6 });
-        const red = new THREE.MeshPhysicalMaterial({ color: 0xff4444, roughness: 0.7 });
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x4488ff, roughness: 0.7 });
-        addSoftPart(21, 21, 18, 0, 12.5, 0, whiteMat, 5);
-        addSoftPart(17, 15, 15, 0, 27, 0, cream, 3);
-        addPart(3, 2, 0.8, 0, 26, 8, blackMat);
-        addPart(1.5, 0.7, 0.5, 0, 25.5, 8.7, red);
-        for (const side of [-1, 1]) {
-            addPart(2.5, 3, 1, side * 4.5, 30, 8, blackMat);
-            addPart(0.8, 1, 0.4, side * 4.5 - 0.4, 30.6, 8.8, whiteMat);
-            addSoftPart(5, 9, 5, side * 6, 35, 0, cream, 1.5);
-            addSoftPart(6, 7, 6, side * 10, 20, 0, cream, 2);
-            addSoftPart(5, 4, 6, side * 6, 2, 3, cream, 1);
-        }
-        addSoftPart(5, 10, 5, 0, 37, 0, cream, 1.5);
-        for (const [x, y, material] of [[-5, 15, red], [5, 11, blue], [0, 20, blue]]) {
-            const patch = addPart(3.5, 3.5, 0.5, x, y, 9.2, material);
-            patch.rotation.z = Math.PI / 4;
-        }
-    } else if (type === 'clefairy') {
-        heightOffset = 16;
-        const pink = new THREE.MeshPhysicalMaterial({ color: 0xffafd7, roughness: 0.6 });
-        const dpink = new THREE.MeshPhysicalMaterial({ color: 0xe887b4, roughness: 0.7 });
-        addSoftPart(18, 18, 16, 0, 12, 0, pink, 3);
-        addSoftPart(18, 17, 16, 0, 26, 2, pink, 2.5);
-        addPart(4, 1, 0.8, 0, 25, 10.5, blackMat);
-        addPart(1, 1.5, 0.8, -2, 25.5, 10.5, blackMat);
-        addPart(1, 1.5, 0.8, 2, 25.5, 10.5, blackMat);
-        addSoftPart(6, 4, 3, 0, 34, 8, pink, 1);
-        addPart(3, 3, 1, -1.5, 33, 10, dpink);
-        for (const side of [-1, 1]) {
-            addPart(2.5, 3, 1, side * 4.5, 29, 10.5, blackMat);
-            addPart(0.9, 1, 0.4, side * 4.5 - 0.4, 29.7, 11.3, whiteMat);
-            addSoftPart(3, 2, 1, side * 6.5, 25.5, 10.2, dpink, 0.5);
-            addSoftPart(6, 8.5, 4, side * 6, 35.75, 2, pink, 1);
-            addSoftPart(4, 4, 4, side * 7, 40.5, 2, blackMat, 0.8);
-            addPart(3, 6, 0.8, side * 6, 36, 4.3, dpink);
-            addSoftPart(8, 10, 3, side * 10, 18, -7, dpink, 2);
-            addSoftPart(5, 8, 5, side * 10, 14, 4, pink, 1);
-            addSoftPart(6, 6, 8, side * 5, 3, 5, pink, 1);
-        }
-        addSoftPart(6, 6, 10, 0, 12, -10, pink, 1);
-        addPart(5, 8, 4, 0, 15, -15, dpink);
-        addPart(5, 3, 5, 0, 19, -14.5, pink);
-    } else if (type === 'wobbuffet') {
-        heightOffset = 28;
-        const blue = new THREE.MeshPhysicalMaterial({ color: 0x62a7df, roughness: 0.6 });
-        const dblue = new THREE.MeshPhysicalMaterial({ color: 0x1a5a9a, roughness: 0.7 });
-        addSoftPart(24, 51, 20, 0, 27.5, 0, blue, 6);
-        addSoftPart(6, 3, 0.8, 0, 38.5, 10.3, blackMat, 1);
-        for (const side of [-1, 1]) {
-            addPart(3, 3, 1, side * 4.5, 44, 10.3, blackMat);
-            addPart(1, 1, 0.4, side * 4.5 - 0.5, 44.6, 11.1, whiteMat);
-            const arm = addSoftPart(7, 17, 7, side * 13.5, 29, 0, blue, 2.5);
-            arm.rotation.z = side * 0.15;
-            addSoftPart(8, 4, 12, side * 6, 2, 3, blue, 1.5);
-            addPart(3, 3, 1, side * 2.3, 10, -24.4, whiteMat);
-            addPart(1.4, 1.8, 0.6, side * 2.3, 10, -25.1, blackMat);
-            addPart(0.5, 0.6, 0.3, side * 2.3 - 0.2, 10.5, -25.55, whiteMat);
-        }
-        addSoftPart(8, 8, 12, 0, 8, -12, dblue, 1.5);
-        addSoftPart(9, 9, 8, 0, 8.5, -20, dblue, 1.5);
-        addPart(3, 1, 0.8, 0, 6.5, -24.6, blackMat);
-
-    // ── 신규: 점프 그룹 ──
     } else if (type === 'kangaroo') {
         heightOffset = 28;
         const tan = new THREE.MeshPhysicalMaterial({ color: 0xd7a35d, roughness: 0.8 });
@@ -1143,29 +846,6 @@ export function spawnDog(group = 'all') {
         addSoftPart(8, 6, 12, 0, 12, -13, tan, 1);
         addSoftPart(6, 4, 10, 0, 9, -21, tan, 1);
         addSoftPart(3, 3, 6, 0, 7, -27, light, 0.7);
-
-    } else if (type === 'grasshopper') {
-        heightOffset = 12;
-        const green = new THREE.MeshPhysicalMaterial({ color: 0x74bd65, roughness: 0.7 });
-        const dgreen = new THREE.MeshPhysicalMaterial({ color: 0x40874b, roughness: 0.8 });
-        const light = new THREE.MeshPhysicalMaterial({ color: 0xb9e289, roughness: 0.8 });
-        addSoftPart(10, 8, 28, 0, 8, 0, green, 2);
-        addSoftPart(10, 10, 10, 0, 14, 18, green, 2);
-        addPart(3, 1, 0.8, 0, 12, 23.6, blackMat);
-        for (const side of [-1, 1]) {
-            addSoftPart(4, 3, 22, side * 2.8, 12, -2, light, 0.7);
-            addPart(3, 3, 1, side * 3, 16, 23.5, blackMat);
-            addPart(1, 1, 0.4, side * 3 - 0.4, 16.7, 24.3, whiteMat);
-            addPart(1, 5, 1, side * 3, 21.5, 18, dgreen);
-            addPart(1, 1, 6, side * 3, 24, 15.5, dgreen);
-            addSoftPart(2, 2, 2, side * 3, 24, 13, light, 0.5);
-            const thigh = addSoftPart(4, 10, 4, side * 6, 8, -4, dgreen, 1);
-            thigh.rotation.x = -0.55;
-            addSoftPart(2, 6, 3, side * 7, 5, -8, green, 0.5);
-            addSoftPart(6, 2, 5, side * 7, 1, -8, light, 0.5);
-            addSoftPart(3, 3.5, 3, side * 5, 3.75, 9, green, 0.7);
-            addSoftPart(4, 2, 5, side * 5, 1, 11, light, 0.5);
-        }
 
     } else if (type === 'frog') {
         heightOffset = 10;
@@ -1208,51 +888,6 @@ export function spawnDog(group = 'all') {
             addSoftPart(4, 4, 0.6, side * 10.3, 17, -5, spiral, 1.5).rotation.y = side * Math.PI / 2;
         }
 
-    } else if (type === 'lizard') {
-        heightOffset = 8;
-        const liz = new THREE.MeshPhysicalMaterial({ color: 0x9dca62, roughness: 0.7 });
-        const dliz = new THREE.MeshPhysicalMaterial({ color: 0x558b2f, roughness: 0.8 });
-        const cream = new THREE.MeshPhysicalMaterial({ color: 0xe2edbb, roughness: 0.8 });
-        addSoftPart(10, 6, 36, 0, 4, 0, liz, 1.5);
-        addSoftPart(8, 2, 28, 0, 2, 2, cream, 0.5);
-        addSoftPart(14, 10, 12, 0, 8, 20, liz, 2);
-        addSoftPart(7, 3, 2, 0, 6.5, 26.3, cream, 0.7);
-        addPart(4, 1, 0.6, 0, 6.4, 27.7, blackMat);
-        for (const side of [-1, 1]) {
-            addPart(2.8, 3, 1, side * 4, 11, 26.5, blackMat);
-            addPart(1, 1, 0.4, side * 4 - 0.5, 11.7, 27.3, whiteMat);
-            for (const z of [-8, 10]) {
-                addSoftPart(4, 3, 5, side * 7, 2.5, z, liz, 0.7);
-                addSoftPart(5, 2, 6, side * 8, 1, z + 2, cream, 0.5);
-            }
-        }
-        for (const z of [-6, 4]) addPart(3, 0.8, 6, 0, 7.3, z, dliz);
-        addSoftPart(6, 4, 10, 0, 4, -21, liz, 1);
-        addSoftPart(4, 3, 8, 0, 4, -28, liz, 0.7);
-        addSoftPart(2, 2, 6, 2, 5, -33, dliz, 0.5);
-
-    // ── 신규: 육식동물 그룹 ──
-    } else if (type === 'bear') {
-        heightOffset = 30;
-        const brn = new THREE.MeshPhysicalMaterial({ color: 0x976442, roughness: 0.9 });
-        const lbrn = new THREE.MeshPhysicalMaterial({ color: 0xd6a675, roughness: 0.8 });
-        addSoftPart(28, 30, 22, 0, 21, 0, brn, 6);
-        addSoftPart(18, 18, 1, 0, 20, 11.1, lbrn, 5);
-        addSoftPart(30, 25, 24, 0, 43, 2, brn, 6);
-        addSoftPart(12, 8, 4, 0, 39.5, 14.5, lbrn, 3);
-        addSoftPart(4, 3, 1.5, 0, 41, 16.9, blackMat, 1);
-        addPart(1, 1.8, 0.6, 0, 38.8, 16.9, blackMat);
-        addSoftPart(5, 1, 0.6, 0, 37.8, 16.9, blackMat, 0.5);
-        for (const side of [-1, 1]) {
-            addSoftPart(3.2, 3.5, 1, side * 7, 46, 14.4, blackMat, 1.2);
-            addPart(1, 1, 0.4, side * 7 - 0.5, 46.7, 15.1, whiteMat);
-            addSoftPart(10, 10, 8, side * 11.5, 55, 2, brn, 4);
-            addSoftPart(5.5, 5.5, 0.8, side * 11.5, 55, 6.1, lbrn, 2);
-            const arm = addSoftPart(10, 16, 10, side * 17, 25, 1, brn, 4);
-            arm.rotation.z = -side * 0.15;
-            addSoftPart(12, 10, 14, side * 8, 5, 6, brn, 4);
-        }
-        addSoftPart(6, 6, 6, 0, 15, -11, brn, 2.5);
     } else if (type === 'otter') {
         heightOffset = 19;
         const brown = new THREE.MeshPhysicalMaterial({ color: 0x987457, roughness: 0.9 });
@@ -1564,15 +1199,6 @@ export function detachAnimalsForExplosion() {
     return parts;
 }
 
-function removeOldestAnimal() {
-    const animal = animals.shift();
-    if (animal) {
-        detachAnimalBody(animal);
-        disposeAnimalMesh(animal.mesh);
-        if (animal.livingId) pushHistory();
-    }
-}
-
 function getAnimalFullHeight(animal) {
     return animal.heightOffset * (voxelSize / 10);
 }
@@ -1643,17 +1269,13 @@ export function updateDogs(dt) {
             return;
         }
 
-        // A direct feed can request its eating animation after applySnack has
-        // started floating. Resume wandering instead of holding over the food.
-        if (animal.magicEffect?.ingredients.includes('balloon') && animal.isEating) {
-            animal.isEating = false;
-            animal.eatTimer = 0;
-            animal.state = 'idle';
-            animal.timer = 0;
-        }
-
         // ── 착지 감지 ──
-        if (animal.animalPower?.controlsMotion) {
+        if (animal.magicEffect?.ingredients.includes('balloon')) {
+            // Floating friends follow magic's breeze instead of ground AI.
+            animal.state = 'idle'; animal.timer = 0;
+            animal.isEating = false; animal.eatTimer = 0;
+            animal.isClimbing = false; animal.climbMeshRotX = 0;
+        } else if (animal.animalPower?.controlsMotion) {
             // A short toy ride owns movement and feeding until it finishes.
             animal.isClimbing = false;
             animal.climbMeshRotX = 0;

@@ -57,17 +57,20 @@ test('batching preserves rotated silhouettes, picking and owned-resource cleanup
     group.children.find(child => child.isMesh).geometry.dispose(); shared.dispose(); material.dispose();
 });
 
-test('all 44 animal models fit mobile draw budgets, retain picking and stand above ground', () => {
+test('all 26 animal models fit mobile draw budgets, retain picking and stand above ground', () => {
     state.scene = new THREE.Scene();
     state.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -1470, 0) });
     const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
     ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0); state.world.addBody(ground);
     const types = GROUP_ANIMALS.all;
-    assert.equal(new Set(types).size, 44);
+    assert.equal(new Set(types).size, 26);
     const categorized = ANIMAL_CATEGORIES.filter(category => category.id !== 'all').flatMap(category => category.types);
     assert.equal(categorized.length, types.length, 'each friend belongs to exactly one browsing category');
     assert.deepEqual(new Set(categorized), new Set(types));
     assert.deepEqual(new Set(Object.keys(ANIMAL_NAMES)), new Set(types), 'all friends have visible Korean names');
+    for (const group of Object.values(GROUP_ANIMALS)) {
+        assert.ok(group.every(type => types.includes(type)), 'removed friends cannot appear in legacy spawn groups');
+    }
     for (const type of types) {
         GROUP_ANIMALS.modelCheck = [type];
         const animal = spawnDog('modelCheck');

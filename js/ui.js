@@ -6,7 +6,7 @@ import { spawnDog, removeAllAnimalsWithEffect } from './entities.js';
 import { clearAllFoodWithEffect } from './food.js';
 import { onPointerCancel } from './input.js';
 import { setupToyUI } from './toy-ui.js';
-import { clearTrain } from './train.js';
+import { clearTrain, spawnTrain } from './train.js';
 import { ANIMAL_CATEGORIES } from './animal-catalog.js';
 
 export function setupPalette() {
@@ -173,7 +173,7 @@ export function setupModeButtons() {
     btnTrain.addEventListener('click', e => {
         e.stopPropagation();
         activateToyMode('train');
-        state.onToyNotice?.('바닥에 기차를 놓아줘! 기차를 끌면 마법 길이 생겨 🚂');
+        if (spawnTrain()) state.onToyNotice?.('기차 출발! 기차를 끌면 마법 길을 따라 달려요 🚂');
     });
 
     btnBlock.addEventListener('click', (e) => {

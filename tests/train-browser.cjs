@@ -82,10 +82,24 @@ function assertCamera(before, after) {
 }
 async function placeTrain(page, position, touch = false) {
     await page.locator('#btn-train')[touch ? 'tap' : 'click']();
+    // The button now summons immediately. Reset that engine so this fixture
+    // can also exercise the optional floor-click placement at a precise point.
+    await page.evaluate(() => qa.clearTrain());
     const point = await project(page, position);
     if (touch) await page.touchscreen.tap(point.x, point.y);
     else await page.mouse.click(point.x, point.y);
     await page.waitForFunction(() => Boolean(qa.state.train?.mesh.parent));
+}
+async function checkAnimalCap(page, touch = false) {
+    await page.evaluate(() => {
+        qa.GROUP_ANIMALS.capFixture = ['dog'];
+        while (qa.animals.length < 20) qa.spawnDog('capFixture');
+        delete qa.GROUP_ANIMALS.capFixture;
+        qa.cappedFriends = [...qa.animals]; qa.cappedTrain = qa.state.train;
+    });
+    for (let i = 0; i < 2; i++) await page.locator('#add-dog-btn')[touch ? 'tap' : 'click']();
+    check(`${touch ? 'Mobile' : 'Desktop'} animal button at capacity shows a notice and preserves every friend and the train`, await page.evaluate(() => qa.animals.length === 20 && qa.animals.every((animal, index) => animal === qa.cappedFriends[index]) && qa.state.train === qa.cappedTrain && document.getElementById('toy-notice').textContent.includes('상한선')));
+    await page.evaluate(() => qa.clearAllAnimals());
 }
 async function createPassengerFixture(page, touch = false) {
     await page.evaluate(() => {
@@ -276,7 +290,15 @@ async function checkWallBreakthrough(page) {
             const errors = []; page.on('pageerror', error => errors.push(error.message));
             await initialize(page, url); await resetFixture(page);
             await page.locator('#btn-train').click(); await page.locator('#btn-train').click();
-            check('Repeated train button clicks keep train mode without creating anything', await page.evaluate(() => qa.state.currentMode === 'train' && !qa.state.train && qa.objects.length === 1 && document.getElementById('btn-train').classList.contains('active')));
+            check('Train button clicks immediately summon one locomotive without a floor click', await page.evaluate(() => qa.state.currentMode === 'train' && qa.state.train?.mesh.parent && qa.state.scene.children.filter(child => child.name === 'friend-train').length === 1 && qa.objects.length === 1 && qa.foods.length === 0 && document.getElementById('btn-train').classList.contains('active')));
+            for (const key of ['Enter', 'Space']) {
+                await page.evaluate(() => { qa.previousButtonTrain = qa.state.train; });
+                await page.locator('#btn-train').focus(); await page.keyboard.press(key);
+                check(`${key} summons a replacement train immediately and disposes the previous engine`, await page.evaluate(() => qa.state.train && qa.state.train !== qa.previousButtonTrain && !qa.previousButtonTrain.mesh.parent && qa.state.scene.children.filter(child => child.name === 'friend-train').length === 1));
+            }
+            await page.screenshot({ path: '.tmp/qa/train-auto-desktop.png' });
+            await checkAnimalCap(page);
+            await page.evaluate(() => qa.clearTrain());
             await createPassengerFixture(page);
             await placeTrain(page, [0, 0, 0]);
             await page.evaluate(() => { qa.far.isCarnivore = true; });
@@ -341,6 +363,15 @@ async function checkWallBreakthrough(page) {
         const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
         const errors = []; mobile.on('pageerror', error => errors.push(error.message));
         await initialize(mobile, url); await resetFixture(mobile);
+        await mobile.locator('#btn-train').tap();
+        check('One mobile toolbar tap immediately summons a train on visible empty ground', await mobile.evaluate(() => {
+            if (!qa.state.train?.mesh.parent) return false;
+            const point = qa.state.train.position.clone().setY(45).project(qa.state.camera);
+            return document.elementFromPoint((point.x + 1) * innerWidth / 2, (1 - point.y) * innerHeight / 2) === qa.state.renderer.domElement && qa.objects.length === 1 && qa.foods.length === 0;
+        }));
+        await mobile.screenshot({ path: '.tmp/qa/train-auto-mobile.png' });
+        await checkAnimalCap(mobile, true);
+        await mobile.evaluate(() => qa.clearTrain());
         await createPassengerFixture(mobile, true);
         await placeTrain(mobile, [0, 0, 0], true);
         await mobile.evaluate(() => { qa.far.isCarnivore = true; });

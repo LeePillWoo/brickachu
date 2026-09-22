@@ -129,7 +129,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
             await page.waitForFunction(y => qa.animals[0].body.position.y > y + 35, beforeFeeding, { polling: 50 });
             check('Balloon friend inflates, floats and slows down', await page.evaluate(() => {
                 const friend = qa.animals[0];
-                return friend.mesh.getObjectByName('snack-balloon-shell') !== undefined && friend.mesh.scale.x > 1 && Math.hypot(friend.body.velocity.x, friend.body.velocity.z) <= friend.speed * 0.4 + 1e-6;
+                return friend.mesh.getObjectByName('snack-balloon-shell') !== undefined && friend.mesh.scale.x > 1 && Math.hypot(friend.body.velocity.x, friend.body.velocity.z) <= Math.min(friend.speed * 0.12, 36) + 1e-6;
             }));
             await page.screenshot({ path: '.tmp/qa/snacks-desktop.png' });
             for (const index of [2,3,0]) { await page.locator('#btn-food').click(); assertRecipe(await readToolbar(page), index); }
