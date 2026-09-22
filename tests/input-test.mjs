@@ -291,6 +291,31 @@ check('eyes cancel and UI gestures leave block creations untouched', () => {
     click(event(225, 25));
     assert.equal(count(), 1); assert.equal(animals.length, 0);
 });
+check('eyes and train tools still activate animal powers with mouse or touch', () => {
+    for (const mode of ['eyes', 'train']) for (const pointerType of ['mouse', 'touch']) {
+        GROUP_ANIMALS.powerTap = ['otter'];
+        const animal = spawnDog('powerTap'); delete GROUP_ANIMALS.powerTap;
+        animal.body.position.set(25, animal.heightOffset * 2.5, 25);
+        animal.mesh.position.set(25, 0, 25); animal.mesh.rotation.set(0, 0, 0);
+        const train = spawnTrain(new THREE.Vector3(-300, 0, 25));
+        state.currentMode = mode; click(event(25, 25, { pointerType }));
+        assert.equal(animal.animalPower?.type, 'slide', `${mode}/${pointerType}`);
+        assert.equal(state.train, train); assert.equal(count(), 0);
+        assert.ok(state.scene.children.some(mesh => mesh.name === 'animal-water-slide'), 'water appears on the tap itself');
+        clearTrain(); clearAllAnimals();
+    }
+});
+check('a short animal tap survives animal movement and never edits the surface behind it', () => {
+    for (const pointerType of ['mouse', 'touch']) {
+        const animal = fixtureAnimal();
+        const tap = event(25, 25, { pointerType });
+        onPointerDown(tap);
+        animal.mesh.position.x += 100; animal.body.position.x += 100;
+        onPointerUp(tap);
+        assert.ok(animal.clickActionTimer > 0, 'the originally pressed friend receives the tap');
+        assert.equal(count(), 0); clearAllAnimals();
+    }
+});
 check('snack mode directly feeds a block friend and ordinary apple restores it', () => {
     placeVoxel(new THREE.Vector3(25, 25, 25));
     state.currentMode = 'eyes'; click(event());
@@ -312,7 +337,7 @@ check('placed magic snacks keep a copy of the chosen recipe', () => {
     assert.equal(count(), 0);
 });
 
-check('train mode places one train only on the floor and a new floor tap replaces it', () => {
+check('train mode places the first train on the floor and later floor taps preserve it', () => {
     state.currentMode = 'train';
     click(event(25, 25, { target: input }));
     click(event(25, 25, { button: 2 }));
@@ -329,9 +354,9 @@ check('train mode places one train only on the floor and a new floor tap replace
     assert.ok(first.position.distanceTo(new THREE.Vector3(25, 0, 25)) < 1e-8);
     click(event(425));
     assert.ok(state.train);
-    assert.notEqual(state.train, first);
-    assert.equal(first.mesh.parent, null);
-    assert.ok(state.train.position.distanceTo(new THREE.Vector3(425, 0, 25)) < 1e-8);
+    assert.equal(state.train, first);
+    assert.equal(first.mesh.parent, state.scene);
+    assert.ok(state.train.position.distanceTo(new THREE.Vector3(25, 0, 25)) < 1e-8);
     assert.equal(count(), 1);
     assert.equal(foods.length, 0);
 });

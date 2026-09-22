@@ -15,7 +15,8 @@ export function setupToyUI() {
         noticeTimer = setTimeout(() => notice.classList.remove('visible'), 3200);
     };
 
-    function cycleSnack() {
+    function cycleSnack(advance = true) {
+        if (!advance) return describeRecipe(state.snackIngredients);
         const current = normalizeIngredients(state.snackIngredients).at(-1) ?? null;
         const next = snackCycle[(snackCycle.indexOf(current) + 1) % snackCycle.length];
         state.snackIngredients = next ? [next] : [];
@@ -36,8 +37,9 @@ export function setupToyUI() {
         const ingredient = SNACK_INGREDIENTS.find(item => item.id === selected[0]);
         const recipeName = describeRecipe(selected);
         foodButton.textContent = ingredient?.icon || '🍎';
-        foodButton.title = `${recipeName} · 누르면 다음 간식`;
-        foodButton.setAttribute('aria-label', `${recipeName} · 누르면 다음 간식`);
+        const action = mode === 'food' ? '다시 누르면 다음 간식' : '눌러 먹이기 시작';
+        foodButton.title = `${recipeName} · ${action}`;
+        foodButton.setAttribute('aria-label', `${recipeName} · ${action}`);
     }
 
     sync();

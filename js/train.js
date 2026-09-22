@@ -7,11 +7,11 @@ import { explodeBlockHeavy } from './scene.js';
 import { createSoftBoxGeometry, mergeStaticParts } from './model-utils.js';
 
 export const TRAIN_SPEED = 110;
-export const TRAIN_JOIN_RADIUS = 300;
 export const MAX_TRAIN_ROUTE_POINTS = 160;
 export const MAX_TRAIN_ROUTE_LENGTH = 8000;
 const TRAIN_RADIUS = 68, TRAIN_HEIGHT = 110;
-const BOARD_LIMIT = 900, JOIN_INTERVAL = 0.65, MAX_TRAIL_POINTS = 4096;
+const BOARD_LIMIT = 900, MAX_TRAIL_POINTS = 4096;
+const ENGINE_HALF_WIDTH = 37, ENGINE_HALF_LENGTH = 52, ENGINE_CENTER_Z = 4, ENGINE_HEIGHT = 91;
 const ROPE_SEGMENTS = 8, ROPE_RADIUS = 3, ROPE_MIN_PIXELS = 2;
 const DRIVE_BEATS = ['train-chuff', 'train-chuff', 'train-puff', 'train-puff'];
 const isLivingBlock = animal => Boolean(animal?.livingId) || animal?.animalType === 'living-block';
@@ -246,7 +246,7 @@ export function spawnTrain(point = findTrainSpawnPoint()) {
         ...model, position, followers: [], route: [], routeIndex: 0, drawing: false,
         pathVisual: null, pathFade: 0, routeBackup: null, draftLength: 0,
         trail: [{ position: position.clone(), distance: 0 }], distance: 0,
-        heading: 0, autoGoal: null, recruitTimer: 0, elapsed: 0,
+        heading: 0, autoGoal: null, elapsed: 0,
         ropeGroup: new THREE.Group(), ropes: [], ropeGeometry: null, ropeMaterial: null,
         chuffDistance: 0, chuffPhase: 0, runningTime: 0, pingTimer: 5 + Math.random() * 4,
         speed: TRAIN_SPEED, blockedNotice: false
@@ -346,43 +346,78 @@ function recordTrail(train, position) {
     if (previous && last.distance - previous.distance < 8 && oldDirection.dot(newDirection) > 0.999999) {
         last.position.copy(position); last.distance = train.distance;
     } else train.trail.push({ position: position.clone(), distance: train.distance });
-    // A bounded real trajectory lasts far longer than a full twenty-friend tail.
+    // A bounded real trajectory lasts far longer than a full thirty-friend tail.
     while (train.trail.length > MAX_TRAIL_POINTS) train.trail.shift();
 }
 
-function recruit(train) {
-    const tail = train.followers.at(-1);
-    const meeting = tail?.trainRide?.lastPosition || train.position;
-    const candidates = animals.filter(animal => animal.body && !cannotRide(animal) && !animal.grabbed && !animal.trainRide && !(animal.trainJoinCooldown > 0)
-        && animal.body.position.y - animal.heightOffset * (voxelSize / 20) < 260)
-        .map(animal => ({ animal, distance: Math.hypot(animal.body.position.x - meeting.x, animal.body.position.z - meeting.z) }))
-        .filter(candidate => candidate.distance <= TRAIN_JOIN_RADIUS).sort((a, b) => a.distance - b.distance);
-    for (const { animal } of candidates) {
-        const from = new THREE.Vector3(animal.body.position.x, 0, animal.body.position.z), size = followerSize(animal);
-        const convoy = convoySize(train);
-        if (!clearSegment(train.position, train.position, Math.max(convoy.radius, size.radius))) continue;
-        // Admission is friendly immediately, including while waiting for room.
-        if (!clearSegment(from, meeting, size.radius)) continue;
-        const forward = new THREE.Vector3(Math.sin(train.heading), 0, Math.cos(train.heading));
-        const side = new THREE.Vector3(forward.z, 0, -forward.x);
-        const relative = from.clone().sub(train.position);
-        const safeGap = TRAIN_RADIUS + size.radius + 20;
-        let approach = null;
-        if (relative.dot(forward) > 0 && Math.abs(relative.dot(side)) < safeGap) {
-            for (const sign of [Math.sign(relative.dot(side)) || 1, -(Math.sign(relative.dot(side)) || 1)]) {
-                const candidate = from.clone().addScaledVector(side, sign * safeGap - relative.dot(side));
-                const behind = train.position.clone().addScaledVector(side, sign * safeGap).addScaledVector(forward, -safeGap);
-                if (clearSegment(from, candidate, size.radius) && clearSegment(candidate, behind, size.radius)) {
-                    approach = [candidate, behind]; break;
-                }
-            }
-            if (!approach) continue;
+// Swept SAT for the engine's real footprint against an animal's world bounds.
+// Testing both rectangles' axes avoids the old diagonal-radius early pickups.
+function engineContact(train, from, to, bounds) {
+    if (bounds.min.y >= ENGINE_HEIGHT || bounds.max.y <= 1) return null;
+    const forward = new THREE.Vector3(Math.sin(train.heading), 0, Math.cos(train.heading));
+    const side = new THREE.Vector3(forward.z, 0, -forward.x);
+    const center = bounds.getCenter(new THREE.Vector3()), half = bounds.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+    const start = from.clone().addScaledVector(forward, ENGINE_CENTER_Z).sub(center), delta = to.clone().sub(from);
+    let enter = 0, leave = 1;
+    for (const axis of [new THREE.Vector3(1,0,0), new THREE.Vector3(0,0,1), side, forward]) {
+        const radius = Math.abs(axis.x) * half.x + Math.abs(axis.z) * half.z +
+            Math.abs(axis.dot(side)) * ENGINE_HALF_WIDTH + Math.abs(axis.dot(forward)) * ENGINE_HALF_LENGTH;
+        const position = start.dot(axis), movement = delta.dot(axis);
+        if (Math.abs(movement) < 1e-9) { if (Math.abs(position) > radius) return null; }
+        else {
+            const a = (-radius - position) / movement, b = (radius - position) / movement;
+            enter = Math.max(enter, Math.min(a,b)); leave = Math.min(leave, Math.max(a,b));
         }
-        animal.trainRide = { train, joining: true, distance: train.trail[0].distance, lastPosition: from.clone(), approach, waitTime: 0 };
+        if (enter > leave) return null;
+    }
+    return enter;
+}
+
+function recruit(train, before) {
+    const contacts = [];
+    for (const animal of animals) {
+        if (!animal.body || cannotRide(animal) || animal.grabbed || animal.trainRide || animal.trainJoinCooldown > 0) continue;
+        animal.mesh.updateWorldMatrix(true, true);
+        const bounds = new THREE.Box3().setFromObject(animal.mesh);
+        bounds.translate(new THREE.Vector3(0, animal.body.position.y - animal.heightOffset * (voxelSize / 20) - animal.mesh.position.y, 0));
+        const relativeEnd = train.position.clone().sub(new THREE.Vector3(animal.body.position.x - animal.mesh.position.x, 0, animal.body.position.z - animal.mesh.position.z));
+        const contact = engineContact(train, before, relativeEnd, bounds);
+        if (contact !== null) contacts.push({ animal, contact });
+    }
+    contacts.sort((a,b) => a.contact - b.contact);
+    for (const { animal } of contacts) {
+        const from = new THREE.Vector3(animal.body.position.x, 0, animal.body.position.z), size = followerSize(animal), convoy = convoySize(train);
+        if (!clearSegment(train.position, train.position, Math.max(convoy.radius, size.radius))) continue;
+        const forward = new THREE.Vector3(Math.sin(train.heading), 0, Math.cos(train.heading));
+        const side = new THREE.Vector3(forward.z, 0, -forward.x), relative = from.clone().sub(train.position);
+        const safeGap = convoy.radius + size.radius + 20;
+        let approach = null;
+        for (const sign of [Math.sign(relative.dot(side)) || 1, -(Math.sign(relative.dot(side)) || 1)]) {
+            const aside = from.clone().addScaledVector(side, sign * safeGap - relative.dot(side));
+            const waiting = train.position.clone().addScaledVector(side, sign * safeGap);
+            if (clearSegment(from, aside, size.radius) && clearSegment(aside, waiting, size.radius)) { approach = [aside, waiting]; break; }
+        }
+        if (!approach) continue;
+        // Step aside, let the complete queue pass, then enter at the contact
+        // point. New friends never run backwards through the existing queue.
+        animal.trainRide = { train, joining: true, onTrail: false, joinDistance: train.distance,
+            distance: train.distance, lastPosition: from.clone(), approach, waitTime: 0 };
         animal.isClimbing = false; animal.isEating = false; animal.clickActionTimer = 0;
         animal.mesh.rotation.x = 0; animal.mesh.rotation.z = 0;
-        train.followers.push(animal); return;
+        train.followers.push(animal);
     }
+}
+
+function joiningStepIsClear(train, animal, from, to, size) {
+    const bounds = new THREE.Box3().setFromObject(animal.mesh);
+    bounds.translate(new THREE.Vector3(from.x - animal.mesh.position.x, 0, from.z - animal.mesh.position.z));
+    const relativeEnd = train.position.clone().sub(to.clone().sub(from));
+    if (engineContact(train, train.position, relativeEnd, bounds) !== null) return false;
+    return !train.followers.some(friend => {
+        if (friend === animal || friend.trainRide.joining) return false;
+        const box = new THREE.Box3().setFromObject(friend.mesh);
+        return touchesBlock(from, to, size.radius, Infinity, { minX: box.min.x, maxX: box.max.x, minY: box.min.y, maxY: box.max.y, minZ: box.min.z, maxZ: box.max.z });
+    });
 }
 
 function followerSpeed(animal) {
@@ -394,6 +429,9 @@ function updateFollowers(train, dt, blocks) {
     for (const animal of [...train.followers]) {
         if (!animals.includes(animal) || cannotRide(animal) || animal.grabbed || !animal.body) { detachTrainFollower(animal); continue; }
         const ride = animal.trainRide, size = followerSize(animal);
+        if (!train.drawing && ride.joining && (ride.approach?.length === 2 || followerSpeed(animal) <= 0)) {
+            if ((ride.waitTime += dt) > 4) { detachTrainFollower(animal); continue; }
+        } else ride.waitTime = 0;
         spacing += size.radius;
         ride.followDistance = spacing;
         const targetDistance = train.distance - spacing;
@@ -410,14 +448,16 @@ function updateFollowers(train, dt, blocks) {
                     ride.approach.shift();
                     if (!ride.approach.length) ride.approach = null;
                 }
-            } else if (ride.joining) {
-                // Join the historical tail location once, then stay on the real
-                // polyline. Following its vertices avoids shortcuts at corners.
-                const meetingDistance = Math.max(train.trail[0].distance, targetDistance);
+            } else if (ride.joining && !ride.onTrail) {
+                const previous = train.followers[train.followers.indexOf(animal) - 1];
+                const meetingDistance = Math.max(train.trail[0].distance, ride.joinDistance);
                 const meeting = sampleTrail(train, meetingDistance);
                 const length = old.distanceTo(meeting);
-                next.copy(old).lerp(meeting, Math.min(1, budget / Math.max(length, 1e-8)));
-                if (length <= budget + 1) { joining = false; nextDistance = meetingDistance; next.copy(meeting); }
+                if (targetDistance >= meetingDistance && !previous?.trainRide.joining) {
+                    next.copy(old).lerp(meeting, Math.min(1, budget / Math.max(length, 1e-8)));
+                    if (!joiningStepIsClear(train, animal, old, next, size)) next.copy(old);
+                    else if (length <= budget + 1) { ride.onTrail = true; nextDistance = meetingDistance; next.copy(meeting); }
+                }
             } else {
                 const desired = Math.max(ride.distance, Math.min(targetDistance, ride.distance + budget));
                 // Each crossed segment is checked separately, including turns.
@@ -441,6 +481,7 @@ function updateFollowers(train, dt, blocks) {
             }
             if (ride.joining) breakTravelBlocks(old, next, size, blocks);
             moved = old.distanceTo(next);
+            if (ride.onTrail && targetDistance - nextDistance <= 12) joining = false;
         }
         ride.distance = nextDistance; ride.joining = joining;
         ride.lastPosition.copy(next);
@@ -512,6 +553,8 @@ function updateRopes(train) {
             train.ropes.push(rope); train.ropeGroup.add(mesh);
         }
         rope.from = index === 0 ? train : train.followers[index - 1]; rope.to = animal;
+        rope.mesh.visible = !animal.trainRide.joining && (index === 0 || !rope.from.trainRide.joining);
+        if (!rope.mesh.visible) continue;
         if (index === 0) rope.start.copy(train.position).add(new THREE.Vector3(-Math.sin(train.heading) * 47, 30, -Math.cos(train.heading) * 47));
         else rope.start.copy(animalRopeAnchor(rope.from, -1));
         rope.end.copy(animalRopeAnchor(animal, 1));
@@ -594,12 +637,12 @@ export function updateTrain(dt) {
     dt = Math.min(dt, 0.1);
     const blocks = obstacles();
     for (const animal of [...train.followers]) if (!animals.includes(animal) || cannotRide(animal) || animal.grabbed || !animal.body) detachTrainFollower(animal);
-    train.elapsed += dt; train.recruitTimer -= dt;
-    if (!train.drawing && train.recruitTimer <= 0) { recruit(train); train.recruitTimer = JOIN_INTERVAL; }
+    train.elapsed += dt;
     const size = convoySize(train);
-    train.speed = Math.min(TRAIN_SPEED, ...train.followers.map(animal => followerSpeed(animal) * 0.8));
+    train.speed = Math.min(TRAIN_SPEED, ...train.followers.filter(animal => !animal.trainRide.joining || followerSpeed(animal) > 0).map(animal => followerSpeed(animal) * 0.8));
+    const steppingAside = train.followers.some(animal => animal.trainRide.approach?.length === 2 && followerSpeed(animal) > 0);
     const before = train.position.clone();
-    if (!train.drawing) {
+    if (!train.drawing && !steppingAside) {
         let target = train.route[train.routeIndex];
         if (!target) {
             if (!train.autoGoal || train.position.distanceTo(train.autoGoal) < 2) train.autoGoal = chooseAutoGoal(train, size);
@@ -621,6 +664,7 @@ export function updateTrain(dt) {
             } else { train.route = []; train.routeIndex = 0; train.autoGoal = null; }
         }
     }
+    if (!train.drawing) recruit(train, before);
     updateFollowers(train, dt, blocks);
     updateVisuals(train, dt, train.position.distanceTo(before));
 }

@@ -45,6 +45,17 @@ function step(count = 1) {
         state.world.step(1 / 60); updateTrain(1 / 60); updateDogs(1 / 60); updateMagicEffects(animals, 1 / 60); syncTrainRopes();
     }
 }
+function contact(train, animal) {
+    animal.body.position.set(train.position.x, animal.heightOffset * 2.5, train.position.z);
+    animal.mesh.position.set(train.position.x, 0, train.position.z);
+    animal.body.velocity.set(0,0,0); animal.mesh.updateMatrixWorld(true);
+    updateTrain(1 / 60);
+    assert.equal(animal.trainRide?.train, train, `${animal.animalType}: real engine contact must reserve a tail place`);
+}
+function settle(train) {
+    for (let i = 0; i < 1200 && train.followers.some(animal => animal.trainRide.joining); i++) step();
+    assert.ok(train.followers.every(animal => !animal.trainRide.joining), 'every contacted friend must settle at the tail');
+}
 function captureAudio() {
     const previous = window.AudioContext, oscillators = [];
     class Param {
@@ -155,10 +166,10 @@ test('automatic placement keeps the front and back corners outside an overlappin
 test('summons at capacity replace the oldest non-passenger and preserve joining friends, ropes and route', () => {
     assert.equal(MAX_ANIMALS,30);
     const first = pet('dog',0,-80); first.speed = 0;
-    const train = spawnTrain(point(0,0)); route(point(0,600)); updateTrain(0.1);
+    const train = spawnTrain(point(0,0)); route(point(0,600)); contact(train,first);
     const oldestFree = pet('cat',550,-650);
     const second = pet('dog',0,-180); second.speed = 0;
-    for (let i = 0; i < 7; i++) updateTrain(0.1);
+    contact(train,second);
     assert.equal(train.followers.length,2);
     while (animals.length < MAX_ANIMALS) pet('dog',550,-650);
     assert.equal(animals.find(animal => !animal.trainRide),oldestFree);
@@ -176,9 +187,9 @@ test('summons at capacity replace the oldest non-passenger and preserve joining 
 });
 
 test('a full train of thirty genuinely recruited passengers rejects repeated summons without changing its queue', () => {
-    for (let i = 0; i < MAX_ANIMALS; i++) pet('dog',(i % 6 - 2.5) * 36,-80 - Math.floor(i / 6) * 36).speed = 0;
+    for (let i = 0; i < MAX_ANIMALS; i++) pet('dog',550,-650).speed = 0;
     const train = spawnTrain(point(0,0)); route(point(0,600));
-    for (let i = 0; i < MAX_ANIMALS * 7; i++) updateTrain(0.1);
+    animals.forEach(animal => contact(train,animal));
     assert.equal(train.followers.length,MAX_ANIMALS); assert.equal(train.ropes.length,MAX_ANIMALS);
     assert.ok(animals.every(animal => animal.trainRide?.train === train && animal.trainRide.joining));
     const friends = [...animals], followers = [...train.followers], ropes = [...train.ropes], previousRoute = train.route.map(p => p.toArray());
@@ -190,24 +201,74 @@ test('a full train of thirty genuinely recruited passengers rejects repeated sum
     assert.match(notice,/기차/); assert.match(notice,/30/);
 });
 
-test('nearby friends join nearest first with a delay between admissions', () => {
-    const far = pet('dog', -210,0), near = pet('cat', -70,0), middle = pet('rabbit', -140,0);
+test('nearby animals do not board until their model actually touches the engine', () => {
+    const far = pet('dog', -210,0), near = pet('cat',57,0), middle = pet('rabbit',-140,0);
     const train = spawnTrain(point(0,0)); route(point(0,700));
-    step(); assert.deepEqual(train.followers, [near]);
-    step(20); assert.deepEqual(train.followers, [near]);
-    step(22); assert.deepEqual(train.followers, [near,middle]);
-    step(42); assert.deepEqual(train.followers, [near,middle,far]);
-    assert.ok(train.followers.every(animal => animal.trainRide?.train === train));
+    updateTrain(1 / 60); assert.equal(train.followers.length,0);
+    contact(train,near); assert.deepEqual(train.followers,[near]);
+    assert.equal(far.trainRide,undefined); assert.equal(middle.trainRide,undefined);
+    assert.ok(near.trainRide.joining); assert.equal(train.ropes[0].mesh.visible,false);
 });
 
-test('friends near a moving tail can join later', () => {
-    const first = pet('dog',0,-70); const train = spawnTrain(point(0,0)); route(point(0,700)); step(180);
+test('touching a moving tail does not recruit an animal that has not touched the engine', () => {
+    const first = pet('dog',0,-70); const train = spawnTrain(point(0,0)); route(point(0,700)); contact(train,first); settle(train);
     const late = pet('cat',first.body.position.x - 120,first.body.position.z);
-    step(50); assert.deepEqual(train.followers,[first,late]);
+    step(50); assert.deepEqual(train.followers,[first]); assert.equal(late.trainRide,undefined);
+});
+
+test('swept engine contact catches a fast crossing but ignores airborne and excluded friends', () => {
+    const crossing = pet('cat',-120,0), above = pet('dog',0,0), floating = pet('rabbit',0,0);
+    above.mesh.position.y = 250; above.body.position.y += 250;
+    applySnack(floating,['balloon']);
+    const train = spawnTrain(point(0,0)); route(point(0,700));
+    crossing.body.position.x = 120; // Physics moved across the engine before the render mesh sync.
+    updateTrain(1 / 60);
+    assert.deepEqual(train.followers,[crossing]); assert.equal(above.trainRide,undefined); assert.equal(floating.trainRide,undefined);
+});
+
+test('a zero-speed join attempt cannot hold the locomotive forever', () => {
+    const stuck = pet('dog',0,0); stuck.speed = 0;
+    const train = spawnTrain(point(0,0)); route(point(0,700)); contact(train,stuck);
+    step(260); assert.ok(train.position.z > 300); assert.equal(stuck.trainRide,undefined);
+});
+
+test('route drawing pauses a contacted friend without expiring its side-step reservation', () => {
+    const animal = pet('dog',0,0), train = spawnTrain(point(0,0)); route(point(0,700)); contact(train,animal);
+    const waiting = animal.trainRide.lastPosition.clone(); beginTrainRoute(); step(360);
+    assert.equal(animal.trainRide?.train,train); assert.ok(animal.trainRide.lastPosition.equals(waiting));
+    assert.equal(train.ropes[0].mesh.visible,false);
+    cancelTrainRoute(); settle(train); assert.equal(train.ropes[0].mesh.visible,true);
+});
+
+test('contact at a board corner stays unjoined when neither side has safe space', () => {
+    const animal = pet('dog',790,790), train = spawnTrain(point(790,790)); route(point(820,820));
+    updateTrain(1 / 60);
+    assert.equal(animal.trainRide,undefined); assert.equal(train.followers.length,0);
+    assert.ok(train.position.x > 790 && train.position.z > 790);
+});
+
+test('a later engine contact waits beside the queue and only exposes its rope after the last friend', () => {
+    const first = pet('dog',0,0), train = spawnTrain(point(0,-500)); route(point(0,700)); contact(train,first); settle(train);
+    const second = pet('cat',600,-600); contact(train,second);
+    let waited = false, connected = false;
+    for (let frame = 0; frame < 800 && !connected; frame++) {
+        step();
+        const ride = second.trainRide; assert.ok(ride);
+        if (ride.joining) {
+            assert.equal(train.ropes[1].mesh.visible,false);
+            if (!ride.approach && !ride.onTrail) waited = true;
+            if (!ride.approach) {
+                const a = new THREE.Box3().setFromObject(first.mesh), b = new THREE.Box3().setFromObject(second.mesh);
+                assert.ok(!a.intersectsBox(b), 'newcomer cannot cross the previous passenger');
+            }
+        } else connected = true;
+    }
+    assert.ok(waited && connected); assert.deepEqual(train.followers,[first,second]);
+    assert.equal(train.ropes[1].mesh.visible,true); assert.equal(train.ropes[1].from,first);
 });
 
 test('followers traverse the actual train corner instead of a diagonal shortcut', () => {
-    const animal = pet('dog',0,-90); const train = spawnTrain(point(0,0)); route(point(0,400),point(400,400),point(400,0));
+    const animal = pet('dog',0,-90); const train = spawnTrain(point(0,0)); route(point(0,400),point(400,400),point(400,0)); contact(train,animal);
     let samples = 0, afterCorner = false;
     for (let index = 0; index < 460; index++) {
         step();
@@ -229,7 +290,7 @@ test('living block friends stay outside the train even when they are closest', (
     const { animal: large } = awakenBlocks(seed);
     large.body.position.set(-40,25,0); large.mesh.position.set(-40,0,0);
     large.state = 'idle'; large.timer = 1000;
-    const train = spawnTrain(point(0,0)); route(point(0,650)); step(90);
+    const train = spawnTrain(point(0,0)); route(point(0,650)); contact(train,normal); step(90);
     assert.deepEqual(train.followers,[normal]);
     assert.equal(large.trainRide,undefined); assert.ok(animals.includes(large));
     assert.equal(train.ropes.length,1); assert.equal(train.ropes[0].to,normal);
@@ -300,7 +361,7 @@ test('automatic driving breaks new blocks ahead instead of turning away from the
 });
 
 test('blocks added beside a moving tail are cleared only when the follower reaches them', () => {
-    const animal = pet('dog',0,-80), train = spawnTrain(point(0,0)); route(point(0,700)); step(200);
+    const animal = pet('dog',0,-80), train = spawnTrain(point(0,0)); route(point(0,700)); contact(train,animal); settle(train);
     assert.ok(animal.trainRide && !animal.trainRide.joining);
     const z = animal.body.position.z;
     const block = placeVoxel(point(0,z + 30,25),null,true);
@@ -330,7 +391,7 @@ test('train friends never hunt or flee, including a predator waiting to join', (
     const train = spawnTrain(point(0,0)); route(point(0,700));
     updateTrain(1 / 60); assert.equal(train.followers[0],predator); assert.ok(predator.trainRide.joining);
     updateDogs(1 / 60); assert.equal(prey.state,'idle'); assert.equal(prey.body.velocity.x,0);
-    step(50); assert.ok(prey.trainRide); assert.equal(predator.trainRide.train,prey.trainRide.train);
+    contact(train,prey); assert.ok(prey.trainRide); assert.equal(predator.trainRide.train,prey.trainRide.train);
     triggerClickAction(predator); assert.equal(predator.clickActionTimer,0);
 });
 
@@ -343,37 +404,44 @@ test('even unjoined animals remain friends while a train exists, and normal fear
     assert.equal(prey.state,'walking'); assert.ok(prey.body.velocity.x > 0);
 });
 
-test('a friend in front steps aside before joining rather than walking through the locomotive', () => {
+test('a contacted friend steps aside and attaches at the tail without showing a long rope', () => {
     const animal = pet('dog',0,200); animal.speed = 400;
     const train = spawnTrain(point(0,0)); route(point(0,700));
-    for (let i = 0; i < 240; i++) {
+    let contactSeen = false, asideSeen = false, attached = false;
+    for (let i = 0; i < 420; i++) {
         step();
-        const trainBox = new THREE.Box3().setFromObject(train.mesh), animalBox = new THREE.Box3().setFromObject(animal.mesh);
-        assert.ok(!trainBox.intersectsBox(animalBox), `joined through engine at ${i / 60}s`);
+        if (!animal.trainRide) { assert.equal(train.ropes.length,0); continue; }
+        contactSeen = true;
+        if (animal.trainRide.joining) assert.equal(train.ropes[0].mesh.visible,false);
+        if (animal.trainRide.approach?.length === 1) asideSeen = true;
+        if (!animal.trainRide.joining) {
+            attached = true; assert.equal(train.ropes[0].mesh.visible,true);
+            assert.ok(train.ropes[0].start.distanceTo(train.ropes[0].end) < 220);
+        }
     }
-    assert.ok(animal.trainRide && !animal.trainRide.joining);
+    assert.ok(contactSeen && asideSeen && attached);
 });
 
 test('large passengers join through narrow walls and their full model width is cleared', () => {
     const large = pet('elephant',0,-150);
-    const train = spawnTrain(point(0,0)); route(point(0,650)); step(); assert.ok(large.trainRide);
+    const train = spawnTrain(point(0,0)); route(point(0,650)); contact(train,large);
     const side = placeVoxel(point(130,250,25),null,true), remote = placeVoxel(point(250,250,25),null,true);
-    step(130); assert.ok(!objects.includes(side)); assert.ok(objects.includes(remote));
+    settle(train); assert.ok(!objects.includes(side)); assert.ok(objects.includes(remote));
     assert.ok(train.position.z > 200); assert.ok(large.trainRide);
 });
 
 test('tall passengers clear overhead blocks at their actual height while higher blocks survive', () => {
     const tall = pet('giraffe',0,-170);
-    const train = spawnTrain(point(0,0)); route(point(0,650)); step(); assert.ok(tall.trainRide);
+    const train = spawnTrain(point(0,0)); route(point(0,650)); contact(train,tall);
     const ceiling = placeVoxel(point(0,250,225),null,true), high = placeVoxel(point(0,250,425),null,true);
-    step(130); assert.ok(!objects.includes(ceiling)); assert.ok(objects.includes(high));
+    settle(train); assert.ok(!objects.includes(ceiling)); assert.ok(objects.includes(high));
     assert.ok(train.position.z > 200); assert.ok(tall.trainRide);
 });
 
 test('balloon friends cannot board even when nearest, while other snack friends can', () => {
     const balloon = pet('dog',-50,0), normal = pet('cat',-150,0);
     applySnack(balloon,['balloon','jelly']); applySnack(normal,['rainbow']);
-    const train = spawnTrain(point(0,0)); route(point(0,700)); step(90);
+    const train = spawnTrain(point(0,0)); route(point(0,700)); contact(train,normal); step(90);
     assert.deepEqual(train.followers,[normal]); assert.equal(balloon.trainRide,undefined);
     assert.equal(train.ropes.length,1); assert.ok(balloon.mesh.getObjectByName('snack-balloon-shell'));
     assert.equal(train.speed,110);
@@ -381,15 +449,14 @@ test('balloon friends cannot board even when nearest, while other snack friends 
 
 test('eating balloon detaches immediately, reconnects ropes and permits boarding after the effect is cleared', () => {
     const first = pet('dog',-60,0), second = pet('cat',-180,0);
-    const train = spawnTrain(point(0,0)); route(point(0,700)); step(60);
+    const train = spawnTrain(point(0,0)); route(point(0,700)); contact(train,first); contact(train,second);
     assert.deepEqual(train.followers,[first,second]);
     applySnack(first,['balloon']);
     assert.equal(first.trainRide,undefined); assert.deepEqual(train.followers,[second]);
     assert.equal(train.ropes.length,1); assert.equal(train.ropes[0].from,train); assert.equal(train.ropes[0].to,second);
     step(130); assert.equal(first.trainRide,undefined);
     applySnack(first,[]);
-    first.body.position.set(second.body.position.x - 50,first.heightOffset * 2.5,second.body.position.z);
-    first.body.velocity.set(0,0,0); train.recruitTimer = 0; step();
+    contact(train,first);
     assert.ok(first.trainRide); assert.equal(train.ropes.length,2);
 });
 
@@ -402,7 +469,7 @@ test('updateTrain prunes externally applied balloon state before moving even dur
 });
 
 test('grabbing, deleting and clearing release follower references and owned train resources', () => {
-    const first = pet('dog',-60,0), second = pet('cat',-130,0); const train = spawnTrain(point(0,0)); route(point(0,600)); step(50);
+    const first = pet('dog',-60,0), second = pet('cat',-130,0); const train = spawnTrain(point(0,0)); route(point(0,600)); contact(train,first); contact(train,second);
     first.grabbed = true; setGrabbedAnimal(first); assert.equal(first.trainRide,undefined); assert.ok(!train.followers.includes(first));
     removeAnimalImmediately(second); assert.equal(second.trainRide,undefined); assert.equal(train.followers.length,0);
     const geometry = train.mesh.children.find(child => child.geometry).geometry; let disposed = 0; geometry.addEventListener('dispose',() => disposed++);
@@ -426,7 +493,7 @@ test('an existing member marked as a living block is detached and its rope is re
 
 test('ropes connect consecutive members with shared triangle geometry and natural sag', () => {
     const first = pet('dog',-70,0), second = pet('cat',-160,0);
-    const train = spawnTrain(point(0,0)); route(point(0,600)); step(180);
+    const train = spawnTrain(point(0,0)); route(point(0,600)); contact(train,first); contact(train,second); settle(train);
     assert.equal(train.ropeGroup.parent,state.scene); assert.equal(train.ropes.length,2);
     assert.equal(train.ropes[0].from,train); assert.equal(train.ropes[0].to,first);
     assert.equal(train.ropes[1].from,first); assert.equal(train.ropes[1].to,second);
@@ -439,8 +506,8 @@ test('ropes connect consecutive members with shared triangle geometry and natura
 });
 
 test('thin linen ropes keep a two CSS pixel minimum when the mobile camera zooms far away', () => {
-    pet('dog',-70,0);
-    const train = spawnTrain(point(0,0)); route(point(0,600)); step(120);
+    const animal = pet('dog',-70,0);
+    const train = spawnTrain(point(0,0)); route(point(0,600)); contact(train,animal); settle(train);
     state.renderer = { domElement: { clientHeight: 844 } };
     state.camera = new THREE.PerspectiveCamera(45,390 / 844,1,100000);
     const start = train.ropes[0].start.clone(), end = train.ropes[0].end.clone();
@@ -463,8 +530,9 @@ test('thin linen ropes keep a two CSS pixel minimum when the mobile camera zooms
 });
 
 test('rope endpoints follow final pudding turns and hopping animation in the same frame', () => {
-    const first = pet('dog',0,-80); pet('rabbit',0,-190);
+    const first = pet('dog',0,-80), second = pet('rabbit',0,-190);
     const train = spawnTrain(point(0,0)); route(point(0,300),point(300,300),point(300,-300)); applySnack(first,['jelly']);
+    contact(train,first); contact(train,second); settle(train);
     let checked = 0;
     for (let frame = 0; frame < 460; frame++) {
         step();
@@ -479,7 +547,7 @@ test('rope endpoints follow final pudding turns and hopping animation in the sam
 
 test('removing a middle friend reconnects ropes and final cleanup disposes shared resources once', () => {
     const first = pet('dog',-60,0), middle = pet('cat',-140,0), last = pet('rabbit',-230,0);
-    const train = spawnTrain(point(0,0)); route(point(0,700)); step(100);
+    const train = spawnTrain(point(0,0)); route(point(0,700)); contact(train,first); contact(train,middle); contact(train,last);
     const geometry = train.ropeGeometry, material = train.ropeMaterial; let geometryDisposals = 0, materialDisposals = 0;
     geometry.addEventListener('dispose',() => geometryDisposals++); material.addEventListener('dispose',() => materialDisposals++);
     removeAnimalImmediately(middle);
@@ -503,8 +571,9 @@ test('driving audio follows four wheel beats and pauses during drawing, hiding a
         document.hidden = true; cancelTrainRoute(); step(120);
         assert.equal(audio.beats().length,beatCount); assert.equal(train.runningTime,runningTime); assert.equal(train.pingTimer,pingTimer);
         assert.ok(train.steam.every(puff => puff.life === 0)); document.hidden = false;
-        clearTrain(); const tired = pet('dog',-550,0); tired.speed = 0; spawnTrain(point(-500,0));
-        const untouched = placeVoxel(point(-500,100,25),null,true);
+        clearTrain(); const tired = pet('dog',-550,0); const stoppedTrain = spawnTrain(point(-500,0));
+        route(point(-500,700)); contact(stoppedTrain,tired); settle(stoppedTrain); tired.speed = 0;
+        const untouched = placeVoxel(point(stoppedTrain.position.x,stoppedTrain.position.z + 100,25),null,true);
         step(80); const stoppedBeats = audio.beats().length, stoppedTime = state.train.runningTime;
         step(120); assert.equal(audio.beats().length,stoppedBeats); assert.equal(state.train.runningTime,stoppedTime);
         assert.ok(state.train.steam.every(puff => puff.life === 0));

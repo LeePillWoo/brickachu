@@ -154,13 +154,14 @@ function addTrail(animal, power) {
     const water = power.type === 'slide', flowers = power.type === 'flowers';
     const color = COLORS[power.trailIndex++ % COLORS.length];
     const mesh = flowers ? flower(color) : new THREE.Mesh(
-        createSoftBoxGeometry(water ? 65 : 24, 1.5, water ? 60 : 20, water ? 14 : 6),
-        material(water ? 0x8dd9ed : color, water ? 0.65 : 0.8)
+        water ? createSoftBoxGeometry(110, 90, 2, 22).rotateX(-Math.PI / 2) : createSoftBoxGeometry(24, 1.5, 20, 6),
+        material(water ? 0x55c7e6 : color, water ? 0.85 : 0.8)
     );
     mesh.name = water ? 'animal-water-slide' : flowers ? 'animal-flower-trail' : 'animal-paint-stamp';
-    mesh.position.set(animal.body.position.x, ground(animal) + (flowers ? 4 : 2), animal.body.position.z);
+    // Slightly separate overlapping water tiles so the depth pass stays stable.
+    mesh.position.set(animal.body.position.x, ground(animal) + (flowers ? 4 : water ? 2 + power.trailIndex * 0.12 : 2), animal.body.position.z);
     mesh.rotation.y = power.heading;
-    decorate(animal, mesh, water ? 4 : 5, water ? { water: true, heading: power.heading } : {});
+    decorate(animal, mesh, 5, water ? { water: true, heading: power.heading } : {});
 }
 
 function paintBlock(animal, color) {
@@ -265,15 +266,23 @@ export function triggerAnimalPower(animal, list) {
         clearMagicEffect(animal); playSound('animal-remove');
         return true;
     }
-    if (!getAnimalPowerInfo(animal?.animalType)) return false;
-    if (!available(animal) || !onGround(animal) || animal.animalPower || animal.powerCooldown > 0 || animal.clickActionTimer > 0) return true;
+    const info = getAnimalPowerInfo(animal?.animalType);
+    if (!info) return false;
+    if (!available(animal) || !onGround(animal)) {
+        state.onToyNotice?.('사뿐 내려온 뒤 친구를 톡 눌러줘! ✨');
+        return true;
+    }
+    if (animal.animalPower || animal.powerCooldown > 0 || animal.clickActionTimer > 0) {
+        state.onToyNotice?.(animal.animalPower ? `${info.name} 놀이 중이야! ✨` : `${Math.max(1, Math.ceil(animal.powerCooldown || animal.clickActionTimer))}초만 쉬고 다시 놀자! ✨`);
+        return true;
+    }
     const type = animal.animalType;
     playSound('animal-click-' + animal.animGroup);
     if (type !== 'crab' && type !== 'baby-dragon') state.onToyNotice?.(`${animal.displayName || '친구'} · ${getAnimalPowerInfo(type).name}`);
     if (type === 'crab') startDelivery(animal, list);
     else if (type === 'baby-dragon') startBubble(animal, list);
     else if (type === 'panda') createPins(animal, begin(animal, 'bowling', 2.4, true));
-    else if (type === 'otter' || type === 'penguin') begin(animal, 'slide', 3.2, true);
+    else if (type === 'otter' || type === 'penguin') addTrail(animal, begin(animal, 'slide', 3.2, true));
     else if (type === 'hedgehog') {
         const power = begin(animal, 'flowers', 5);
         for (let i = 0; i < 3; i++) {

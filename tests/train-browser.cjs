@@ -36,6 +36,15 @@ async function initialize(page, url) {
     await page.evaluate(async () => {
         const load = file => import(new URL('js/' + file, document.baseURI).href);
         window.qa = { ...await load('state.js'), ...await load('scene.js'), ...await load('entities.js'), ...await load('living.js'), ...await load('food.js'), ...await load('magic.js'), ...await load('train.js'), THREE: await import('three') };
+        qa.contactTrain = animal => {
+            const p = qa.state.train.position;
+            animal.body.position.set(p.x,animal.heightOffset * qa.voxelSize / 20,p.z);
+            animal.mesh.position.set(p.x,0,p.z); animal.body.velocity.set(0,0,0);
+            animal.state = 'idle'; animal.timer = 100; animal.trainJoinCooldown = 0;
+            qa.updateTrain(1 / 60);
+            if (animal.livingId) return;
+            if (!animal.trainRide) throw new Error('A real engine contact must start boarding');
+        };
     });
 }
 async function resetFixture(page) {
@@ -103,11 +112,9 @@ async function checkAnimalCap(page, touch = false) {
             animal.body.velocity.set(0,0,0); animal.state = 'idle'; animal.timer = 100; animal.speed = 0;
             return animal;
         };
-        friend(position.x,position.z - 80);
-        for (let i = 0; i < 7; i++) qa.updateTrain(0.1);
+        qa.contactTrain(friend(position.x,position.z));
         friend(550,-650); // Older than the second passenger, but not riding.
-        friend(position.x,position.z - 180);
-        for (let i = 0; i < 7; i++) qa.updateTrain(0.1);
+        qa.contactTrain(friend(position.x,position.z));
         if (qa.state.train.followers.length !== 2) throw new Error('Two passengers must join through updateTrain');
         while (qa.animals.length < qa.MAX_ANIMALS) friend(550,-650);
         delete qa.GROUP_ANIMALS.capFixture;
@@ -129,15 +136,11 @@ async function checkAnimalCap(page, touch = false) {
     }
     check(`${touch ? 'Mobile' : 'Desktop'} summons at thirty replace the oldest non-passenger while preserving joining friends, ropes and route`, true);
     await page.evaluate(() => {
-        const position = qa.state.train.position;
-        qa.animals.forEach((animal,index) => {
+        qa.animals.forEach(animal => {
             animal.speed = 0;
             if (animal.trainRide) return;
-            const x = position.x + (index % 6 - 2.5) * 36, z = position.z - 80 - Math.floor(index / 6) * 36;
-            animal.body.position.set(x,animal.heightOffset * qa.voxelSize / 20,z); animal.mesh.position.set(x,0,z);
-            animal.body.velocity.set(0,0,0); animal.state = 'idle'; animal.timer = 100;
+            qa.contactTrain(animal);
         });
-        for (let i = 0; i < qa.MAX_ANIMALS * 7; i++) qa.updateTrain(0.1);
         if (qa.state.train.followers.length !== qa.MAX_ANIMALS || !qa.animals.every(animal => animal.trainRide?.joining)) throw new Error('All thirty friends must genuinely join the train');
         qa.cappedFriends = [...qa.animals]; qa.captureCappedTrain();
     });
@@ -147,7 +150,8 @@ async function checkAnimalCap(page, touch = false) {
 }
 async function createPassengerFixture(page, touch = false) {
     await page.evaluate(() => {
-        qa.far = qa.spawnDog('carnivore');
+        qa.state.gameSpeed = 0;
+        qa.GROUP_ANIMALS.trainFixture = ['lion']; qa.far = qa.spawnDog('trainFixture'); delete qa.GROUP_ANIMALS.trainFixture;
         qa.far.mesh.position.set(-650, 0, -650); qa.far.body.position.set(-650, qa.far.heightOffset * (qa.voxelSize / 20), -650);
         qa.placeVoxel(new qa.THREE.Vector3(-75, 25, -75), 'preset-10', true);
         qa.placeVoxel(new qa.THREE.Vector3(-75, 75, -75), 'preset-9', true); qa.pushHistory();
@@ -158,13 +162,51 @@ async function createPassengerFixture(page, touch = false) {
     else await page.mouse.click(head.x, head.y);
     check(`${touch ? 'Mobile tap' : 'A real eyes click'} creates a block friend for the train exclusion check`, await page.evaluate(() => qa.animals.some(animal => animal.livingId) && qa.objects.length === 1));
     await page.evaluate(() => {
-        qa.blockFriend = qa.animals.find(animal => animal.livingId); qa.near = qa.spawnDog('hop');
-        for (const [animal, x] of [[qa.blockFriend, -60], [qa.near, -130], [qa.far, -250]]) {
+        qa.blockFriend = qa.animals.find(animal => animal.livingId);
+        qa.GROUP_ANIMALS.trainFixture = ['rabbit']; qa.near = qa.spawnDog('trainFixture'); delete qa.GROUP_ANIMALS.trainFixture;
+        for (const [animal, x] of [[qa.blockFriend, -500], [qa.near, -350], [qa.far, -200]]) {
             animal.mesh.position.set(x, 0, -80); animal.body.position.set(x, animal.heightOffset * (qa.voxelSize / 20), -80);
-            animal.body.velocity.set(0, 0, 0); animal.state = 'idle'; animal.timer = 100; animal.isCarnivore = false;
+            animal.body.velocity.set(0, 0, 0); animal.state = 'idle'; animal.timer = 100; animal.isCarnivore = false; animal.speed = 220;
         }
         // Keep everyone still until placement, then restore the predator flag.
     });
+}
+async function boardFixturePassengers(page, label) {
+    await page.evaluate(() => {
+        qa.beginTrainRoute();
+        for (const p of [[0,0,650],[650,0,650],[650,0,-650]]) qa.appendTrainRoutePoint(new qa.THREE.Vector3(...p));
+        qa.finishTrainRoute();
+        qa.updateTrain(1 / 60);
+    });
+    check(`${label} nearby animals do not board until the locomotive actually touches them`, await page.evaluate(() => qa.state.train.followers.length === 0));
+    await page.evaluate(() => {
+        qa.contactTrain(qa.blockFriend);
+        qa.blockFriend.body.position.set(-600,qa.blockFriend.heightOffset * qa.voxelSize / 20,-600);
+        qa.blockFriend.mesh.position.set(-600,0,-600);
+        qa.contactTrain(qa.near);
+    });
+    check(`${label} contact starts boarding without a long rope to a waiting animal`, await page.evaluate(() => qa.near.trainRide?.joining && !qa.blockFriend.trainRide && qa.state.train.ropes.every(rope => !rope.mesh.visible)));
+    await advance(page, 5);
+    await page.evaluate(() => qa.contactTrain(qa.far));
+    await advance(page, 7);
+    check(`${label} contacted friends join at the tail and the block friend stays out`, await page.evaluate(() => qa.state.train.followers.length === 2 && qa.state.train.followers[0] === qa.near && qa.state.train.followers[1] === qa.far && qa.state.train.followers.every(animal => !animal.trainRide.joining) && !qa.blockFriend.trainRide));
+}
+async function checkTrainReselect(page, touch = false) {
+    const previousSpeed = await page.evaluate(() => {
+        const speed = qa.state.gameSpeed; qa.state.gameSpeed = 0;
+        qa.savedSelection = { train: qa.state.train, followers: [...qa.state.train.followers], route: JSON.stringify(qa.state.train.route.map(point => point.toArray())), mesh: qa.state.train.mesh };
+        return speed;
+    });
+    for (const id of ['#btn-food','#btn-grab','#btn-eyes']) {
+        await page.locator(id)[touch ? 'tap' : 'click']();
+        await page.locator('#btn-train')[touch ? 'tap' : 'click']();
+        await page.locator('#btn-train')[touch ? 'tap' : 'click']();
+    }
+    check(`${touch ? 'Mobile' : 'Desktop'} reselecting the train preserves its engine, passengers and route`, await page.evaluate(() => {
+        const saved = qa.savedSelection;
+        return qa.state.train === saved.train && saved.mesh.parent && qa.state.train.followers.length === saved.followers.length && qa.state.train.followers.every((animal,index) => animal === saved.followers[index]) && JSON.stringify(qa.state.train.route.map(point => point.toArray())) === saved.route;
+    }));
+    await page.evaluate(speed => { qa.state.gameSpeed = speed; },previousSpeed);
 }
 async function checkRopeChain(page, label) {
     check(`${label} ropes connect the locomotive and each ordinary animal in order`, await page.evaluate(() => {
@@ -284,14 +326,23 @@ async function checkBalloonDeparture(page, touch = false) {
 async function checkWallBreakthrough(page) {
     await resetFixture(page);
     await page.evaluate(() => {
-        qa.wallPassengers = [qa.spawnDog('hop'), qa.spawnDog('quad')];
+        qa.state.gameSpeed = 0;
+        qa.GROUP_ANIMALS.wallFixture = ['rabbit']; const first = qa.spawnDog('wallFixture');
+        qa.GROUP_ANIMALS.wallFixture = ['dog']; const second = qa.spawnDog('wallFixture'); delete qa.GROUP_ANIMALS.wallFixture;
+        qa.wallPassengers = [first,second];
         qa.wallPassengers.forEach((animal, index) => {
             const x = -380 - index * 120;
             animal.mesh.position.set(x, 0, -40); animal.body.position.set(x, animal.heightOffset * (qa.voxelSize / 20), -40);
-            animal.body.velocity.set(0, 0, 0); animal.state = 'idle'; animal.timer = 100; animal.isCarnivore = false;
+            animal.body.velocity.set(0, 0, 0); animal.state = 'idle'; animal.timer = 100; animal.isCarnivore = false; animal.speed = 220;
         });
+        qa.spawnTrain(new qa.THREE.Vector3(-500,0,-650));
+        qa.beginTrainRoute(); qa.appendTrainRoutePoint(new qa.THREE.Vector3(-500,0,750)); qa.finishTrainRoute();
+        qa.contactTrain(first);
     });
-    await placeTrain(page, [-250, 0, 0]); await advance(page, 1.5);
+    await advance(page, 5);
+    await page.evaluate(() => qa.contactTrain(qa.wallPassengers[1]));
+    await advance(page, 6);
+    assert.ok(await page.evaluate(() => qa.wallPassengers.every(animal => animal.trainRide && !animal.trainRide.joining)), 'Wall passengers must finish boarding before testing a new route');
     await page.evaluate(() => {
         qa.state.gameSpeed = 0;
         const start = qa.state.train.position.clone();
@@ -352,7 +403,7 @@ async function checkWallBreakthrough(page) {
             for (const key of ['Enter', 'Space']) {
                 await page.evaluate(() => { qa.previousButtonTrain = qa.state.train; });
                 await page.locator('#btn-train').focus(); await page.keyboard.press(key);
-                check(`${key} summons a replacement train immediately and disposes the previous engine`, await page.evaluate(() => qa.state.train && qa.state.train !== qa.previousButtonTrain && !qa.previousButtonTrain.mesh.parent && qa.state.scene.children.filter(child => child.name === 'friend-train').length === 1));
+                check(`${key} selects the same train without replacing its engine`, await page.evaluate(() => qa.state.train === qa.previousButtonTrain && qa.previousButtonTrain.mesh.parent && qa.state.scene.children.filter(child => child.name === 'friend-train').length === 1));
             }
             await page.screenshot({ path: '.tmp/qa/train-auto-desktop.png' });
             await checkAnimalCap(page);
@@ -361,10 +412,8 @@ async function checkWallBreakthrough(page) {
             await placeTrain(page, [0, 0, 0]);
             await page.evaluate(() => { qa.far.isCarnivore = true; });
             check('A canvas click places one train without a block or snack', await page.evaluate(() => Boolean(qa.state.train.mesh.parent) && qa.objects.length === 1 && qa.foods.length === 0));
-            await page.waitForFunction(() => qa.state.train.followers.length > 0, null, { polling: 50 });
-            check('The closest ordinary animal joins while the nearer block friend is excluded', await page.evaluate(() => qa.state.train.followers[0] === qa.near && !qa.state.train.followers.includes(qa.blockFriend) && !qa.blockFriend.trainRide));
-            await advance(page, 3);
-            check('Predator and prey join the same train without the living blocks', await page.evaluate(() => qa.state.train.followers.length === 2 && qa.state.train.followers.includes(qa.near) && qa.state.train.followers.includes(qa.far) && !qa.blockFriend.trainRide));
+            await boardFixturePassengers(page, 'Desktop');
+            await checkTrainReselect(page);
             await checkRopeChain(page, 'Desktop');
             const travelStart = await captureTravel(page);
             await advance(page, 2);
@@ -399,8 +448,8 @@ async function checkWallBreakthrough(page) {
             });
             await page.evaluate(() => { qa.state.camera.position.set(560, 720, 950); qa.state.controls.target.set(0, 0, 0); qa.state.controls.update(); });
             await placeTrain(page, [-250, 0, 200]);
-            check('Another floor click relocates the single train', await page.evaluate(() => qa.state.train.position.distanceTo(new qa.THREE.Vector3(-250, 0, 200)) < 35 && (qa.oldTrainMesh === qa.state.train.mesh || !qa.oldTrainMesh.parent)));
-            check('Relocating the train removes old ropes and disposes each shared resource once', await page.evaluate(() => !qa.oldRopeGroup.parent && qa.oldRopes.length === 0 && qa.ropeDisposal.expectedGeometries > 0 && qa.ropeDisposal.expectedMaterials > 0 && qa.ropeDisposal.geometries === qa.ropeDisposal.expectedGeometries && qa.ropeDisposal.materials === qa.ropeDisposal.expectedMaterials));
+            check('Explicitly clearing the old fixture permits placing a new train', await page.evaluate(() => qa.state.train.position.distanceTo(new qa.THREE.Vector3(-250, 0, 200)) < 35 && !qa.oldTrainMesh.parent));
+            check('Clearing the train removes old ropes and disposes each shared resource once', await page.evaluate(() => !qa.oldRopeGroup.parent && qa.oldRopes.length === 0 && qa.ropeDisposal.expectedGeometries > 0 && qa.ropeDisposal.expectedMaterials > 0 && qa.ropeDisposal.geometries === qa.ropeDisposal.expectedGeometries && qa.ropeDisposal.materials === qa.ropeDisposal.expectedMaterials));
             await page.locator('#btn-clear-all').click(); const removePoint = await trainPoint(page); await page.mouse.click(removePoint.x, removePoint.y);
             check('The broom removes an individual train, its ropes and all passenger references', await page.evaluate(() => !qa.state.train && qa.animals.every(animal => !animal.trainRide) && !qa.state.scene.children.some(child => child.name === 'train-friend-ropes')));
             await placeTrain(page, [0, 0, 0]);
@@ -434,8 +483,8 @@ async function checkWallBreakthrough(page) {
         await placeTrain(mobile, [0, 0, 0], true);
         await mobile.evaluate(() => { qa.far.isCarnivore = true; });
         check('A real mobile tap places a train without editing blocks', await mobile.evaluate(() => Boolean(qa.state.train) && qa.objects.length === 1));
-        await advance(mobile, 3);
-        check('Mobile excludes the nearest living blocks and recruits ordinary prey then predator', await mobile.evaluate(() => qa.state.train.followers.length === 2 && qa.state.train.followers[0] === qa.near && qa.state.train.followers[1] === qa.far && !qa.blockFriend.trainRide));
+        await boardFixturePassengers(mobile, 'Mobile');
+        await checkTrainReselect(mobile, true);
         await checkRopeChain(mobile, 'Mobile');
         const mobileTravel = await captureTravel(mobile); await advance(mobile, 2);
         await checkRopeMovement(mobile, mobileTravel, 'Mobile');

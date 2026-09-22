@@ -422,7 +422,11 @@ const FLEE_RADIUS = voxelSize * 6;
 const MAX_CARNIVORES = 4;
 
 export function triggerClickAction(animal) {
-    if (!animals.includes(animal) || animal.grabbed || animal.trainRide) return;
+    if (!animals.includes(animal) || animal.grabbed) return;
+    if (animal.trainRide) {
+        state.onToyNotice?.('기차놀이 중이야! 손으로 친구를 내려주면 재주를 부려요 ✋');
+        return;
+    }
     if (triggerAnimalPower(animal, animals) || animal.clickActionTimer > 0) return;
     const actionType = CLICK_ACTION_OVERRIDES[animal.animalType] || CLICK_ACTION_MAP[animal.animGroup] || 'spin';
     animal.clickActionTimer = ACTION_DURATION[actionType] || 0.75;

@@ -51,6 +51,11 @@ test('otter water slides carry a grounded friend, leave floating friends alone a
     const otter = pet('otter'), friend = pet('dog', 300, 300), balloon = pet('cat', -300, 300);
     applySnack(balloon, ['balloon']); triggerClickAction(otter);
     assert.equal(otter.animalPower.controlsMotion, true);
+    const initialWater = decorations('animal-water-slide')[0];
+    assert.ok(initialWater, 'visible water starts immediately without waiting for movement');
+    const waterSize = new THREE.Box3().setFromObject(initialWater).getSize(new THREE.Vector3());
+    assert.ok(waterSize.x >= 100 && waterSize.z >= 85, 'water is wide enough to see beside the rider');
+    assert.ok(initialWater.material.opacity >= 0.8);
     step(30);
     const water = decorations('animal-water-slide')[0]; assert.ok(water);
     friend.body.position.set(water.position.x, friend.heightOffset * 2.5, water.position.z);
@@ -61,6 +66,17 @@ test('otter water slides carry a grounded friend, leave floating friends alone a
     step(450);
     assert.equal(otter.animalPower, undefined); assert.equal(friend.animalPower, undefined);
     assert.equal(decorations('animal-water-slide').length, 0);
+});
+
+test('power taps explain landing, active play, cooldown and train restrictions', () => {
+    const otter = pet('otter'); let notice = ''; state.onToyNotice = text => { notice = text; };
+    otter.body.position.y += 300; triggerClickAction(otter);
+    assert.match(notice, /내려온/); assert.equal(otter.animalPower, undefined);
+    otter.body.position.y -= 300; triggerClickAction(otter); triggerClickAction(otter);
+    assert.match(notice, /놀이 중/);
+    clearAnimalPower(otter); triggerClickAction(otter); assert.match(notice, /초만/);
+    otter.trainRide = { train: { followers: [otter], ropes: [] } };
+    triggerClickAction(otter); assert.match(notice, /기차놀이/); delete otter.trainRide;
 });
 
 test('panda rolls through six toy pins and cleanup removes every pin', () => {

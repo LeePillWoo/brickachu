@@ -65,7 +65,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         await page.keyboard.press('Control+y');
         check('Redo restores the single block', await page.evaluate(() => qa.objects.length - 1) === 1);
         await page.locator('#btn-food').click();
-        check('One snack toolbar click selects balloon immediately', await page.evaluate(() => qa.state.currentMode === 'food' && JSON.stringify(qa.state.snackIngredients) === '["balloon"]' && document.getElementById('btn-food').textContent.trim() === '🎈'));
+        check('One snack toolbar click activates the current apple without cycling', await page.evaluate(() => qa.state.currentMode === 'food' && qa.state.snackIngredients.length === 0 && document.getElementById('btn-food').textContent.trim() === '🍎'));
         const foodPoint = await page.evaluate(() => {
             const p = new qa.THREE.Vector3(-200, 0, 200).project(qa.state.camera);
             return { x: (p.x + 1) * innerWidth / 2, y: (1 - p.y) * innerHeight / 2 };
@@ -158,7 +158,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
         check('Mobile orbit drag does not build blocks', await mobile.evaluate(() => qa.objects.length === 2));
         await mobile.locator('#btn-food').tap();
-        check('A mobile snack toolbar tap advances exactly once', await mobile.evaluate(() => qa.state.currentMode === 'food' && JSON.stringify(qa.state.snackIngredients) === '["balloon"]' && document.getElementById('btn-food').textContent.trim() === '🎈' && qa.objects.length === 2 && qa.foods.length === 0));
+        check('A mobile snack toolbar tap activates the current apple without cycling', await mobile.evaluate(() => qa.state.currentMode === 'food' && qa.state.snackIngredients.length === 0 && document.getElementById('btn-food').textContent.trim() === '🍎' && qa.objects.length === 2 && qa.foods.length === 0));
         await mobile.touchscreen.tap(195, 370);
         check('Mobile food mode places food without building', await mobile.evaluate(() => qa.foods.length === 1 && qa.objects.length === 2));
         await mobile.screenshot({ path: '.tmp/qa/mobile.png' });

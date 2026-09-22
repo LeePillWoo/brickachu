@@ -402,10 +402,10 @@ export function onPointerDown(event) {
         clearPreview();
         return;
     }
-    if (state.currentMode === 'train') return;
     if (hit?.animal) {
         activePointer.entity = true;
-        if (state.currentMode === 'food' || (state.currentMode === 'eyes' && !hit.animal.livingId)) return;
+        activePointer.animal = hit.animal;
+        if (state.currentMode === 'food') return;
         const hitAnimal = hit.animal;
         _grabHoldTimer = setTimeout(() => {
             _grabHoldTimer = null;
@@ -414,6 +414,7 @@ export function onPointerDown(event) {
         }, GRAB_HOLD_MS);
         return;
     }
+    if (state.currentMode === 'train') return;
     if (!hit || hit.food) { activePointer.entity = true; return; }
     const canDrag = event.pointerType !== 'touch';
     if (state.currentMode === 'add' && canDrag) {
@@ -467,7 +468,10 @@ export function onPointerUp(event) {
     const dist = Math.hypot(event.clientX - state.downPointerPos.x, event.clientY - state.downPointerPos.y);
     if (dist >= TAP_DISTANCE || performance.now() - state.pointerDownTime >= 500) return;
     setPointerRay(event);
-    const hit = getHit();
+    // A short tap belongs to the animal pressed, even if it moves away before
+    // release. Never redirect that tap to the block or another friend behind it.
+    if (interaction.animal && !animals.includes(interaction.animal)) return;
+    const hit = interaction.animal ? { animal: interaction.animal } : getHit();
     if (!hit) {
         if (state.currentMode === 'eyes') state.onToyNotice?.('눈을 붙일 블록을 먼저 골라줘! 👀');
         return;
@@ -479,8 +483,14 @@ export function onPointerUp(event) {
         return;
     }
     if (hit.train) return;
+    if (hit.animal && state.currentMode !== 'food') {
+        triggerClickAction(hit.animal);
+        return;
+    }
     if (state.currentMode === 'train') {
-        if (hit.object !== state.plane) {
+        if (state.train) {
+            state.onToyNotice?.('기차를 누른 채 끌어서 가고 싶은 길을 그려줘! 🚂');
+        } else if (hit.object !== state.plane) {
             state.onToyNotice?.('기차는 블록 위가 아닌 빈 바닥에 놓아줘! 🚂');
         } else {
             spawnTrain(new THREE.Vector3(hit.point.x, 0, hit.point.z));
@@ -488,11 +498,7 @@ export function onPointerUp(event) {
         return;
     }
     if (state.currentMode === 'eyes') {
-        if (hit.animal?.livingId) {
-            triggerClickAction(hit.animal);
-            state.onToyNotice?.(hit.animal.abilityDescription || '반가워! 나랑 놀자 ✨');
-        } else if (hit.animal) state.onToyNotice?.('이미 살아 있는 친구야! 간식을 먹여볼까? 🍎');
-        else if (!hit.food && hit.object !== state.plane) {
+        if (!hit.food && hit.object !== state.plane) {
             const normal = hit.face.normal.clone();
             if (Math.abs(normal.y) > 0.5) {
                 // A top tap should still give the friend a face looking at us.
@@ -514,7 +520,6 @@ export function onPointerUp(event) {
         playSound('food-eat');
         return;
     }
-    if (hit.animal) { triggerClickAction(hit.animal); return; }
     if (interaction.entity || hit.food) return;
     if (state.currentMode === 'food') {
         if (hit.face?.normal.y > 0.5) spawnFood(hit.point.clone());

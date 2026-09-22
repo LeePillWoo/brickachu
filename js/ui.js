@@ -173,7 +173,7 @@ export function setupModeButtons() {
     btnTrain.addEventListener('click', e => {
         e.stopPropagation();
         activateToyMode('train');
-        if (spawnTrain()) state.onToyNotice?.('기차 출발! 기차를 끌면 마법 길을 따라 달려요 🚂');
+        if (state.train || spawnTrain()) state.onToyNotice?.('기차를 끌면 마법 길을 따라 달려요 🚂');
     });
 
     btnBlock.addEventListener('click', (e) => {
@@ -352,11 +352,11 @@ export function setupModeButtons() {
         selectAnimalGroup('all'); // 초기 아이콘 및 타이틀 설정
     }
 
-    // ── 간식 버튼: 누를 때마다 다음 간식을 선택하고 바로 먹이기 ──
+    // ── 간식 버튼: 현재 간식으로 돌아오기 / 선택 중 다시 누르면 다음 간식 ──
     if (btnFood) {
         btnFood.addEventListener('click', (e) => {
             e.stopPropagation();
-            const recipeName = toyUI.cycleSnack();
+            const recipeName = toyUI.cycleSnack(state.currentMode === 'food' && state.animalMode !== 'remove');
             activateToyMode('food');
             state.onToyNotice?.(`${recipeName} · 친구에게 콕, 바닥에 톡!`);
         });

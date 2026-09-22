@@ -38,7 +38,7 @@ async function initializeQA(page, url) {
     await page.waitForFunction(async () => Boolean((await import(new URL('js/state.js', document.baseURI).href)).state.previewRenderer));
     await page.evaluate(async () => {
         const load = file => import(new URL('js/' + file, document.baseURI).href);
-        window.qa = { ...await load('state.js'), ...await load('entities.js'), ...await load('scene.js'), ...await load('living.js'), ...await load('magic.js'), ...await load('food.js'), THREE: await import('three') };
+        window.qa = { ...await load('state.js'), ...await load('entities.js'), ...await load('scene.js'), ...await load('living.js'), ...await load('magic.js'), ...await load('food.js'), ...await load('train.js'), THREE: await import('three') };
     });
 }
 async function createBuildFixture(page) {
@@ -74,7 +74,7 @@ async function readToolbar(page) {
     return page.evaluate(() => {
         const food = document.getElementById('btn-food'), eyes = document.getElementById('btn-eyes');
         return {
-            recipe: [...qa.state.snackIngredients], mode: qa.state.currentMode,
+            recipe: [...qa.state.snackIngredients], mode: qa.state.currentMode, animalMode: qa.state.animalMode,
             icon: food.textContent.trim(), title: food.title, label: food.getAttribute('aria-label'),
             foodPressed: food.getAttribute('aria-pressed'), eyesPressed: eyes.getAttribute('aria-pressed'),
             active: [...document.querySelectorAll('#edit-mode-panel .mode-btn.active')].map(button => button.id)
@@ -87,7 +87,28 @@ function assertRecipe(toolbar, index) {
     assert.ok(toolbar.title.includes(expected.label), toolbar.title);
     assert.ok(toolbar.label?.includes(expected.label), toolbar.label);
     assert.equal(toolbar.mode, 'food'); assert.equal(toolbar.foodPressed, 'true');
+    assert.notEqual(toolbar.animalMode, 'remove');
     assert.equal(toolbar.eyesPressed, 'false'); assert.deepEqual(toolbar.active, ['btn-food']);
+}
+async function checkSnackRecall(page, touch = false) {
+    const action = touch ? 'tap' : 'click', label = touch ? 'Mobile' : 'Desktop';
+    await page.locator('#btn-food')[action](); assertRecipe(await readToolbar(page),0);
+    check(`${label} first snack activation keeps the selected ordinary apple`,true);
+    for (const index of [1,2]) { await page.locator('#btn-food')[action](); assertRecipe(await readToolbar(page),index); }
+    for (const id of ['btn-eyes','btn-grab','btn-add','btn-train','btn-clear-all']) {
+        await page.locator('#' + id)[action]();
+        const inactive = await readToolbar(page);
+        assert.deepEqual(inactive.recipe,recipes[2].ids); assert.equal(inactive.icon,recipes[2].icon);
+        assert.equal(inactive.foodPressed,'false'); assert.ok(inactive.title.includes('먹이기 시작'));
+        await page.locator('#btn-food')[action](); assertRecipe(await readToolbar(page),2);
+    }
+    check(`${label} returning from eyes, hand, blocks, train and removal keeps the selected pudding`,true);
+    await page.locator('#btn-eyes')[action](); await page.locator('#btn-food').focus();
+    await page.keyboard.press('Enter'); assertRecipe(await readToolbar(page),2);
+    await page.keyboard.press('Space'); assertRecipe(await readToolbar(page),3);
+    check(`${label} Enter restores the current snack and a second active Space advances once`,true);
+    await page.locator('#btn-food')[action](); assertRecipe(await readToolbar(page),0);
+    await page.evaluate(() => qa.clearTrain());
 }
 function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON.stringify(details)}`); checks.push(name); console.log('PASS', name, details ?? ''); }
 (async () => {
@@ -102,6 +123,7 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
             await preparePage(page); await initializeQA(page, url);
             check('Eyes and snacks are immediately available on the toolbar', await page.locator('#btn-eyes').isVisible() && await page.locator('#btn-food').isVisible());
             check('The initial snack is an ordinary apple', await page.evaluate(() => qa.state.snackIngredients.length === 0 && document.getElementById('btn-food').textContent.trim() === '🍎'));
+            await checkSnackRecall(page);
             await createBuildFixture(page);
             const beforeTools = await sceneCounts(page);
             await page.locator('#btn-eyes').click(); await page.locator('#btn-eyes').click();
@@ -118,11 +140,12 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
             check('Redo restores one friend without duplicate blocks', await page.evaluate(() => qa.animals.length === 1 && qa.objects.length === 1));
             await page.screenshot({ path: '.tmp/qa/living-desktop.png' });
             const beforeCycle = await sceneCounts(page);
+            await page.locator('#btn-food').click(); assertRecipe(await readToolbar(page),0);
             for (let step = 1; step <= 5; step++) {
                 await page.locator('#btn-food').click(); assertRecipe(await readToolbar(page), step % 4);
                 assert.deepEqual(await sceneCounts(page), beforeCycle);
             }
-            check('Each snack click advances once through apple, balloon, pudding and rainbow', true);
+            check('After activation, each additional snack click advances once through apple, balloon, pudding and rainbow', true);
             const beforeFeeding = await page.evaluate(() => qa.animals[0].body.position.y);
             const feed = await friendPoint(page); await page.mouse.click(feed.x, feed.y);
             check('Clicking a friend feeds the selected balloon without dropping food', await page.evaluate(() => JSON.stringify(qa.animals[0].magicEffect?.ingredients) === '["balloon"]' && qa.foods.length === 0));
@@ -158,11 +181,12 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1 });
         const mobileErrors = [];
         mobile.on('pageerror', error => mobileErrors.push(error.message));
-        await preparePage(mobile); await initializeQA(mobile, url); await createBuildFixture(mobile);
+        await preparePage(mobile); await initializeQA(mobile, url); await checkSnackRecall(mobile,true); await createBuildFixture(mobile);
         await mobile.locator('#btn-eyes').tap(); await mobile.locator('#btn-eyes').tap();
         assert.equal((await readToolbar(mobile)).mode, 'eyes');
         const mobileHead = await headPoint(mobile); await mobile.touchscreen.tap(mobileHead.x, mobileHead.y);
         check('Mobile toolbar eyes immediately awaken the six-block friend', await mobile.evaluate(() => qa.animals.length === 1 && qa.objects.length === 1));
+        await mobile.locator('#btn-food').tap(); assertRecipe(await readToolbar(mobile), 0);
         await mobile.locator('#btn-food').tap(); assertRecipe(await readToolbar(mobile), 1);
         const mobileFeed = await friendPoint(mobile); await mobile.touchscreen.tap(mobileFeed.x, mobileFeed.y);
         check('Mobile toolbar snack directly feeds the visible friend', await mobile.evaluate(() => qa.animals[0].magicEffect?.ingredients[0] === 'balloon' && qa.foods.length === 0));
@@ -177,11 +201,11 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
             assert.equal(eyes.mode, 'eyes'); assert.equal(eyes.eyesPressed, 'true'); assert.equal(eyes.foodPressed, 'false');
             assert.equal(eyes.icon, selectedBefore.icon); assert.deepEqual(eyes.active, ['btn-eyes']);
             for (let tap = 0; tap < 12; tap++) {
-                await mobile.locator('#btn-food').tap(); recipeIndex = (recipeIndex + 1) % recipes.length;
+                await mobile.locator('#btn-food').tap(); if (tap > 0) recipeIndex = (recipeIndex + 1) % recipes.length;
                 assertRecipe(await readToolbar(mobile), recipeIndex);
                 assert.deepEqual(await sceneCounts(mobile), untouched, 'toolbar touches must never create a block or dropped snack');
             }
-            check(`Twelve consecutive taps advance one snack each at ${viewport.width}x${viewport.height}`, true);
+            check(`The first tap recalls the snack and eleven active taps each advance once at ${viewport.width}x${viewport.height}`, true);
             await mobile.locator('#btn-food').focus();
             for (const key of ['Enter', 'Space']) {
                 await mobile.keyboard.press(key); recipeIndex = (recipeIndex + 1) % recipes.length;
