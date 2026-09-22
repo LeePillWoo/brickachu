@@ -68,7 +68,7 @@ test('carnivore limit rejects without evicting an existing animal', () => {
     assert.deepEqual(entities.animals, original);
     assert.equal(state.world.bodies.length, 21);
 });
-test('all 33 model types spawn and settle on the physical floor', () => {
+test('all 44 model types spawn and settle on the physical floor', () => {
     for (const type of entities.GROUP_ANIMALS.all) {
         entities.clearAllAnimals();
         const animal = spawn(type);
@@ -81,6 +81,24 @@ test('all 33 model types spawn and settle on the physical floor', () => {
         assert.ok(Number.isFinite(animal.body.position.y), type);
         assert.ok(animal.body.position.y >= animal.heightOffset * 2.5 - 2, type);
     }
+});
+
+test('soft friends squash while the turtle spins and restored jumpers use their own movement', () => {
+    for (const type of ['sheep', 'pig', 'bear', 'snorlax', 'ditto', 'diglett']) {
+        entities.clearAllAnimals();
+        const animal = standing(type);
+        entities.triggerClickAction(animal);
+        assert.equal(animal.clickActionType, 'squash', type);
+        entities.updateDogs(0.2);
+        assert.ok(animal.mesh.scale.x > animal.baseScale.x && animal.mesh.scale.y < animal.baseScale.y, type);
+    }
+    entities.clearAllAnimals();
+    const turtle = standing('turtle');
+    entities.triggerClickAction(turtle);
+    assert.equal(turtle.clickActionType, 'spin');
+    entities.updateDogs(0.2);
+    assert.equal(turtle.body.velocity.z, 0, 'shell spin does not launch the turtle forward');
+    for (const type of ['kangaroo', 'marill']) assert.equal(standing(type).animGroup, 'HOP');
 });
 test('ground queries respect start height and explicit fallback', () => {
     block(0, 25, 0);

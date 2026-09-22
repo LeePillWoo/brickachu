@@ -124,19 +124,22 @@ async function touchEvent(session, type, points) {
     await session.send('Input.dispatchTouchEvent', { type, touchPoints: points.map((point, id) => ({ x: point.x, y: point.y, id, radiusX: 1, radiusY: 1, force: 1 })) });
 }
 async function startDrawing(page, touchSession, routeTarget) {
-    const speed = await page.evaluate(() => {
+    const speed = await page.evaluate(routeTarget => {
         // Keep the projected target still across browser round trips until the real press.
         const speed = qa.state.gameSpeed; qa.state.gameSpeed = 0;
-        const target = qa.state.train.position, distance = Math.max(1, 0.78 / qa.state.camera.aspect);
-        qa.state.camera.position.copy(target).add(new qa.THREE.Vector3(560, 720, 950).multiplyScalar(distance));
+        const target = qa.state.train.position.clone(), distance = Math.max(1, 0.78 / qa.state.camera.aspect);
+        // A long wall-crossing route must stay between the preview, palette and toolbar.
+        if (routeTarget) target.lerp(new qa.THREE.Vector3(...routeTarget), 0.5);
+        qa.state.camera.position.copy(target).add(new qa.THREE.Vector3(routeTarget ? 0 : 560, 720, 950).multiplyScalar(distance));
         qa.state.controls.target.copy(target); qa.state.velocity.set(0, 0, 0); qa.state.controls.update();
         return speed;
-    });
+    }, routeTarget);
     let start, end, before;
     try {
         start = await trainPoint(page);
         const target = await page.evaluate(() => qa.state.train.position.toArray());
         end = await project(page, routeTarget || [target[0] + 190, 0, target[2] - 140]);
+        assert.ok(await page.evaluate(end => document.elementFromPoint(end.x, end.y) === qa.state.renderer.domElement, end), 'Route release must land on the playable canvas, not a UI button');
         before = await cameraState(page);
         if (touchSession) await touchEvent(touchSession, 'touchStart', [start]);
         else { await page.mouse.move(start.x, start.y); await page.mouse.down(); }
@@ -232,6 +235,7 @@ async function checkWallBreakthrough(page) {
     });
     await placeTrain(page, [-250, 0, 0]); await advance(page, 1.5);
     await page.evaluate(() => {
+        qa.state.gameSpeed = 0;
         const start = qa.state.train.position.clone();
         qa.wallX = Math.round((start.x + 225 - 25) / 50) * 50 + 25;
         const centerZ = Math.round((start.z - 25) / 50) * 50 + 25;
@@ -247,7 +251,10 @@ async function checkWallBreakthrough(page) {
     await startDrawing(page, undefined, goal);
     check('A real train drag accepts a route beyond the block wall', await page.evaluate(() => qa.state.train.route.at(-1).x > qa.wallX + 250));
     check('Drawing across a wall leaves every block intact until the train drives into it', await page.evaluate(() => qa.wallBlocks.every(block => block && qa.objects.includes(block))));
+    const drawnRoute = await page.evaluate(() => qa.state.train.route.map(point => point.toArray()));
     await page.mouse.up();
+    assert.ok(await page.evaluate(() => !qa.state.train.drawing && qa.state.controls.enabled && qa.state.train.route.length >= 2), 'Wall route must be committed before driving');
+    assert.deepEqual(await page.evaluate(() => qa.state.train.route.map(point => point.toArray())), drawnRoute, 'Releasing the mouse must preserve the drawn wall-crossing route');
     const crossing = await page.evaluate(() => {
         let passed = false;
         for (let i = 0; i < 60 * 25; i++) {

@@ -7,6 +7,7 @@ import { clearAllFoodWithEffect } from './food.js';
 import { onPointerCancel } from './input.js';
 import { setupToyUI } from './toy-ui.js';
 import { clearTrain } from './train.js';
+import { ANIMAL_CATEGORIES } from './animal-catalog.js';
 
 export function setupPalette() {
     const panel = document.getElementById('palette-panel');
@@ -116,6 +117,8 @@ export function setupModeButtons() {
     const btnFood = document.getElementById('btn-food');       // 먹이 그룹 루프 버튼
     const btnEyes = document.getElementById('btn-eyes');
     const btnTrain = document.getElementById('btn-train');
+    const btnGrab = document.getElementById('btn-grab');
+    const btnAnimalCategory = document.getElementById('btn-animal-category');
     let toyUI = null;
 
     // ── 블록 그룹 (add ↔ remove 루프 토글) ──
@@ -161,6 +164,12 @@ export function setupModeButtons() {
         state.onToyNotice?.('눈 붙일 블록을 콕 눌러줘! 👀');
     });
 
+    btnGrab.addEventListener('click', e => {
+        e.stopPropagation();
+        activateToyMode('grab');
+        state.onToyNotice?.('친구를 바로 잡아 끌어줘! 놓으면 사뿐 내려와 ✋');
+    });
+
     btnTrain.addEventListener('click', e => {
         e.stopPropagation();
         activateToyMode('train');
@@ -182,17 +191,7 @@ export function setupModeButtons() {
 
     applyBlockState('add'); // 초기값
 
-    // ── 동물 버튼: 단일 탭 → 스폰, 0.5초 꾹 → 타입 선택 슬라이드 메뉴 ──
-    const ANIMAL_GROUPS = [
-        { id: 'all',     icon: '🐾', label: '전체' },
-        { id: 'quad',    icon: '🐶', label: '네발' },
-        { id: 'hop',     icon: '🐰', label: '깡충' },
-        { id: 'sneak',   icon: '🐌', label: '벽타기' },
-        { id: 'heavy',   icon: '🐘', label: '육중' },
-        { id: 'waddle',  icon: '🐧', label: '뒤뚱' },
-        { id: 'carnivore', icon: '🦁', label: '육식' },
-        { id: 'special',   icon: '✨', label: '특수' },
-    ];
+    // ── 동물 소환 / 카테고리 탭 / 기존 길게 누르기 ──
 
     let selectedAnimalGroup = 'all';
     let _animalLongPressTimer = null;
@@ -203,16 +202,21 @@ export function setupModeButtons() {
     // 메뉴 DOM 생성
     const animalTypeMenu = document.createElement('div');
     animalTypeMenu.id = 'animal-type-menu';
-    ANIMAL_GROUPS.forEach(g => {
-        const item = document.createElement('div');
+    animalTypeMenu.setAttribute('role', 'group');
+    animalTypeMenu.setAttribute('aria-label', '동물 카테고리');
+    ANIMAL_CATEGORIES.forEach(g => {
+        const item = document.createElement('button');
+        item.type = 'button';
         item.className = 'atm-item' + (g.id === 'all' ? ' atm-selected' : '');
         item.dataset.group = g.id;
+        item.title = g.description;
         item.innerHTML = `<span class="atm-icon">${g.icon}</span><span class="atm-label">${g.label}</span>`;
-        item.addEventListener('pointerdown', (e) => {
+        item.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (e.button !== 0) return;
             selectAnimalGroup(g.id);
             closeAnimalMenu();
+            btnAnimalCategory.focus({ preventScroll: true });
+            state.onToyNotice?.(`${g.icon} ${g.label} · 동물 버튼을 누르면 친구가 찾아와!`);
         });
         animalTypeMenu.appendChild(item);
     });
@@ -220,18 +224,23 @@ export function setupModeButtons() {
 
     function selectAnimalGroup(groupId) {
         selectedAnimalGroup = groupId;
-        const g = ANIMAL_GROUPS.find(x => x.id === groupId);
+        const g = ANIMAL_CATEGORIES.find(x => x.id === groupId);
         if (g && btnAnimal) {
             btnAnimal.textContent = g.icon;
-            btnAnimal.title = `동물 소환 [${g.label}] (꾹 누르면 타입 선택)`;
+            btnAnimal.title = `${g.label} 소환 · 꾹 누르면 카테고리 선택`;
+            btnAnimal.setAttribute('aria-label', `${g.label} 동물 소환`);
+            btnAnimalCategory.title = `동물 카테고리: ${g.label}`;
+            btnAnimalCategory.setAttribute('aria-label', `동물 카테고리 선택 · 현재 ${g.label}`);
         }
         animalTypeMenu.querySelectorAll('.atm-item').forEach(el => {
             el.classList.toggle('atm-selected', el.dataset.group === groupId);
+            el.setAttribute('aria-pressed', String(el.dataset.group === groupId));
         });
     }
 
     function openAnimalMenu() {
         _animalMenuOpen = true;
+        btnAnimalCategory.setAttribute('aria-expanded', 'true');
         const rect = btnAnimal.getBoundingClientRect();
         animalTypeMenu.style.display = 'flex';
         // 버튼 왼쪽에 메뉴 표시 (버튼 그룹이 우측에 있으므로)
@@ -242,6 +251,7 @@ export function setupModeButtons() {
 
     function closeAnimalMenu() {
         _animalMenuOpen = false;
+        btnAnimalCategory.setAttribute('aria-expanded', 'false');
         animalTypeMenu.classList.remove('atm-visible');
         animalTypeMenu.querySelectorAll('.atm-item').forEach(item => item.classList.remove('atm-hover'));
         setTimeout(() => { if (!_animalMenuOpen) animalTypeMenu.style.display = 'none'; }, 200);
@@ -258,8 +268,21 @@ export function setupModeButtons() {
         const wasClearMode = state.animalMode === 'remove';
         deactivateClearMode();
         if (wasClearMode) applyBlockState(blockState);
-        spawnDog(selectedAnimalGroup);
+        const animal = spawnDog(selectedAnimalGroup);
+        if (animal) state.onToyNotice?.(`${animal.displayName || '새 친구'} · ${animal.abilityName || '친구를 톡 눌러 놀아봐!'} ✨`);
     }
+
+    btnAnimalCategory.addEventListener('click', e => {
+        e.stopPropagation();
+        if (_animalMenuOpen) closeAnimalMenu();
+        else openAnimalMenu();
+    });
+    animalTypeMenu.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            closeAnimalMenu();
+            btnAnimalCategory.focus({ preventScroll: true });
+        }
+    });
 
     if (btnAnimal) {
         btnAnimal.addEventListener('pointerdown', (e) => {
@@ -310,12 +333,18 @@ export function setupModeButtons() {
         btnAnimal.addEventListener('pointercancel', cancelAnimalPress);
         btnAnimal.addEventListener('lostpointercapture', () => { if (_animalPointerId !== null) cancelAnimalPress(); });
         btnAnimal.addEventListener('click', e => { if (e.detail === 0) spawnSelectedAnimal(); });
+        btnAnimal.addEventListener('keydown', e => {
+            if (e.key !== 'ArrowDown') return;
+            e.preventDefault();
+            openAnimalMenu();
+            animalTypeMenu.querySelector('.atm-selected').focus({ preventScroll: true });
+        });
         btnAnimal.addEventListener('contextmenu', e => e.preventDefault());
         window.addEventListener('blur', cancelAnimalPress);
 
         // 메뉴 외부 클릭 시 닫기
         document.addEventListener('pointerdown', (e) => {
-            if (_animalMenuOpen && !e.target.closest('#animal-type-menu') && e.target !== btnAnimal) {
+            if (_animalMenuOpen && !e.target.closest('#animal-type-menu') && e.target !== btnAnimal && e.target !== btnAnimalCategory) {
                 closeAnimalMenu();
             }
         }, true);

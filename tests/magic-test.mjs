@@ -291,7 +291,7 @@ test('held pets keep the grab position while their game-time duration still elap
     assert.equal(pet.magicEffect.remaining, 17);
 });
 
-test('all 33 real animal models obey the 40 percent horizontal cap during AI, nearby food and click dash', () => {
+test('all 44 real animal models obey the 40 percent horizontal cap during AI, nearby food and click dash', () => {
     for (const type of GROUP_ANIMALS.all) {
         clearAllAnimals();
         clearAllFood();

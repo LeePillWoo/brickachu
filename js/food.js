@@ -239,6 +239,7 @@ export function clearAllFood() {
 export function updateFoods(dt) {
     for (let i = foods.length - 1; i >= 0; i--) {
         const food = foods[i];
+        if (food.carriedBy && !food.eaten && food.consumeTimer < 0) continue;
         food.floatTime += dt;
 
         if (food.eaten || food.consumeTimer >= 0) {

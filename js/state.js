@@ -61,7 +61,7 @@ export const state = {
     previewGroup: new THREE.Group(),
     previewMaterial: new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.5, transparent: true }),
     currentColor: '#FCDb00',
-    /** 'add' | 'remove' | 'food' | 'eyes' | 'train' */
+    /** 'add' | 'remove' | 'food' | 'eyes' | 'train' | 'grab' */
     currentMode: 'add',
     /** Up to two magic snack ingredients; [] is an ordinary apple. */
     snackIngredients: [],

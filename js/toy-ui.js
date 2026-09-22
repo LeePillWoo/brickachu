@@ -24,11 +24,12 @@ export function setupToyUI() {
 
     function sync() {
         const mode = state.animalMode === 'remove' ? '' : state.currentMode;
-        for (const [id, choiceMode] of [['btn-eyes', 'eyes'], ['btn-food', 'food'], ['btn-train', 'train']]) {
+        for (const [id, choiceMode] of [['btn-eyes', 'eyes'], ['btn-food', 'food'], ['btn-train', 'train'], ['btn-grab', 'grab']]) {
             const button = document.getElementById(id);
             button.classList.toggle('active', mode === choiceMode);
             button.setAttribute('aria-pressed', String(mode === choiceMode));
         }
+        if (state.renderer?.domElement.style) state.renderer.domElement.style.cursor = mode === 'grab' ? 'grab' : '';
 
         const selected = normalizeIngredients(state.snackIngredients).slice(-1);
         state.snackIngredients = selected;

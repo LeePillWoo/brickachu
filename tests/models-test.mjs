@@ -4,6 +4,7 @@ import * as CANNON from 'cannon-es';
 import { createSoftBoxGeometry, mergeStaticParts } from '../js/model-utils.js';
 import { state } from '../js/state.js';
 import { GROUP_ANIMALS, spawnDog, clearAllAnimals, updateDogs } from '../js/entities.js';
+import { ANIMAL_CATEGORIES, ANIMAL_NAMES } from '../js/animal-catalog.js';
 
 const checks = [];
 function test(name, fn) { fn(); checks.push(name); console.log('PASS', name); }
@@ -56,16 +57,22 @@ test('batching preserves rotated silhouettes, picking and owned-resource cleanup
     group.children.find(child => child.isMesh).geometry.dispose(); shared.dispose(); material.dispose();
 });
 
-test('all 38 animal models fit mobile draw budgets, retain picking and stand above ground', () => {
+test('all 44 animal models fit mobile draw budgets, retain picking and stand above ground', () => {
     state.scene = new THREE.Scene();
     state.world = new CANNON.World({ gravity: new CANNON.Vec3(0, -1470, 0) });
     const ground = new CANNON.Body({ mass: 0, shape: new CANNON.Plane() });
     ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0); state.world.addBody(ground);
-    const types = [...GROUP_ANIMALS.all, 'horse', 'giraffe', 'vulpix', 'marill', 'kangaroo'];
-    assert.equal(new Set(types).size, 38);
+    const types = GROUP_ANIMALS.all;
+    assert.equal(new Set(types).size, 44);
+    const categorized = ANIMAL_CATEGORIES.filter(category => category.id !== 'all').flatMap(category => category.types);
+    assert.equal(categorized.length, types.length, 'each friend belongs to exactly one browsing category');
+    assert.deepEqual(new Set(categorized), new Set(types));
+    assert.deepEqual(new Set(Object.keys(ANIMAL_NAMES)), new Set(types), 'all friends have visible Korean names');
     for (const type of types) {
         GROUP_ANIMALS.modelCheck = [type];
         const animal = spawnDog('modelCheck');
+        assert.equal(animal.displayName, ANIMAL_NAMES[type]);
+        assert.ok(animal.abilityName && animal.abilityDescription, `${type}: missing ability description`);
         animal.mesh.position.set(0, 0, 0); animal.mesh.updateMatrixWorld(true);
         const bounds = new THREE.Box3().setFromObject(animal.mesh);
         assert.ok(!bounds.isEmpty() && bounds.min.y >= -1e-5, type);

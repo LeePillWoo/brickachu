@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { state, objects, materials, guiParams } from '../js/state.js';
-import { animals, grabbedAnimal, clearAllAnimals } from '../js/entities.js';
+import { animals, grabbedAnimal, clearAllAnimals, GROUP_ANIMALS, spawnDog, triggerClickAction } from '../js/entities.js';
 import { foods, spawnFood, clearAllFood } from '../js/food.js';
 import { placeVoxel, pushHistory, applyActionState, undo, redo } from '../js/scene.js';
 import { onPointerDown, onPointerUp, onPointerMove, onPointerCancel, onKeyDown, onKeyUp, onWindowResize } from '../js/input.js';
 import { spawnTrain, clearTrain, beginTrainRoute, appendTrainRoutePoint, finishTrainRoute } from '../js/train.js';
+import { updateAnimalPowers } from '../js/animal-powers.js';
 
 state.scene = new THREE.Scene();
 state.world = new CANNON.World();
@@ -34,6 +35,26 @@ const event = (x = 25, z = 25, extra = {}) => {
 };
 const click = e => { onPointerDown(e); onPointerUp(e); };
 const count = () => objects.length - 1;
+function fixtureAnimal(x = 25, z = 25) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(40, 40, 40));
+    mesh.position.set(x, 25, z);
+    const animal = { mesh, body: new CANNON.Body({ mass: 1 }), heightOffset: 8, grabbed: false };
+    mesh.userData.animalRef = animal;
+    animal.body.position.set(x, 45, z);
+    animals.push(animal); state.scene.add(mesh);
+    return animal;
+}
+
+function outsideAnimal(animal, pixels, pointerType) {
+    state.scene.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(animal.mesh);
+    const corners = [];
+    for (const x of [bounds.min.x, bounds.max.x]) for (const y of [bounds.min.y, bounds.max.y]) for (const z of [bounds.min.z, bounds.max.z]) {
+        corners.push(new THREE.Vector3(x, y, z).project(state.camera));
+    }
+    const center = bounds.getCenter(new THREE.Vector3()).project(state.camera);
+    return event(25, 25, { pointerType, clientX: (Math.max(...corners.map(p => p.x)) + 1) * 500 + pixels, clientY: (1 - center.y) * 500 });
+}
 function reset() {
     onPointerCancel();
     clearTrain();
@@ -117,6 +138,116 @@ check('cancelled animal hold does not activate later; removed animals are not re
         animals.length = 0; state.scene.remove(mesh); onPointerUp(event());
         assert.equal(a.grabbed, false); assert.equal(grabbedAnimal, null); assert.equal(state.controls.enabled, true);
     } finally { globalThis.setTimeout = realSetTimeout; globalThis.clearTimeout = realClearTimeout; }
+});
+check('hand tool grabs immediately for mouse and touch, moves once, and releases without editing', () => {
+    for (const pointerType of ['mouse', 'touch']) {
+        const animal = fixtureAnimal();
+        state.currentMode = 'grab';
+        const start = event(25, 25, { pointerType });
+        onPointerDown(start);
+        assert.equal(grabbedAnimal, animal, 'no long-press timer is needed');
+        assert.equal(animal.grabbed, true);
+        assert.equal(state.controls.enabled, false);
+        assert.ok(animal.mesh.position.y >= 120);
+        onPointerMove(event(225, 125, { pointerType }));
+        onPointerUp(event(225, 125, { pointerType }));
+        assert.equal(grabbedAnimal, null);
+        assert.equal(animal.grabbed, false);
+        assert.equal(state.controls.enabled, true);
+        assert.ok(Math.abs(animal.mesh.position.x - 225) < 1e-6);
+        assert.ok(Math.abs(animal.mesh.position.z - 125) < 1e-6);
+        assert.ok(Math.abs(animal.mesh.position.y) < 1e-6);
+        assert.equal(count(), 0); assert.equal(foods.length, 0);
+        clearAllAnimals();
+    }
+});
+check('hand tool accepts near-silhouette touches but not remote empty space', () => {
+    for (const [pointerType, margin] of [['mouse', 6], ['touch', 12]]) {
+        const animal = fixtureAnimal();
+        state.currentMode = 'grab';
+        const near = outsideAnimal(animal, margin, pointerType);
+        onPointerDown(near);
+        assert.equal(grabbedAnimal, animal, `${pointerType} has a forgiving CSS-pixel target`);
+        onPointerCancel();
+        const far = outsideAnimal(animal, 40, pointerType);
+        click(far);
+        assert.equal(grabbedAnimal, null);
+        assert.equal(count(), 0);
+        clearAllAnimals();
+    }
+});
+check('hand selection never passes through a block or locomotive and never modifies either', () => {
+    fixtureAnimal(); state.currentMode = 'grab';
+    placeVoxel(new THREE.Vector3(25, 75, 25));
+    onPointerDown(event(25, 25, { pointerType: 'touch' }));
+    assert.equal(grabbedAnimal, null);
+    onPointerUp(event());
+    assert.equal(count(), 1);
+    reset(); fixtureAnimal(); state.currentMode = 'grab';
+    const train = spawnTrain(new THREE.Vector3(25, 0, 25));
+    onPointerDown(event()); onPointerMove(event(225)); onPointerUp(event(225));
+    assert.equal(grabbedAnimal, null);
+    assert.equal(train.drawing, false);
+    assert.equal(state.controls.enabled, true);
+    assert.equal(state.train, train);
+});
+check('hand tool cancellation, second touch, removal and tool changes restore controls', () => {
+    const cancellations = [
+        () => onPointerCancel({ type: 'pointercancel', pointerId: 1 }),
+        () => onKeyDown({ code: 'Escape', key: 'Escape', target: canvas }),
+        () => onPointerCancel({ type: 'blur' }),
+        () => onPointerDown(event(225, 125, { pointerId: 2, isPrimary: false, pointerType: 'touch' })),
+        () => { onPointerCancel(); state.currentMode = 'eyes'; },
+        () => { clearAllAnimals(); onPointerMove(event(225, 125)); }
+    ];
+    for (const cancel of cancellations) {
+        const animal = fixtureAnimal(); state.currentMode = 'grab';
+        onPointerDown(event(25, 25, { pointerType: 'touch' }));
+        assert.equal(animal.grabbed, true);
+        cancel(); onPointerUp(event());
+        assert.equal(animal.grabbed, false); assert.equal(grabbedAnimal, null);
+        assert.equal(state.controls.enabled, true);
+        clearAllAnimals();
+    }
+    fixtureAnimal(); state.currentMode = 'grab'; state.controls.enabled = false;
+    onPointerDown(event()); onPointerCancel();
+    assert.equal(state.controls.enabled, false, 'an already disabled camera stays disabled');
+});
+check('grabbing a passenger immediately detaches its train connection', () => {
+    const train = spawnTrain(new THREE.Vector3(-300, 0, 25));
+    const animal = fixtureAnimal();
+    train.followers.push(animal);
+    animal.trainRide = { train };
+    state.currentMode = 'grab';
+    onPointerDown(event());
+    assert.equal(animal.grabbed, true);
+    assert.equal(animal.trainRide, undefined);
+    assert.equal(train.followers.length, 0);
+    assert.equal(train.ropes.length, 0);
+    onPointerUp(event());
+    assert.ok(animal.trainJoinCooldown > 0);
+});
+check('picking up a rolling panda or sliding otter resets its pose before lifting', () => {
+    for (const type of ['panda', 'otter']) {
+        GROUP_ANIMALS.grabTest = [type];
+        const animal = spawnDog('grabTest'); delete GROUP_ANIMALS.grabTest;
+        animal.body.position.set(25, animal.heightOffset * 2.5, 25);
+        animal.mesh.position.set(25, 0, 25); animal.mesh.rotation.set(0, 0, 0);
+        triggerClickAction(animal); updateAnimalPowers(animals, 0.2);
+        assert.ok(animal.animalPower?.controlsMotion);
+        assert.ok(Math.abs(animal.mesh.rotation.x) > 0.1);
+        state.scene.updateMatrixWorld(true);
+        const point = new THREE.Box3().setFromObject(animal.mesh).getCenter(new THREE.Vector3()).project(state.camera);
+        const down = event(25, 25, { clientX: (point.x + 1) * 500, clientY: (1 - point.y) * 500 });
+        state.currentMode = 'grab'; onPointerDown(down);
+        assert.equal(grabbedAnimal, animal);
+        assert.equal(animal.animalPower, undefined);
+        assert.ok(Math.abs(animal.mesh.rotation.x) < 1e-6);
+        assert.equal(animal.mesh.position.x, 25); assert.equal(animal.mesh.position.z, 25);
+        onPointerUp(down);
+        assert.ok(Math.abs(animal.mesh.position.y) < 1e-6);
+        clearAllAnimals();
+    }
 });
 check('eyes hover and click animate only the connected build with undo and redo', () => {
     placeVoxel(new THREE.Vector3(25, 25, 25));

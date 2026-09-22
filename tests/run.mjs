@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const rootURL = new URL('../', import.meta.url);
 const cacheURL = new URL('.tmp/qa/', rootURL);
-const suites = ['animal', 'models', 'scene', 'input', 'sound', 'food', 'living', 'magic', 'train'];
+const suites = ['animal', 'models', 'scene', 'input', 'sound', 'food', 'living', 'magic', 'train', 'powers'];
 
 async function prepareDependencies() {
     const html = await readFile(new URL('index.html', rootURL), 'utf8');

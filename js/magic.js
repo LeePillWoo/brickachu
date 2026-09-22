@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createSoftBoxGeometry } from './model-utils.js';
 import { state, objects, voxelSize } from './state.js';
 import { detachTrainFollower } from './train.js';
+import { clearAnimalPower } from './animal-powers.js';
 
 export const SNACK_INGREDIENTS = Object.freeze([
     Object.freeze({ id: 'balloon', icon: '🎈', label: '풍선', color: '#ff83b5', description: '동글동글 부풀어서 둥실 떠올라요' }),
@@ -175,6 +176,8 @@ export function applySnack(animal, ids) {
     if (!animal?.mesh) return false;
     const ingredients = normalizeIngredients(ids);
     const wasMagic = Boolean(animal.magicEffect);
+    // End the toy pose and its decorations before capturing the snack's base state.
+    clearAnimalPower(animal);
     clearMagicEffect(animal);
     if (!ingredients.length) {
         if (wasMagic) state.onToyNotice?.('사과를 먹고 원래 모습으로 돌아왔어요!');

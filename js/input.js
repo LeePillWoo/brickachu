@@ -23,6 +23,7 @@ const _grabPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const _grabIntersect = new THREE.Vector3();
 const _trainPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const _trainIntersect = new THREE.Vector3();
+const _grabPickPointer = new THREE.Vector2();
 
 function isInterface(target) {
     return !!target?.closest?.('#ui-layer, #palette-popup, .lil-gui, input, textarea, select, button, [contenteditable="true"]');
@@ -61,12 +62,45 @@ function getHit() {
     return null;
 }
 
+// Expand only the hand tool by CSS pixels. Every sample still raycasts the
+// visible scene, so a nearby animal cannot be grabbed through a wall or train.
+function getGrabHit(event, directHit) {
+    if (directHit?.animal || (directHit && directHit.object !== state.plane)) return directHit;
+    const rect = state.renderer.domElement.getBoundingClientRect();
+    const radius = event.pointerType === 'touch' ? 18 : 8;
+    _grabPickPointer.copy(state.pointer);
+    try {
+        for (const distance of [radius / 2, radius]) {
+            for (let step = 0; step < 8; step++) {
+                const angle = step * Math.PI / 4;
+                const x = event.clientX + Math.cos(angle) * distance;
+                const y = event.clientY + Math.sin(angle) * distance;
+                if (x < rect.left || x > rect.left + rect.width || y < rect.top || y > rect.top + rect.height) continue;
+                state.pointer.set(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
+                state.raycaster.setFromCamera(state.pointer, state.camera);
+                const hit = getHit();
+                if (hit?.animal) return hit;
+            }
+        }
+    } finally {
+        state.pointer.copy(_grabPickPointer);
+        state.raycaster.setFromCamera(state.pointer, state.camera);
+    }
+    return directHit;
+}
+
+function updateGrabCursor() {
+    const canvas = state.renderer?.domElement;
+    if (canvas?.style) canvas.style.cursor = _grabbedAnimal ? 'grabbing' : state.currentMode === 'grab' ? 'grab' : '';
+}
+
 function clearPreview() {
     state.previewGroup.clear();
     state.targetGuideOpacity = 0;
     if (state.rollOverMaterial) state.rollOverMaterial.opacity = 0;
     hideFoodGhost();
     hideEyesPreview();
+    updateGrabCursor();
 }
 
 function hideEyesPreview() {
@@ -106,6 +140,37 @@ function showEyesPreview(hit) {
 function clearGrabTimer() {
     if (_grabHoldTimer !== null) clearTimeout(_grabHoldTimer);
     _grabHoldTimer = null;
+}
+
+function beginAnimalGrab(animal, event) {
+    if (!animals.includes(animal)) return;
+    _grabbedAnimal = animal;
+    // End rolling/sliding visual offsets before choosing the pickup height.
+    setGrabbedAnimal(animal);
+    animal.grabbed = true;
+    _grabGroundY = getGroundHeightBelow(animal.mesh.position.x, animal.mesh.position.y + 1, animal.mesh.position.z);
+    if (state.controls) {
+        _controlsWereEnabled = state.controls.enabled;
+        state.controls.enabled = false;
+    }
+    const hoverY = Math.max(animal.mesh.position.y, _grabGroundY + GRAB_HOVER_HEIGHT);
+    animal.mesh.position.y = hoverY;
+    if (animal.body) {
+        animal.body.position.y = hoverY + animal.heightOffset * (voxelSize / 20);
+        animal.body.velocity.set(0, 0, 0);
+    }
+    // The hand tool locks OrbitControls before it can capture a touch itself.
+    const canvas = state.renderer.domElement;
+    if (canvas.setPointerCapture && event) {
+        canvas.setPointerCapture(event.pointerId);
+        activePointer.captureTarget = canvas;
+    }
+    clearPreview();
+}
+
+function releasePointerCapture() {
+    const target = activePointer?.captureTarget;
+    if (target?.hasPointerCapture(activePointer.id)) target.releasePointerCapture(activePointer.id);
 }
 
 function releaseAnimal() {
@@ -164,6 +229,7 @@ export function onPointerCancel(event) {
     state.isDraggingBuild = false;
     state.isDraggingRemove = false;
     state.verticalBuildOffset = 0;
+    releasePointerCapture();
     activePointer = null;
     clearPreview();
     if (!event || event.type === 'blur') {
@@ -272,6 +338,10 @@ export function onPointerMove(event) {
         hideEyesPreview();
         return;
     }
+    if (state.currentMode === 'grab') {
+        clearPreview();
+        return;
+    }
     if (state.currentMode === 'eyes') {
         state.targetGuideOpacity = 0;
         hideFoodGhost();
@@ -318,6 +388,12 @@ export function onPointerDown(event) {
     setPointerRay(event);
     const hit = getHit();
     if (state.animalMode === 'remove') return;
+    if (state.currentMode === 'grab') {
+        activePointer.entity = true;
+        const grabHit = getGrabHit(event, hit);
+        if (grabHit?.animal) beginAnimalGrab(grabHit.animal, event);
+        return;
+    }
     if (hit?.train) {
         activePointer.entity = true;
         _trainDrag = { train: hit.train, started: false, controlsWereEnabled: state.controls?.enabled ?? true };
@@ -334,15 +410,7 @@ export function onPointerDown(event) {
         _grabHoldTimer = setTimeout(() => {
             _grabHoldTimer = null;
             if (!activePointer || !animals.includes(hitAnimal)) return;
-            _grabbedAnimal = hitAnimal;
-            _grabbedAnimal.grabbed = true;
-            _grabGroundY = null;
-            setGrabbedAnimal(hitAnimal);
-            if (state.controls) {
-                _controlsWereEnabled = state.controls.enabled;
-                state.controls.enabled = false;
-            }
-            clearPreview();
+            beginAnimalGrab(hitAnimal, event);
         }, GRAB_HOLD_MS);
         return;
     }
@@ -372,6 +440,7 @@ export function onPointerUp(event) {
         return;
     }
     const interaction = activePointer;
+    releasePointerCapture();
     activePointer = null;
     clearGrabTimer();
     if (_grabbedAnimal) {
@@ -391,6 +460,10 @@ export function onPointerUp(event) {
     state.isDraggingRemove = false;
     clearPreview();
     if (wasBuilding || wasRemoving || overInterface || interaction.moved) return;
+    if (state.currentMode === 'grab') {
+        state.onToyNotice?.('친구를 누른 채 끌어줘! 놓으면 사뿐 내려와 ✋');
+        return;
+    }
     const dist = Math.hypot(event.clientX - state.downPointerPos.x, event.clientY - state.downPointerPos.y);
     if (dist >= TAP_DISTANCE || performance.now() - state.pointerDownTime >= 500) return;
     setPointerRay(event);

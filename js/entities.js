@@ -7,13 +7,14 @@ import { playSound } from './sound.js';
 import { applySnack, clearMagicEffect } from './magic.js';
 import { detachTrainFollower } from './train.js';
 import { createSoftBoxGeometry, mergeStaticParts } from './model-utils.js';
+import { ANIMAL_CATEGORIES, ANIMAL_NAMES } from './animal-catalog.js';
+import { triggerAnimalPower, updateAnimalPowers, clearAnimalPower, getAnimalPowerInfo } from './animal-powers.js';
 
 export const animals = [];
 export const dogs = animals; // Aliased for backwards compatibility in main.js
 export const MAX_ANIMALS = 20;
 
 export const GROUP_ANIMALS = {
-    all:        ['dog','cat','rabbit','sheep','snake','pikachu','squirtle','charmander','meowth','snorlax','jigglypuff','diglett','porygon','ditto','elephant','penguin','pig','turtle','eevee','gengar','psyduck','bulbasaur','slowpoke','togepi','clefairy','wobbuffet','grasshopper','frog','snail','lizard','lion','crocodile','bear'],
     quad:       ['dog','cat','sheep','pig','bulbasaur','squirtle','charmander'],
     hop:        ['rabbit','pikachu','eevee','grasshopper','frog'],
     sneak:      ['snake','turtle','snail','lizard'],
@@ -21,6 +22,7 @@ export const GROUP_ANIMALS = {
     waddle:     ['penguin','psyduck','togepi','clefairy','jigglypuff','meowth'],
     special:    ['porygon','ditto','diglett','gengar'],
     carnivore:  ['lion','crocodile','bear'],
+    ...Object.fromEntries(ANIMAL_CATEGORIES.map(category => [category.id, category.types])),
 };
 
 const GROUND_BASE_HEIGHT = 0;
@@ -28,7 +30,7 @@ const EAT_RADIUS = voxelSize * 1.8;
 
 export let grabbedAnimal = null;
 export function setGrabbedAnimal(a) {
-    if (a) detachTrainFollower(a);
+    if (a) { detachTrainFollower(a); clearAnimalPower(a); }
     grabbedAnimal = a;
 }
 
@@ -51,6 +53,7 @@ export function disposeAnimalMesh(mesh) {
 
 function detachAnimalBody(animal) {
     detachTrainFollower(animal);
+    clearAnimalPower(animal);
     clearMagicEffect(animal);
     if (animal.body && state.world) state.world.removeBody(animal.body);
     animal.grabbed = false;
@@ -334,7 +337,7 @@ function findNearestFood(animal) {
     }
 
     for (const food of foods) {
-        if (food.eaten || food.consumeTimer > 0) continue;
+        if (food.eaten || food.consumeTimer > 0 || food.carriedBy) continue;
         if (food.falling) continue; // 낙하 중인 사과는 타겟 불가 (착지 후 재인식)
         const heightAboveGround = food.position.y - animalGroundY;
         // 너무 높아서 도달 불가능한 사과 제외
@@ -363,11 +366,11 @@ function canReachFood(animal, food) {
 // ── 애니메이션 그룹 매핑 ──
 const ANIM_TYPE = {};
 [
-    ['WADDLE',    ['penguin', 'psyduck', 'togepi', 'clefairy', 'jigglypuff', 'meowth']],
-    ['HOP',       ['rabbit', 'pikachu', 'eevee', 'grasshopper', 'frog']],
-    ['SNEAK',     ['snake', 'turtle', 'snail', 'lizard', 'crocodile']],
+    ['WADDLE',    ['penguin', 'psyduck', 'togepi', 'clefairy', 'jigglypuff', 'meowth', 'octopus', 'crab', 'panda']],
+    ['HOP',       ['rabbit', 'pikachu', 'eevee', 'grasshopper', 'frog', 'kangaroo', 'marill', 'baby-dragon']],
+    ['SNEAK',     ['snake', 'turtle', 'snail', 'lizard', 'crocodile', 'hedgehog']],
     ['HEAVY',     ['snorlax', 'elephant', 'slowpoke', 'wobbuffet']],
-    ['quadruped', ['dog', 'cat', 'sheep', 'pig', 'bulbasaur', 'squirtle', 'charmander']],
+    ['quadruped', ['dog', 'cat', 'sheep', 'pig', 'bulbasaur', 'squirtle', 'charmander', 'horse', 'giraffe', 'vulpix', 'otter']],
     ['CARNIVORE', ['lion', 'bear']],
     ['special',   ['porygon', 'ditto', 'diglett', 'gengar']],
 ].forEach(([grp, list]) => list.forEach(name => { ANIM_TYPE[name] = grp; }));
@@ -380,6 +383,20 @@ const CLICK_ACTION_MAP = {
     quadruped: 'spin',
     CARNIVORE: 'spin',
     special:   'pulse',
+};
+
+const CLICK_ACTION_OVERRIDES = {
+    sheep: 'squash', pig: 'squash', bear: 'squash', snorlax: 'squash',
+    ditto: 'squash', diglett: 'squash', turtle: 'spin', horse: 'aerialSpin'
+};
+const CLICK_ACTION_INFO = {
+    waddleSpin: { name: '뒤뚱뒤뚱 댄스', description: '톡 누르면 몸을 흔들며 한 바퀴 춤춰요.' },
+    aerialSpin: { name: '공중 빙글 점프', description: '톡 누르면 폴짝 뛰어올라 공중에서 빙글 돌아요.' },
+    dash: { name: '쌩쌩 대시', description: '톡 누르면 바라보는 쪽으로 짧게 달려요.' },
+    groundShake: { name: '쿵쿵 발구르기', description: '톡 누르면 발을 굴러 땅을 살짝 흔들어요.' },
+    spin: { name: '빙글빙글 팽이', description: '톡 누르면 제자리에서 귀엽게 한 바퀴 돌아요.' },
+    squash: { name: '말랑말랑 변신', description: '톡 누르면 납작해졌다가 원래 모습으로 통통 돌아와요.' },
+    pulse: { name: '두근두근 부풀기', description: '톡 누르면 몸이 커졌다 작아졌다 해요.' }
 };
 
 const ACTION_DURATION = {
@@ -406,12 +423,14 @@ const FLEE_RADIUS = voxelSize * 6;
 const MAX_CARNIVORES = 4;
 
 export function triggerClickAction(animal) {
-    if (!animals.includes(animal) || animal.grabbed || animal.trainRide || animal.clickActionTimer > 0) return;
-    const actionType = CLICK_ACTION_MAP[animal.animGroup] || 'spin';
+    if (!animals.includes(animal) || animal.grabbed || animal.trainRide) return;
+    if (triggerAnimalPower(animal, animals) || animal.clickActionTimer > 0) return;
+    const actionType = CLICK_ACTION_OVERRIDES[animal.animalType] || CLICK_ACTION_MAP[animal.animGroup] || 'spin';
     animal.clickActionTimer = ACTION_DURATION[actionType] || 0.75;
     playSound('animal-click-' + animal.animGroup);
     animal.clickActionPhase = 0;
     animal.clickActionType = actionType;
+    state.onToyNotice?.(`${animal.displayName || '블록 친구'} · ${animal.abilityName || CLICK_ACTION_INFO[actionType].name}`);
 }
 
 const ANIMAL_PALETTES = [
@@ -1234,6 +1253,131 @@ export function spawnDog(group = 'all') {
             addSoftPart(12, 10, 14, side * 8, 5, 6, brn, 4);
         }
         addSoftPart(6, 6, 6, 0, 15, -11, brn, 2.5);
+    } else if (type === 'otter') {
+        heightOffset = 19;
+        const brown = new THREE.MeshPhysicalMaterial({ color: 0x987457, roughness: 0.9 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xf6dfb7, roughness: 0.9 });
+        addSoftPart(22, 26, 22, 0, 18, 0, brown, 6);
+        addSoftPart(16, 18, 1, 0, 18, 11.1, cream, 4);
+        addSoftPart(25, 20, 23, 0, 36, 2, brown, 5);
+        addSoftPart(15, 7, 4, 0, 32, 14, cream, 3);
+        addSoftPart(4, 2.5, 1.5, 0, 34, 16.3, blackMat, 1);
+        addSoftPart(4, 1, 0.5, 0, 30.5, 16.2, blackMat, 0.5);
+        for (const side of [-1, 1]) {
+            addSoftPart(5, 5, 4, side * 10.5, 44, 1, brown, 2);
+            for (const level of [-1, 1]) {
+                const whisker = addSoftPart(6, 1.8, 1, side * 9, 32 + level * 1.5, 14.7, cream, 0.8);
+                whisker.rotation.z = side * level * 0.12;
+            }
+            addSoftPart(3, 3.5, 1, side * 6, 38, 13.7, blackMat, 1.2);
+            addPart(1, 1, 0.4, side * 6 - 0.5, 38.7, 14.4, whiteMat);
+            const arm = addSoftPart(7, 12, 8, side * 12, 21, 5, brown, 3);
+            arm.rotation.z = side * 0.25;
+            addSoftPart(9, 5, 12, side * 6, 2.5, 5, brown, 2);
+        }
+        addSoftPart(10, 6, 22, 0, 5, -17, brown, 3);
+    } else if (type === 'panda') {
+        heightOffset = 24;
+        const ink = new THREE.MeshPhysicalMaterial({ color: 0x414b58, roughness: 0.95 });
+        addSoftPart(29, 29, 25, 0, 20, 0, whiteMat, 7);
+        addSoftPart(30, 25, 25, 0, 40, 2, whiteMat, 6);
+        addSoftPart(13, 7, 2, 0, 36.5, 15, whiteMat, 3);
+        addSoftPart(4, 2.5, 1, 0, 38, 16.2, ink, 1);
+        addSoftPart(4, 1, 0.5, 0, 34.8, 16.1, ink, 0.5);
+        for (const side of [-1, 1]) {
+            addSoftPart(9, 10, 8, side * 11, 52, 2, ink, 4);
+            const patch = addSoftPart(8, 10, 1, side * 7, 42, 14.6, ink, 3.5);
+            patch.rotation.z = -side * 0.22;
+            addSoftPart(2, 2.5, 0.5, side * 7 - 0.5, 43, 15.3, whiteMat, 0.8);
+            const arm = addSoftPart(11, 17, 12, side * 17, 25, 1, ink, 4);
+            arm.rotation.z = -side * 0.15;
+            addSoftPart(12, 10, 15, side * 8, 5, 6, ink, 4);
+        }
+        addSoftPart(7, 7, 7, 0, 13, -13, whiteMat, 3);
+    } else if (type === 'octopus') {
+        heightOffset = 13;
+        const coral = new THREE.MeshPhysicalMaterial({ color: 0xea9baa, roughness: 0.85 });
+        const blush = new THREE.MeshPhysicalMaterial({ color: 0xd87996, roughness: 0.85 });
+        addSoftPart(30, 28, 27, 0, 20, 0, coral, 7);
+        // Eight short plush arms; no suckers or fine tentacle segments.
+        for (let arm = 0; arm < 8; arm++) {
+            const angle = arm * Math.PI / 4;
+            addSoftPart(8, 10, 20, Math.sin(angle) * 13, 5, Math.cos(angle) * 13, coral, 4).rotation.y = angle;
+        }
+        for (const side of [-1, 1]) {
+            addSoftPart(5, 6, 1, side * 6, 23, 13.7, whiteMat, 2);
+            addSoftPart(3, 4, 0.7, side * 6, 23, 14.4, blackMat, 1.2);
+            addPart(0.8, 1, 0.3, side * 6 - 0.5, 23.8, 14.9, whiteMat);
+            addSoftPart(4, 2.5, 0.7, side * 10, 18, 13, blush, 1);
+        }
+        addSoftPart(3, 2.5, 0.7, 0, 16, 13.7, blackMat, 1.2);
+    } else if (type === 'crab') {
+        heightOffset = 10;
+        const coral = new THREE.MeshPhysicalMaterial({ color: 0xeb957d, roughness: 0.9 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffd9b0, roughness: 0.9 });
+        addSoftPart(30, 17, 22, 0, 15, 0, coral, 6);
+        addSoftPart(18, 7, 1, 0, 12, 11.1, cream, 3);
+        addSoftPart(4, 1.5, 0.7, 0, 16, 11.3, blackMat, 0.7);
+        for (const side of [-1, 1]) {
+            for (const z of [-7, 1, 9]) {
+                const leg = addSoftPart(11, 5, 6, side * 17, 2.5, z, coral, 2.4);
+                leg.rotation.y = side * z * 0.05;
+            }
+            addSoftPart(8, 9, 8, side * 7, 26, 7, coral, 3.5);
+            addSoftPart(5, 6, 1, side * 7, 28, 11.2, whiteMat, 2);
+            addSoftPart(2.8, 4, 0.7, side * 7, 28, 11.9, blackMat, 1.2);
+            addPart(0.8, 1, 0.3, side * 7 - 0.5, 28.8, 12.4, whiteMat);
+            addSoftPart(12, 7, 8, side * 19, 15, 9, coral, 3);
+            addSoftPart(11, 10, 11, side * 27, 20, 12, coral, 4);
+            for (const jaw of [-1, 1]) {
+                const claw = addSoftPart(5, 7, 8, side * 27 + jaw * 3, 26, 13, coral, 2.4);
+                claw.rotation.z = -jaw * 0.15;
+            }
+        }
+    } else if (type === 'hedgehog') {
+        heightOffset = 12;
+        const cocoa = new THREE.MeshPhysicalMaterial({ color: 0x987967, roughness: 0.95 });
+        const tuft = new THREE.MeshPhysicalMaterial({ color: 0xb69a82, roughness: 0.95 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xf4ddba, roughness: 0.9 });
+        addSoftPart(27, 22, 31, 0, 13, -2, cocoa, 7);
+        addSoftPart(19, 15, 15, 0, 14, 17, cream, 5);
+        addSoftPart(4, 3, 2, 0, 12, 25, blackMat, 1.4);
+        // A few broad, rounded tufts suggest quills without sharp spikes.
+        for (const x of [-8, 0, 8]) {
+            for (const z of [-9, 1]) addSoftPart(9, 7, 9, x, 23, z, tuft, 3.4);
+        }
+        for (const side of [-1, 1]) {
+            addSoftPart(6, 6, 5, side * 7, 22, 15, cream, 2.5);
+            addSoftPart(3, 3.5, 0.8, side * 5, 17, 24.7, blackMat, 1.2);
+            addPart(0.8, 1, 0.4, side * 5 - 0.5, 17.7, 25.3, whiteMat);
+            for (const z of [-9, 9]) addSoftPart(6, 5, 7, side * 8, 2.5, z, cream, 2);
+        }
+        addSoftPart(4, 4, 5, 0, 5, -18, cream, 1.8);
+    } else if (type === 'baby-dragon') {
+        heightOffset = 22;
+        const mint = new THREE.MeshPhysicalMaterial({ color: 0x9bcfba, roughness: 0.85 });
+        const lavender = new THREE.MeshPhysicalMaterial({ color: 0xc1aedf, roughness: 0.85 });
+        const cream = new THREE.MeshPhysicalMaterial({ color: 0xffe4b1, roughness: 0.85 });
+        addSoftPart(24, 28, 23, 0, 19, 0, mint, 6);
+        addSoftPart(17, 18, 1, 0, 18, 11.6, cream, 4);
+        addSoftPart(26, 23, 23, 0, 39, 3, mint, 6);
+        addSoftPart(14, 8, 8, 0, 35, 15, mint, 3.5);
+        addSoftPart(5, 1, 0.6, 0, 32.8, 19.2, blackMat, 0.5);
+        for (const side of [-1, 1]) {
+            addSoftPart(3.5, 4.5, 1, side * 7, 42, 14.7, blackMat, 1.5);
+            addPart(1.2, 1.3, 0.4, side * 7 - 0.5, 42.8, 15.4, whiteMat);
+            addSoftPart(1.5, 1.2, 0.6, side * 4, 36.5, 19.1, blackMat, 0.5);
+            addSoftPart(5, 8, 5, side * 8, 53, 1, cream, 2.4);
+            const arm = addSoftPart(7, 12, 7, side * 14, 23, 4, mint, 3);
+            arm.rotation.z = -side * 0.2;
+            addSoftPart(10, 6, 12, side * 8, 3, 6, mint, 2.5);
+            addSoftPart(8, 10, 5, side * 12, 24, -8, lavender, 3);
+            const wing = addSoftPart(12, 17, 4, side * 19, 29, -7, lavender, 4);
+            wing.rotation.z = -side * 0.4;
+            addSoftPart(9, 9, 4, side * 20, 22, -7, lavender, 3.5);
+        }
+        addSoftPart(10, 7, 15, 0, 9, -15, mint, 3);
+        addSoftPart(7, 7, 11, 0, 11, -24, mint, 3).rotation.x = 0.35;
     }
 
     mergeStaticParts(animalGroup);
@@ -1270,6 +1414,8 @@ export function spawnDog(group = 'all') {
     const animGroup = ANIM_TYPE[type] || 'quadruped';
     const baseSpeed = 300 + Math.random() * 300;
     const speed = baseSpeed * (SPEED_MULT[animGroup] || 1.0);
+    const clickActionType = CLICK_ACTION_OVERRIDES[type] || CLICK_ACTION_MAP[animGroup] || 'spin';
+    const ability = getAnimalPowerInfo(type) || CLICK_ACTION_INFO[clickActionType];
 
     const animalData = {
         mesh: animalGroup,
@@ -1281,13 +1427,16 @@ export function spawnDog(group = 'all') {
         heightOffset: heightOffset,
         grabbed: false,
         animalType: type,
+        displayName: ANIMAL_NAMES[type] || type,
+        abilityName: ability.name,
+        abilityDescription: ability.description,
         animGroup,
         animTime: 0,
         _animYOffset: 0,
         baseScale: animalGroup.scale.clone(),
         clickActionTimer: 0,
         clickActionPhase: 0,
-        clickActionType: CLICK_ACTION_MAP[animGroup] || 'spin',
+        clickActionType,
         clickBaseRotY: 0,
         // 먹이 AI 추가 필드
         isEating: false,
@@ -1504,7 +1653,13 @@ export function updateDogs(dt) {
         }
 
         // ── 착지 감지 ──
-        if (animal.trainRide) {
+        if (animal.animalPower?.controlsMotion) {
+            // A short toy ride owns movement and feeding until it finishes.
+            animal.isClimbing = false;
+            animal.climbMeshRotX = 0;
+            animal.isEating = false;
+            animal.eatTimer = 0;
+        } else if (animal.trainRide) {
             // The train owns travel, including joining: friends keep their usual
             // visual animation and snacks without hunting, fleeing or smashing.
             animal.isClimbing = false;
@@ -1954,4 +2109,5 @@ export function updateDogs(dt) {
             animal.body.aabbNeedsUpdate = true;
         }
     });
+    updateAnimalPowers(animals, dt);
 }

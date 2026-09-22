@@ -14,7 +14,7 @@ const BOARD_LIMIT = 900, JOIN_INTERVAL = 0.65, MAX_TRAIL_POINTS = 4096;
 const ROPE_SEGMENTS = 8, ROPE_RADIUS = 3, ROPE_MIN_PIXELS = 2;
 const DRIVE_BEATS = ['train-chuff', 'train-chuff', 'train-puff', 'train-puff'];
 const isLivingBlock = animal => Boolean(animal?.livingId) || animal?.animalType === 'living-block';
-const cannotRide = animal => isLivingBlock(animal) || Boolean(animal?.magicEffect?.ingredients.includes('balloon'));
+const cannotRide = animal => isLivingBlock(animal) || Boolean(animal?.magicEffect?.ingredients.includes('balloon')) || Boolean(animal?.animalPower?.controlsMotion);
 const followerBounds = new WeakMap();
 
 function disposeTree(root) {

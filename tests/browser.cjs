@@ -118,9 +118,9 @@ function check(name, condition, details) { assert.ok(condition, `${name}: ${JSON
         await page.waitForFunction(() => document.getElementById('animal-type-menu').style.display === 'flex', null, { polling: 50 });
         await page.mouse.up();
         check('Long press keeps animal selection menu open', await page.locator('#animal-type-menu').isVisible());
-        await page.locator('.atm-item[data-group="heavy"]').click();
+        await page.locator('.atm-item[data-group="forest"]').click();
         await page.locator('#add-dog-btn').click();
-        check('Selected group spawns a heavy animal', await page.evaluate(() => qa.animals.at(-1).animGroup === 'HEAVY'));
+        check('Selected habitat spawns a forest friend', await page.evaluate(() => qa.GROUP_ANIMALS.forest.includes(qa.animals.at(-1).animalType)));
         const countBeforeCancel = await page.evaluate(() => qa.animals.length);
         const clearButton = await page.locator('#btn-clear-all').boundingBox();
         await page.mouse.move(clearButton.x + clearButton.width / 2, clearButton.y + clearButton.height / 2);

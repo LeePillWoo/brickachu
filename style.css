@@ -625,9 +625,15 @@ body > canvas {
     transition: background 0.1s;
     white-space: nowrap;
     user-select: none;
+    border: 0;
+    background: transparent;
+    min-height: 44px;
+    font: inherit;
+    text-align: left;
 }
 
 .atm-item:hover,
+.atm-item:focus-visible,
 .atm-item.atm-hover {
     background: rgba(255, 255, 255, 0.12);
 }
@@ -686,9 +692,12 @@ body > canvas {
 .mode-btn#btn-eyes { background: #dcf7e9; }
 .mode-btn#btn-food { background: #ffe9ed; }
 .mode-btn#btn-train { background: #def0ff; }
+.mode-btn#btn-grab { background: #fff0d8; }
+.mode-btn#btn-animal-category { background: #eee8fa; }
 .mode-btn#btn-eyes.active { background: #8ee0b9; color: #224d3c; box-shadow: 0 0 0 3px #e1f8eb; }
 .mode-btn#btn-food.active { background: #ffafc2; color: #773e51; box-shadow: 0 0 0 3px #fff0f4; }
 .mode-btn#btn-train.active { background: #94d4ff; color: #265878; box-shadow: 0 0 0 3px #e4f5ff; }
+.mode-btn#btn-grab.active { background: #ffd38b; color: #78531a; box-shadow: 0 0 0 3px #fff5df; }
 
 #toy-notice,
 #toy-notice * { pointer-events: none; }
@@ -727,6 +736,11 @@ body > canvas {
     .snap-btn.cardinal { font-size: 8px; }
     #toy-notice { top: 8px; left: 132px; right: 72px; max-width: none; transform: translateY(-6px); padding: 8px; font-size: 10px; border-radius: 11px; }
     #toy-notice.visible { transform: translateY(0); }
+}
+
+@media (max-width: 820px) and (max-height: 660px) and (orientation: portrait) {
+    #edit-mode-panel { display: grid; grid-template-columns: repeat(2, 44px); width: 106px; }
+    #toy-notice { top: auto; bottom: 62px; left: 12px; right: 12px; font-size: 12px; }
 }
 
 @media (max-height: 520px) and (orientation: landscape) {
